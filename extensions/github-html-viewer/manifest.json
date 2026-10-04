@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "GitHub HTML Renderer",
+  "version": "1.0.0",
+  "description": "Render .html files in the GitHub blob view instead of showing their source. Works on private repos you can already read.",
+  "host_permissions": [
+    "https://github.com/*",
+    "https://raw.githubusercontent.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://github.com/*/blob/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

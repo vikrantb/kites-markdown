@@ -1,0 +1,1041 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Markdown Viewer — with Inline Comments</title>
+
+<!--
+  Markdown & Mermaid Viewer — with inline-comment iteration.
+
+  Single self-contained HTML. Open locally, click "Open file" (Chromium gets
+  a writable handle via File System Access API; Safari/Firefox fall back to
+  read-only via <input type=file>).
+
+  Right-click any block-level element (headings, paragraphs, lists, code
+  blocks, blockquotes) → "Comment on this". Markdown body, links + images
+  by URL. Reply by you OR by the AI. Resolve. Filter resolved.
+
+  Comments are stored INLINE in the markdown source as
+      <!-- MDV-COMMENT {"v":1,"id":"cmt-...","author":"me","ts":"...",
+                        "parent":null,"body":"..."} -->
+  blocks placed IMMEDIATELY AFTER the anchored block element. This means:
+    - The AI agent reads the file from disk and sees comments grouped with
+      their target block (anchor-by-source-position; trivially robust).
+    - Edits to OTHER blocks don't orphan comments.
+    - Edits to the SAME block don't orphan either — the comments stay
+      attached to their original anchor position.
+
+  "Save" writes back to the original file (Chromium) or downloads (other
+  browsers). The AI then opens the file from disk and sees the new comments
+  inline. The AI replies by APPENDING new MDV-COMMENT blocks with
+  author="ai" and saving the file back.
+
+  "Copy AI export" puts a plaintext rendering of the comments on the
+  clipboard so you can paste them into a Claude/Codex conversation directly
+  if you don't want to share the whole file.
+-->
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+<style>
+  :root{
+    --bg:#ffffff;
+    --fg:#111827;
+    --muted:#64748b;
+    --border:#e2e8f0;
+    --brand:#6366f1;
+    --brand-soft:#eef2ff;
+    --me:#0ea5e9;
+    --me-soft:#e0f2fe;
+    --ai:#a855f7;
+    --ai-soft:#f3e8ff;
+    --resolved:#94a3b8;
+    --danger:#dc2626;
+    --warn-bg:#fff7ed;
+    --warn-fg:#9a3412;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font:15px/1.6 system-ui,-apple-system,Segoe UI,Roboto,Arial,'Noto Sans',sans-serif;
+    background:var(--bg); color:var(--fg);
+  }
+  #app{display:grid; grid-template-columns:minmax(0,1fr) 360px; min-height:100vh}
+  #left{padding:18px 22px; min-width:0}
+  #right{
+    border-left:1px solid var(--border);
+    padding:18px;
+    background:#fafafa;
+    overflow:auto;
+    max-height:100vh;
+    position:sticky; top:0;
+  }
+  @media (max-width: 980px){
+    #app{grid-template-columns:1fr}
+    #right{position:static; border-left:none; border-top:1px solid var(--border); max-height:none}
+  }
+  header{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:12px}
+  .title{font-weight:600;font-size:15px}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .btn{
+    border:1px solid var(--border);background:#fff;padding:7px 12px;
+    border-radius:8px;cursor:pointer;font-size:13px;color:var(--fg);
+    transition:background 120ms;
+  }
+  .btn:hover{background:#f8fafc}
+  .btn-primary{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .btn-primary:hover{background:#4f46e5}
+  .btn-ghost{background:transparent;border-color:transparent;color:var(--muted)}
+  .btn-ghost:hover{color:var(--fg);background:#f8fafc}
+  label{font-size:12px;color:#475569;display:flex;gap:6px;align-items:center}
+  input[type="range"]{vertical-align:middle}
+  #drop{border:2px dashed var(--border);border-radius:10px;padding:8px 12px;color:#475569;font-size:12px;margin-bottom:10px}
+  #name{color:#475569;font-size:12px;margin:0 0 0 2px}
+  .err{white-space:pre-wrap;background:var(--warn-bg);border:1px solid #fed7aa;color:var(--warn-fg);padding:12px;border-radius:10px;margin-top:12px;display:none}
+  pre{overflow:auto;background:#0b1020;color:#e6edf3;padding:12px;border-radius:10px}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+  /* Markdown render area */
+  #out{
+    background:#fff;border:1px solid var(--border);border-radius:10px;
+    min-height:240px;padding:22px;overflow:auto;
+  }
+  #out h1{font-size:1.6em;margin-top:0}
+  #out h2{font-size:1.3em;margin-top:1.4em;border-bottom:1px solid var(--border);padding-bottom:6px}
+  #out h3{font-size:1.1em;margin-top:1.3em}
+  #out blockquote{border-left:4px solid var(--border);margin:12px 0;padding:4px 14px;color:#475569}
+  #out table{border-collapse:collapse;margin:12px 0}
+  #out th,#out td{border:1px solid var(--border);padding:6px 10px}
+  #out img{max-width:100%}
+
+  /* Anchor highlight on hover */
+  [data-anchor-id]{position:relative;border-radius:4px;transition:background 120ms}
+  [data-anchor-id]:hover{background:#f1f5f955}
+  [data-anchor-id].has-comments{background:#fef9c33b;border-left:3px solid #facc15;padding-left:8px;margin-left:-11px}
+  [data-anchor-id].has-comments.all-resolved{background:transparent;border-left-color:#cbd5e1;opacity:0.85}
+
+  /* Bubble button hovering on right edge of an anchored element */
+  .mdv-bubble{
+    position:absolute; right:-46px; top:0;
+    width:34px; height:34px; border-radius:50%;
+    background:var(--me); color:white;
+    display:flex;align-items:center;justify-content:center;
+    font-size:13px; font-weight:600;
+    border:none;cursor:pointer;
+    box-shadow:0 1px 3px rgba(0,0,0,.15);
+    user-select:none;
+  }
+  .mdv-bubble.has-ai-reply{background:linear-gradient(135deg,var(--me) 0 50%,var(--ai) 50% 100%)}
+  .mdv-bubble:hover{transform:scale(1.05)}
+  .mdv-bubble.resolved{background:var(--resolved);opacity:0.7}
+
+  /* Right-click context menu */
+  .mdv-ctxmenu{
+    position:absolute;
+    background:#fff;border:1px solid var(--border);
+    border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.12);
+    padding:4px;min-width:170px;z-index:1000;
+  }
+  .mdv-ctxmenu button{
+    display:block;width:100%;text-align:left;
+    background:transparent;border:none;padding:7px 10px;
+    border-radius:6px;cursor:pointer;font-size:13px;color:var(--fg);
+  }
+  .mdv-ctxmenu button:hover{background:#f1f5f9}
+
+  /* Composer modal */
+  .mdv-modal-bg{
+    position:fixed;inset:0;background:rgba(0,0,0,.4);
+    display:flex;align-items:flex-start;justify-content:center;
+    z-index:2000;padding-top:12vh;
+  }
+  .mdv-modal{
+    background:#fff;border-radius:12px;width:560px;max-width:92vw;
+    box-shadow:0 12px 40px rgba(0,0,0,.2);
+    padding:18px;
+  }
+  .mdv-modal h3{margin:0 0 6px}
+  .mdv-modal .anchor-snippet{
+    background:#f8fafc;border-left:3px solid var(--brand);
+    padding:8px 12px;border-radius:6px;
+    color:var(--muted);font-size:13px;margin:8px 0 14px;
+    max-height:80px;overflow:auto;
+  }
+  .mdv-modal label{font-size:12px;color:var(--muted);margin-bottom:4px;display:block}
+  .mdv-modal textarea{
+    width:100%;min-height:140px;
+    border:1px solid var(--border);border-radius:8px;
+    padding:10px;font:14px/1.55 system-ui,sans-serif;color:var(--fg);
+    resize:vertical;
+  }
+  .mdv-modal input[type="text"]{
+    width:100%;
+    border:1px solid var(--border);border-radius:8px;
+    padding:9px 10px;font-size:13px;
+  }
+  .mdv-modal .row{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+  .mdv-modal .row label{display:flex;gap:6px;align-items:center;margin:0}
+  .mdv-modal .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+
+  /* Right rail */
+  #right h2{font-size:13px;text-transform:uppercase;color:var(--muted);margin:0 0 12px;letter-spacing:.04em}
+  .rail-empty{color:var(--muted);font-size:13px;font-style:italic}
+  .rail-thread{
+    background:#fff;border:1px solid var(--border);border-radius:10px;
+    padding:10px 12px;margin-bottom:10px;cursor:pointer;
+  }
+  .rail-thread.active{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+  .rail-thread .snippet{font-size:12px;color:var(--muted);margin-bottom:6px;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .rail-thread .body-preview{font-size:13px;color:var(--fg)}
+  .rail-thread .meta{font-size:11px;color:var(--muted);margin-top:4px}
+  .rail-thread.resolved{opacity:0.65}
+
+  /* Thread expanded view (inline below element OR in right rail) */
+  .mdv-thread{
+    background:#fff;border:1px solid var(--border);border-radius:10px;
+    padding:12px 14px;margin:8px 0 12px;
+  }
+  .mdv-thread .comment{
+    padding:8px 0;border-top:1px solid #f1f5f9;
+  }
+  .mdv-thread .comment:first-child{border-top:none;padding-top:0}
+  .mdv-thread .comment .head{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);margin-bottom:4px}
+  .mdv-thread .comment .author{
+    font-weight:600;padding:1px 7px;border-radius:10px;font-size:11px;
+  }
+  .mdv-thread .comment .author.me{background:var(--me-soft);color:#0369a1}
+  .mdv-thread .comment .author.ai{background:var(--ai-soft);color:#7e22ce}
+  .mdv-thread .comment .body{font-size:14px;color:var(--fg);line-height:1.55}
+  .mdv-thread .comment .body p:first-child{margin-top:0}
+  .mdv-thread .comment .body p:last-child{margin-bottom:0}
+  .mdv-thread .comment .body img{max-width:100%;border-radius:6px;margin:6px 0}
+  .mdv-thread .actions-row{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+  .mdv-thread.resolved{opacity:0.6}
+  .mdv-thread.resolved .comment .body{text-decoration:line-through;text-decoration-color:#94a3b8aa}
+
+  /* Save status pill */
+  #saveStatus{
+    font-size:11px;color:var(--muted);
+    padding:3px 9px;border-radius:10px;background:#f1f5f9;
+  }
+  #saveStatus.dirty{background:#fef3c7;color:#92400e}
+  #saveStatus.saving{background:var(--brand-soft);color:#3730a3}
+  #saveStatus.saved{background:#dcfce7;color:#166534}
+
+  .kbd{font-family:ui-monospace,monospace;font-size:11px;background:#f1f5f9;padding:1px 5px;border-radius:4px;border:1px solid var(--border)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="left">
+    <header>
+      <div>
+        <div class="title">Markdown viewer — with inline comments</div>
+        <div id="name">No file loaded</div>
+      </div>
+      <div class="controls">
+        <button id="openBtn" class="btn btn-primary" title="Open a markdown file">Open file</button>
+        <input id="fileInput" type="file" accept=".mmd,.md,.markdown,text/markdown,text/plain" style="display:none">
+        <button id="saveBtn" class="btn" title="Save current file (writes comments back)">Save</button>
+        <button id="saveAsBtn" class="btn btn-ghost" title="Save to a new file">Save as…</button>
+        <span id="saveStatus">No file</span>
+        <button id="copyAiBtn" class="btn btn-ghost" title="Copy plaintext comment dump for an AI prompt">Copy AI export</button>
+        <label><input id="hideResolved" type="checkbox" checked> hide resolved</label>
+        <label>Font <input id="font" type="range" min="12" max="22" value="15" style="width:100px"></label>
+      </div>
+    </header>
+
+    <div id="drop">Tip: drop a <span class="kbd">.md</span> or <span class="kbd">.mmd</span> file here. <strong>Right-click any paragraph</strong> to comment. Press <span class="kbd">⌘S</span> / <span class="kbd">Ctrl+S</span> to save.</div>
+    <div id="out">Open a file to start. Comments are stored inline in the markdown as <code>&lt;!-- MDV-COMMENT … --&gt;</code> blocks; they're hidden in normal markdown renders and visible to any AI that reads the file.</div>
+    <div id="err" class="err"></div>
+  </div>
+
+  <aside id="right">
+    <h2>Comments (<span id="threadCount">0</span>)</h2>
+    <div id="rail" class="rail-empty">No comments yet.</div>
+
+    <h2 style="margin-top:24px">How this works</h2>
+    <div style="font-size:12px;color:#475569;line-height:1.6">
+      <p style="margin-top:0">Right-click an element → <em>Comment on this</em>. Comments save into the source file as hidden <code>&lt;!-- MDV-COMMENT … --&gt;</code> blocks immediately after the element.</p>
+      <p>Click <strong>Save</strong> to write back to disk. The AI can then read your comments by opening the file. To add an AI reply, paste the AI's response into the reply form and pick the <em>ai</em> identity. Or have the AI append MDV-COMMENT blocks directly to the file and re-open here.</p>
+      <p>Identity is local-only — change <em>Author</em> in the composer to attribute. There's no auth here; this is a local iteration tool.</p>
+    </div>
+  </aside>
+</div>
+
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.7/purify.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+
+<script>
+window.addEventListener('load', () => {
+  // ====================================================================
+  // State
+  // ====================================================================
+  const $ = (id) => document.getElementById(id);
+  const out = $('out'), err = $('err'), nameEl = $('name'), rail = $('rail');
+  const threadCountEl = $('threadCount'), saveStatus = $('saveStatus');
+  const openBtn = $('openBtn'), fileInput = $('fileInput');
+  const saveBtn = $('saveBtn'), saveAsBtn = $('saveAsBtn');
+  const copyAiBtn = $('copyAiBtn'), hideResolvedCb = $('hideResolved');
+  const drop = $('drop'), font = $('font');
+
+  /** Authoring author for new comments. Persisted in localStorage. */
+  let author = localStorage.getItem('mdv.author') || 'me';
+
+  /** Source markdown text including any MDV-COMMENT blocks. */
+  let sourceText = '';
+  /** Source split into segments + comments structure (parsed). */
+  let parsed = { segments: [], commentsByAnchor: new Map() };
+  /** File handle (Chromium FS Access API). null when opened via <input>. */
+  let fileHandle = null;
+  /** File name display. */
+  let fileName = '';
+  /** Whether the in-memory state has unsaved comment changes. */
+  let isDirty = false;
+
+  // ====================================================================
+  // Constants
+  // ====================================================================
+  const ANCHOR_TAGS = new Set(['H1','H2','H3','H4','H5','H6','P','LI','BLOCKQUOTE','PRE','TABLE']);
+  const COMMENT_PREFIX = 'MDV-COMMENT';
+  /** Single-line regex matching one comment block. */
+  const COMMENT_RE = /<!--\s*MDV-COMMENT\s+(\{[^]*?\})\s*-->/g;
+
+  // ====================================================================
+  // Markdown setup
+  // ====================================================================
+  marked.setOptions({
+    gfm: true,
+    breaks: false,
+    highlight(code, lang) {
+      try { return hljs.highlight(code, { language: lang }).value; }
+      catch { return hljs.highlightAuto(code).value; }
+    },
+  });
+
+  function mermaidConfig() {
+    const fs = font.value + 'px';
+    return {
+      startOnLoad: false, securityLevel: 'loose', theme: 'base',
+      themeVariables: {
+        fontFamily: "system-ui,-apple-system,Segoe UI,Roboto,sans-serif",
+        fontSize: fs, primaryColor: '#fff', primaryBorderColor: '#111827',
+        lineColor: '#111827', primaryTextColor: '#111827',
+      },
+    };
+  }
+
+  // ====================================================================
+  // Source parsing — extract MDV-COMMENT blocks, anchor them by source
+  // position to the preceding block of markdown.
+  //
+  // Strategy: split the source on blank lines (markdown paragraph
+  // boundary). For each segment, count its position-among-non-comment-
+  // segments to derive a stable `anchorIndex`. Comments are matched to
+  // the most-recent non-comment segment.
+  //
+  // anchorIndex is then used at render time to line up DOM elements
+  // with their source segments.
+  // ====================================================================
+  function parseSource(text) {
+    const lines = text.split(/\r?\n/);
+    const segments = [];        // {raw, kind: 'block'|'comments'|'blank', anchorIndex}
+    const commentsByAnchor = new Map();
+    let anchorIndex = -1;
+    let cursor = 0;
+
+    while (cursor < lines.length) {
+      // Skip blank lines.
+      if (lines[cursor].trim() === '') {
+        segments.push({ raw: lines[cursor], kind: 'blank' });
+        cursor += 1; continue;
+      }
+
+      // Comment-only segment? A line that starts with `<!-- MDV-COMMENT`.
+      if (/^\s*<!--\s*MDV-COMMENT/.test(lines[cursor])) {
+        const start = cursor;
+        // Eat consecutive comment lines (a thread can be multiple).
+        while (cursor < lines.length && /^\s*<!--\s*MDV-COMMENT/.test(lines[cursor])) {
+          cursor += 1;
+        }
+        const raw = lines.slice(start, cursor).join('\n');
+        segments.push({ raw, kind: 'comments' });
+
+        // Parse + bucket by current anchor.
+        const parsedComments = extractComments(raw);
+        if (anchorIndex >= 0) {
+          const existing = commentsByAnchor.get(anchorIndex) ?? [];
+          commentsByAnchor.set(anchorIndex, [...existing, ...parsedComments]);
+        } else {
+          // Pre-anchor comments — bucket under -1 (orphan).
+          const existing = commentsByAnchor.get(-1) ?? [];
+          commentsByAnchor.set(-1, [...existing, ...parsedComments]);
+        }
+        continue;
+      }
+
+      // Block segment — gather until blank line OR a comment line.
+      const start = cursor;
+      while (cursor < lines.length
+             && lines[cursor].trim() !== ''
+             && !/^\s*<!--\s*MDV-COMMENT/.test(lines[cursor])) {
+        cursor += 1;
+      }
+      const raw = lines.slice(start, cursor).join('\n');
+      anchorIndex += 1;
+      segments.push({ raw, kind: 'block', anchorIndex });
+    }
+
+    return { segments, commentsByAnchor };
+  }
+
+  function extractComments(rawCommentText) {
+    const out = [];
+    let m;
+    COMMENT_RE.lastIndex = 0;
+    while ((m = COMMENT_RE.exec(rawCommentText)) !== null) {
+      try {
+        const obj = JSON.parse(m[1]);
+        if (obj && obj.id && obj.body !== undefined) {
+          out.push(obj);
+        }
+      } catch {
+        // Ignore malformed.
+      }
+    }
+    return out;
+  }
+
+  function serializeComment(c) {
+    const ordered = {
+      v: 1, id: c.id, author: c.author || 'me',
+      ts: c.ts, parent: c.parent ?? null,
+      body: c.body, resolved: c.resolved ? true : undefined,
+      resolvedTs: c.resolvedTs || undefined,
+    };
+    // Strip undefined keys for compactness.
+    const clean = Object.fromEntries(Object.entries(ordered).filter(([_, v]) => v !== undefined));
+    return `<!-- MDV-COMMENT ${JSON.stringify(clean)} -->`;
+  }
+
+  // Re-emit source from segments + commentsByAnchor (so we can write
+  // back to disk after edits). Walks segments in order; replaces
+  // each `comments` segment with the current state for its preceding
+  // anchor; for anchors that gained new comments mid-edit, inserts a
+  // fresh comments segment after the block.
+  function serializeSource() {
+    const out = [];
+    const written = new Set();
+    for (let i = 0; i < parsed.segments.length; i += 1) {
+      const seg = parsed.segments[i];
+      if (seg.kind === 'block') {
+        out.push(seg.raw);
+        // Inline comment block immediately after a block segment if
+        // one exists for this anchor (whether pre-existing or new).
+        const comments = parsed.commentsByAnchor.get(seg.anchorIndex) ?? [];
+        if (comments.length > 0) {
+          out.push(comments.map(serializeComment).join('\n'));
+          written.add(seg.anchorIndex);
+        }
+      } else if (seg.kind === 'blank') {
+        out.push(seg.raw);
+      } else if (seg.kind === 'comments') {
+        // Skip — handled inline after the block. The original raw is
+        // intentionally dropped because we re-emit fresh from
+        // commentsByAnchor.
+      }
+    }
+    // Pre-anchor (orphan) comments: append at top of file (rare).
+    const orphans = parsed.commentsByAnchor.get(-1) ?? [];
+    if (orphans.length > 0) {
+      out.unshift(orphans.map(serializeComment).join('\n'));
+    }
+    return out.join('\n');
+  }
+
+  // ====================================================================
+  // Render
+  // ====================================================================
+  async function renderAll() {
+    err.style.display = 'none';
+
+    // Render plain markdown (sans MDV-COMMENT blocks — `marked` will
+    // strip HTML comments on its own when sanitized; DOMPurify keeps
+    // them but they're invisible).
+    const md = parsed.segments
+      .filter((s) => s.kind !== 'comments')
+      .map((s) => s.raw)
+      .join('\n');
+
+    const rawHtml = marked.parse(md);
+    const tmp = document.createElement('div');
+    tmp.innerHTML = DOMPurify.sanitize(rawHtml, { ADD_TAGS: ['style'] });
+
+    // Render mermaid blocks if present.
+    const mermaidBlocks = tmp.querySelectorAll('pre code.language-mermaid');
+    if (mermaidBlocks.length > 0) {
+      mermaid.initialize(mermaidConfig());
+      for (const codeEl of mermaidBlocks) {
+        try {
+          const id = 'mmd-' + Math.random().toString(36).slice(2);
+          const { svg } = await mermaid.render(id, codeEl.textContent);
+          const holder = document.createElement('div');
+          holder.innerHTML = svg;
+          codeEl.closest('pre').replaceWith(holder);
+        } catch (e) {
+          // Leave the code block as-is on failure.
+        }
+      }
+    }
+
+    out.innerHTML = '';
+    out.appendChild(tmp);
+
+    // Walk DOM, assign data-anchor-id by sequential index of
+    // anchor-tag elements at the TOP level of the rendered output.
+    // This mirrors `parseSource`'s anchorIndex counting (one index
+    // per non-comment block).
+    let i = 0;
+    for (const child of out.firstChild.children) {
+      if (ANCHOR_TAGS.has(child.tagName)) {
+        child.setAttribute('data-anchor-id', String(i));
+        i += 1;
+      }
+    }
+
+    // Decorate elements that have comments.
+    for (const [anchorIndex, comments] of parsed.commentsByAnchor.entries()) {
+      if (anchorIndex < 0) continue;
+      const visible = filterVisible(comments);
+      if (visible.length === 0) continue;
+      const el = out.querySelector(`[data-anchor-id="${anchorIndex}"]`);
+      if (!el) continue;
+      el.classList.add('has-comments');
+      const allResolved = visible.every((c) => c.resolved || comments.find((p) => p.id === c.parent)?.resolved);
+      if (allResolved && hideResolvedCb.checked === false) {
+        el.classList.add('all-resolved');
+      }
+      attachBubble(el, anchorIndex, visible, comments);
+    }
+
+    renderRail();
+  }
+
+  function filterVisible(comments) {
+    if (!hideResolvedCb.checked) return comments;
+    // Hide resolved top-level threads; keep replies that belong to
+    // unresolved parents.
+    const resolvedIds = new Set(comments.filter((c) => c.resolved).map((c) => c.id));
+    return comments.filter((c) => {
+      if (c.resolved) return false;
+      if (c.parent && resolvedIds.has(c.parent)) return false;
+      return true;
+    });
+  }
+
+  function attachBubble(el, anchorIndex, visibleComments, allComments) {
+    const bubble = document.createElement('button');
+    bubble.className = 'mdv-bubble';
+    if (visibleComments.some((c) => c.author === 'ai')) bubble.classList.add('has-ai-reply');
+    bubble.textContent = String(visibleComments.length);
+    bubble.title = `${visibleComments.length} comment${visibleComments.length === 1 ? '' : 's'} — click to expand`;
+    bubble.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleInlineThread(el, anchorIndex, allComments);
+    });
+    el.appendChild(bubble);
+  }
+
+  function toggleInlineThread(el, anchorIndex, allComments) {
+    const existing = el.nextElementSibling;
+    if (existing && existing.classList?.contains('mdv-thread')) {
+      existing.remove();
+      return;
+    }
+    const thread = renderThread(anchorIndex, allComments);
+    el.parentNode.insertBefore(thread, el.nextSibling);
+  }
+
+  function renderThread(anchorIndex, allComments) {
+    const thread = document.createElement('div');
+    thread.className = 'mdv-thread';
+    thread.dataset.anchorIndex = String(anchorIndex);
+
+    // Top-level comments first, replies grouped under their parent.
+    const top = allComments.filter((c) => !c.parent);
+    const replies = allComments.filter((c) => c.parent);
+    const visibleTop = top.filter((c) => !hideResolvedCb.checked || !c.resolved);
+
+    for (const parent of visibleTop) {
+      thread.appendChild(renderComment(parent));
+      const myReplies = replies.filter((r) => r.parent === parent.id);
+      for (const r of myReplies) {
+        const reply = renderComment(r, true);
+        thread.appendChild(reply);
+      }
+      const parentResolved = parent.resolved;
+      const actions = document.createElement('div');
+      actions.className = 'actions-row';
+      const replyBtn = document.createElement('button');
+      replyBtn.className = 'btn';
+      replyBtn.textContent = 'Reply';
+      replyBtn.addEventListener('click', () => openComposer({
+        anchorIndex, parentId: parent.id,
+      }));
+      actions.appendChild(replyBtn);
+
+      const resolveBtn = document.createElement('button');
+      resolveBtn.className = 'btn btn-ghost';
+      resolveBtn.textContent = parentResolved ? 'Reopen' : 'Resolve';
+      resolveBtn.addEventListener('click', () => {
+        toggleResolved(anchorIndex, parent.id);
+      });
+      actions.appendChild(resolveBtn);
+      thread.appendChild(actions);
+    }
+    if (visibleTop.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.color = 'var(--muted)'; empty.style.fontSize = '13px';
+      empty.textContent = 'All comments on this anchor are resolved.';
+      thread.appendChild(empty);
+    }
+    return thread;
+  }
+
+  function renderComment(c, isReply = false) {
+    const wrap = document.createElement('div');
+    wrap.className = 'comment';
+    if (isReply) wrap.style.marginLeft = '20px';
+
+    const head = document.createElement('div');
+    head.className = 'head';
+    const author = document.createElement('span');
+    author.className = `author ${c.author === 'ai' ? 'ai' : 'me'}`;
+    author.textContent = c.author === 'ai' ? 'AI' : (c.author || 'me');
+    head.appendChild(author);
+
+    const ts = document.createElement('span');
+    ts.textContent = formatTs(c.ts);
+    head.appendChild(ts);
+
+    if (c.resolved) {
+      const tag = document.createElement('span');
+      tag.style.color = '#16a34a'; tag.textContent = '· resolved';
+      head.appendChild(tag);
+    }
+
+    wrap.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'body';
+    body.innerHTML = DOMPurify.sanitize(marked.parse(c.body || ''));
+    wrap.appendChild(body);
+
+    return wrap;
+  }
+
+  function formatTs(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const now = Date.now();
+    const diff = (now - d.getTime()) / 1000;
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return `${Math.floor(diff/60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff/3600)}h ago`;
+    if (diff < 604800) return `${Math.floor(diff/86400)}d ago`;
+    return d.toISOString().slice(0, 10);
+  }
+
+  function renderRail() {
+    rail.innerHTML = '';
+    const allThreads = [];
+    for (const [anchorIndex, comments] of parsed.commentsByAnchor.entries()) {
+      if (anchorIndex < 0) continue;
+      const visible = filterVisible(comments);
+      if (visible.length === 0) continue;
+      const top = visible.filter((c) => !c.parent)[0];
+      if (!top) continue;
+      const el = out.querySelector(`[data-anchor-id="${anchorIndex}"]`);
+      const snippet = el?.textContent?.slice(0, 120) || '(missing element)';
+      allThreads.push({ anchorIndex, top, comments, snippet });
+    }
+    threadCountEl.textContent = String(allThreads.length);
+    if (allThreads.length === 0) {
+      rail.classList.add('rail-empty');
+      rail.textContent = 'No comments yet. Right-click any paragraph in the document to add one.';
+      return;
+    }
+    rail.classList.remove('rail-empty');
+    for (const t of allThreads) {
+      const card = document.createElement('div');
+      card.className = 'rail-thread';
+      if (t.top.resolved) card.classList.add('resolved');
+      const sn = document.createElement('div'); sn.className = 'snippet'; sn.textContent = t.snippet;
+      const bp = document.createElement('div'); bp.className = 'body-preview';
+      bp.textContent = t.top.body.length > 100 ? t.top.body.slice(0, 100) + '…' : t.top.body;
+      const meta = document.createElement('div'); meta.className = 'meta';
+      meta.textContent = `${t.top.author === 'ai' ? 'AI' : (t.top.author || 'me')} · ${formatTs(t.top.ts)} · ${t.comments.length} message${t.comments.length === 1 ? '' : 's'}`;
+      card.append(sn, bp, meta);
+      card.addEventListener('click', () => {
+        const el = out.querySelector(`[data-anchor-id="${t.anchorIndex}"]`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Auto-expand thread.
+          if (!el.nextElementSibling?.classList?.contains('mdv-thread')) {
+            toggleInlineThread(el, t.anchorIndex, t.comments);
+          }
+        }
+      });
+      rail.appendChild(card);
+    }
+  }
+
+  // ====================================================================
+  // Right-click context menu
+  // ====================================================================
+  let ctxmenu = null;
+  function closeCtxmenu() { if (ctxmenu) { ctxmenu.remove(); ctxmenu = null; } }
+  document.addEventListener('click', closeCtxmenu);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtxmenu(); });
+
+  out.addEventListener('contextmenu', (e) => {
+    const el = e.target.closest('[data-anchor-id]');
+    if (!el) return;
+    e.preventDefault();
+    closeCtxmenu();
+    const anchorIndex = Number(el.getAttribute('data-anchor-id'));
+    const menu = document.createElement('div');
+    menu.className = 'mdv-ctxmenu';
+    menu.style.left = `${e.pageX}px`;
+    menu.style.top = `${e.pageY}px`;
+    const btn1 = document.createElement('button');
+    btn1.textContent = 'Comment on this';
+    btn1.addEventListener('click', () => {
+      closeCtxmenu();
+      openComposer({ anchorIndex });
+    });
+    menu.appendChild(btn1);
+
+    const existing = parsed.commentsByAnchor.get(anchorIndex) ?? [];
+    if (existing.length > 0) {
+      const btn2 = document.createElement('button');
+      btn2.textContent = `View ${existing.length} comment${existing.length === 1 ? '' : 's'}`;
+      btn2.addEventListener('click', () => {
+        closeCtxmenu();
+        toggleInlineThread(el, anchorIndex, existing);
+      });
+      menu.appendChild(btn2);
+    }
+    document.body.appendChild(menu);
+    ctxmenu = menu;
+  });
+
+  // Long-press for mobile (tap and hold).
+  let pressTimer = null;
+  out.addEventListener('touchstart', (e) => {
+    const el = e.target.closest('[data-anchor-id]');
+    if (!el) return;
+    pressTimer = window.setTimeout(() => {
+      const touch = e.touches[0];
+      const fakeEvt = new MouseEvent('contextmenu', {
+        bubbles: true, cancelable: true,
+        clientX: touch.clientX, clientY: touch.clientY,
+      });
+      el.dispatchEvent(fakeEvt);
+    }, 480);
+  });
+  out.addEventListener('touchend', () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } });
+  out.addEventListener('touchmove', () => { if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; } });
+
+  // ====================================================================
+  // Composer modal
+  // ====================================================================
+  function openComposer({ anchorIndex, parentId = null }) {
+    const el = out.querySelector(`[data-anchor-id="${anchorIndex}"]`);
+    const snippet = el?.textContent?.trim().slice(0, 280) || '(unknown anchor)';
+
+    const bg = document.createElement('div');
+    bg.className = 'mdv-modal-bg';
+    bg.addEventListener('click', (e) => { if (e.target === bg) close(); });
+
+    const modal = document.createElement('div');
+    modal.className = 'mdv-modal';
+    modal.innerHTML = `
+      <h3>${parentId ? 'Reply to comment' : 'New comment'}</h3>
+      <div class="anchor-snippet">${escapeHtml(snippet)}</div>
+      <label for="mdv-body">Markdown body (links + images supported via standard syntax)</label>
+      <textarea id="mdv-body" placeholder="Type your comment. Links like [text](url) and images like ![alt](url) work."></textarea>
+      <div class="row">
+        <label>Image URL <input type="text" id="mdv-img" placeholder="https://… (appended as ![](url) on submit)" style="width:280px"></label>
+      </div>
+      <div class="row">
+        <label>Author
+          <select id="mdv-author">
+            <option value="me">me</option>
+            <option value="ai">ai</option>
+          </select>
+        </label>
+        <span style="color:var(--muted);font-size:11px">Your last choice persists locally.</span>
+      </div>
+      <div class="actions">
+        <button class="btn btn-ghost" id="mdv-cancel">Cancel</button>
+        <button class="btn btn-primary" id="mdv-submit">${parentId ? 'Post reply' : 'Post comment'} (⌘↵)</button>
+      </div>
+    `;
+    bg.appendChild(modal); document.body.appendChild(bg);
+
+    const bodyEl = modal.querySelector('#mdv-body');
+    const imgEl = modal.querySelector('#mdv-img');
+    const authorEl = modal.querySelector('#mdv-author');
+    authorEl.value = author;
+    bodyEl.focus();
+
+    function close() { bg.remove(); document.removeEventListener('keydown', onKey); }
+    function submit() {
+      let body = bodyEl.value.trim();
+      const img = imgEl.value.trim();
+      if (img) body = (body ? body + '\n\n' : '') + `![](${img})`;
+      if (!body) return;
+      const newAuthor = authorEl.value;
+      author = newAuthor;
+      localStorage.setItem('mdv.author', author);
+      addComment({ anchorIndex, parentId, body, author: newAuthor });
+      close();
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') { close(); }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { submit(); }
+    }
+    document.addEventListener('keydown', onKey);
+    modal.querySelector('#mdv-cancel').addEventListener('click', close);
+    modal.querySelector('#mdv-submit').addEventListener('click', submit);
+  }
+
+  function addComment({ anchorIndex, parentId, body, author }) {
+    const c = {
+      v: 1, id: `cmt-${cryptoRand(8)}`,
+      author, ts: new Date().toISOString(),
+      parent: parentId, body,
+    };
+    const existing = parsed.commentsByAnchor.get(anchorIndex) ?? [];
+    parsed.commentsByAnchor.set(anchorIndex, [...existing, c]);
+    markDirty();
+    renderAll();
+  }
+
+  function toggleResolved(anchorIndex, commentId) {
+    const arr = parsed.commentsByAnchor.get(anchorIndex) ?? [];
+    parsed.commentsByAnchor.set(
+      anchorIndex,
+      arr.map((c) => c.id === commentId
+        ? { ...c, resolved: !c.resolved, resolvedTs: c.resolved ? undefined : new Date().toISOString() }
+        : c),
+    );
+    markDirty();
+    renderAll();
+  }
+
+  function cryptoRand(n) {
+    const a = new Uint8Array(Math.ceil(n / 2));
+    crypto.getRandomValues(a);
+    return Array.from(a).map((x) => x.toString(16).padStart(2, '0')).join('').slice(0, n);
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // ====================================================================
+  // File I/O
+  // ====================================================================
+  async function openFile() {
+    if (window.showOpenFilePicker) {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ description: 'Markdown', accept: {
+            'text/markdown': ['.md', '.markdown', '.mmd'],
+            'text/plain': ['.md', '.markdown', '.mmd'],
+          }}],
+        });
+        fileHandle = handle;
+        const file = await handle.getFile();
+        await loadFile(file);
+      } catch (e) {
+        if (e?.name !== 'AbortError') showError(e);
+      }
+    } else {
+      fileInput.click();
+    }
+  }
+
+  async function loadFile(file) {
+    fileName = file.name;
+    nameEl.textContent = fileName;
+    document.title = fileName + ' — Markdown viewer';
+    sourceText = await file.text();
+    parsed = parseSource(sourceText);
+    isDirty = false;
+    setStatus('saved', `Loaded ${fileName}`);
+    await renderAll();
+  }
+
+  async function saveFile() {
+    if (!sourceText && parsed.segments.length === 0) {
+      alert('No file loaded.');
+      return;
+    }
+    const newText = serializeSource();
+    setStatus('saving', 'Saving…');
+    try {
+      if (fileHandle && fileHandle.createWritable) {
+        const writable = await fileHandle.createWritable();
+        await writable.write(newText);
+        await writable.close();
+        sourceText = newText;
+        isDirty = false;
+        setStatus('saved', `Saved to ${fileName}`);
+      } else {
+        // Fallback: download as a new file.
+        const blob = new Blob([newText], { type: 'text/markdown' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = fileName || 'document.md';
+        a.click();
+        URL.revokeObjectURL(a.href);
+        sourceText = newText;
+        isDirty = false;
+        setStatus('saved', 'Downloaded (browser does not support direct save)');
+      }
+    } catch (e) {
+      showError(e);
+      setStatus('dirty', 'Save failed');
+    }
+  }
+
+  async function saveAs() {
+    if (!window.showSaveFilePicker) {
+      await saveFile(); // download path
+      return;
+    }
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: fileName || 'document.md',
+        types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] }}],
+      });
+      fileHandle = handle;
+      fileName = handle.name;
+      nameEl.textContent = fileName;
+      await saveFile();
+    } catch (e) {
+      if (e?.name !== 'AbortError') showError(e);
+    }
+  }
+
+  function markDirty() {
+    isDirty = true;
+    setStatus('dirty', 'Unsaved comments');
+  }
+  function setStatus(cls, text) {
+    saveStatus.className = '';
+    saveStatus.classList.add(cls);
+    saveStatus.textContent = text;
+  }
+  function showError(e) {
+    err.style.display = 'block';
+    err.textContent = (e?.message || String(e));
+  }
+
+  // ====================================================================
+  // AI export — copy a plaintext rendering of the comments to clipboard
+  // so the user can paste into a Claude/Codex prompt without sharing
+  // the whole file.
+  // ====================================================================
+  async function copyAiExport() {
+    if (parsed.segments.length === 0) {
+      alert('No file loaded.');
+      return;
+    }
+    const lines = [];
+    lines.push(`# Comments on ${fileName || '(unsaved)'}`);
+    lines.push('');
+    let anyOutput = false;
+    for (const [anchorIndex, comments] of parsed.commentsByAnchor.entries()) {
+      if (anchorIndex < 0) continue;
+      if (comments.length === 0) continue;
+      const el = out.querySelector(`[data-anchor-id="${anchorIndex}"]`);
+      const snippet = el?.textContent?.trim().slice(0, 200) || '(no snippet)';
+      const top = comments.filter((c) => !c.parent);
+      const replies = comments.filter((c) => c.parent);
+      for (const t of top) {
+        anyOutput = true;
+        lines.push(`## anchor ${anchorIndex}`);
+        lines.push(`> ${snippet}`);
+        lines.push('');
+        lines.push(`- ${t.author} (${t.ts})${t.resolved ? ' [resolved]' : ''}:`);
+        for (const ln of t.body.split('\n')) lines.push(`  ${ln}`);
+        for (const r of replies.filter((r) => r.parent === t.id)) {
+          lines.push('');
+          lines.push(`  - reply by ${r.author} (${r.ts})${r.resolved ? ' [resolved]' : ''}:`);
+          for (const ln of r.body.split('\n')) lines.push(`    ${ln}`);
+        }
+        lines.push('');
+      }
+    }
+    if (!anyOutput) lines.push('(no comments)');
+    const text = lines.join('\n');
+    await navigator.clipboard.writeText(text);
+    alert('Copied. Paste into your AI prompt.');
+  }
+
+  // ====================================================================
+  // Wiring
+  // ====================================================================
+  openBtn.addEventListener('click', openFile);
+  fileInput.addEventListener('change', async (e) => {
+    const f = e.target.files?.[0];
+    if (f) { fileHandle = null; await loadFile(f); }
+  });
+  saveBtn.addEventListener('click', saveFile);
+  saveAsBtn.addEventListener('click', saveAs);
+  copyAiBtn.addEventListener('click', copyAiExport);
+  hideResolvedCb.addEventListener('change', renderAll);
+  font.addEventListener('input', () => {
+    out.style.fontSize = `${font.value}px`;
+  });
+
+  // Drag & drop
+  ['dragenter','dragover','dragleave','drop'].forEach((ev) =>
+    drop.addEventListener(ev, (e) => { e.preventDefault(); e.stopPropagation(); }));
+  ['dragenter','dragover'].forEach((ev) =>
+    drop.addEventListener(ev, () => drop.style.borderColor = 'var(--brand)'));
+  ['dragleave','drop'].forEach((ev) =>
+    drop.addEventListener(ev, () => drop.style.borderColor = 'var(--border)'));
+  drop.addEventListener('drop', (e) => {
+    const f = e.dataTransfer.files?.[0];
+    if (f) { fileHandle = null; loadFile(f); }
+  });
+
+  // Cmd/Ctrl-S to save
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault();
+      saveFile();
+    }
+  });
+
+  // Warn on unsaved-on-close
+  window.addEventListener('beforeunload', (e) => {
+    if (isDirty) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
+  setStatus('saved', 'No file');
+});
+</script>
+</body>
+</html>
