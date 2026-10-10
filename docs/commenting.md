@@ -416,7 +416,7 @@ Every call to `renderMarkdown` goes through a hook installed at the end of `comm
 
 ## Data-safety tests
 
-`tests/e2e/comments.spec.mjs` runs in Chrome with `pnpm test`. Saves go to a fake `FileSystemFileHandle`, to the browser's private file system (OPFS) or to a fake desktop bridge; no real file is touched. Of its 27 tests, 23 fail when run against the code before 2026-10-10 (commit 568069f), each on the bug it names, and 4 are controls that pass on both (the sample's byte-for-byte round trip, a file only touched by another program, writes that never overlap, and the startup restore with no link). The main ones, and what they caught:
+`tests/e2e/comments.spec.mjs` runs in Chrome with `pnpm test`. Saves go to a fake `FileSystemFileHandle`, to the browser's private file system (OPFS) or to a fake desktop bridge; no real file is touched. Of its 28 tests, 24 fail when run against the code before 2026-10-10 (commit 568069f), each on the bug it names, and 4 are controls that pass on both (the sample's byte-for-byte round trip, a file only touched by another program, writes that never overlap, and the startup restore with no link). The main ones, and what they caught:
 
 | Test | Was |
 |---|---|
@@ -431,6 +431,7 @@ Every call to `renderMarkdown` goes through a hook installed at the end of `comm
 | the startup restore never overrides an explicit `?file=` link | the remembered file replaced the linked one |
 | the desktop app never restores the last browser file | it did |
 | the file-plus button opens the file chooser without the File System Access API | it threw a `TypeError` |
+| thread cards keep their reply box and buttons visible when the sidebar is full | the cards shrank and cut off their replies and buttons |
 | a comment change never downloads by itself | every change downloaded a copy |
 
 Further tests cover the desktop bridge (every save through `mdvHost.saveDocument` with the mtime that was read; a desktop conflict), a file only touched by another program (no false conflict), writes that never overlap, a save still running when another document opens, unsaved changes kept when another document opens, the `beforeunload` question, CRLF files, a typed comment kept in its box when adding fails, reply drafts, and escaping of every value the sidebar shows.
@@ -449,7 +450,7 @@ Further tests cover the desktop bridge (every save through `mdvHost.saveDocument
 8. **The author name has no settings control** (see [Author identity](#author-identity)).
 9. **A remembered file is usually restored read-only.** Browsers keep file permissions for a session unless the reader allows them on every visit, so after a reload the file opens read-only until Cmd/Ctrl+S asks for permission *(inferred from the File System Access permission model)*.
 
-Fixed on 2026-10-10, with a test for each (see [Data-safety tests](#data-safety-tests)): new threads were lost; deleted threads came back; threads inside sections attached to the next heading; anchors failed on any block with inline markup, line breaks or a chip; markers split lists and tables; the comment block regex matched mentions anywhere, including code; literal escape text and unparsable blocks deleted every comment; there was no conflict detection; workspace matching was by name; the file-plus button threw outside Chromium; the startup restore could replace a `?file=` document; pending saves were dropped or misdirected when switching files; non-Chromium browsers downloaded on every change; there was no unsaved-changes warning; opening a file failed without IndexedDB; the three-level resolver was dead code; the add-comment popup opened near the top of a long, scrolled page and scrolled the reader away; and values from the file could inject attributes into the sidebar.
+Fixed on 2026-10-10, with a test for each (see [Data-safety tests](#data-safety-tests)): new threads were lost; deleted threads came back; threads inside sections attached to the next heading; anchors failed on any block with inline markup, line breaks or a chip; markers split lists and tables; the comment block regex matched mentions anywhere, including code; literal escape text and unparsable blocks deleted every comment; there was no conflict detection; workspace matching was by name; the file-plus button threw outside Chromium; the startup restore could replace a `?file=` document; pending saves were dropped or misdirected when switching files; non-Chromium browsers downloaded on every change; there was no unsaved-changes warning; opening a file failed without IndexedDB; the three-level resolver was dead code; the add-comment popup opened near the top of a long, scrolled page and scrolled the reader away; thread cards were cut off once several threads filled the sidebar; and values from the file could inject attributes into the sidebar.
 
 ---
 

@@ -72,7 +72,7 @@ individually today ([architecture.md](architecture.md) shows how).
 | Paste into the settings field and a reply box, before and after the fix | Before: the document was replaced. After: the document is kept, and a page-level paste unlinks the file handle (`null`) | Runtime (Chrome only) |
 | `?file=` fetch finishing after a handle was linked (simulated race) | Handle cleared, document renders, console clean | Runtime (Chrome only) |
 | Known issues 1, 3, 7, 8, 9, 10, 12, 13 | Reproduced as described in [Known issues](#known-issues) | Runtime (Chrome only) |
-| Comment data safety, issues 1–6 plus the file-plus button and the startup restore (2026-10-10) | `tests/e2e/comments.spec.mjs`, 27 tests. Run against the code before the fix (568069f), 23 fail, each on the bug it names, and 4 controls pass; with the fix all 27 pass. Saves go to a fake file handle, the browser's private file system (OPFS) or a fake desktop bridge | Runtime (Chrome, automated) |
+| Comment data safety, issues 1–6 plus the file-plus button and the startup restore (2026-10-10) | `tests/e2e/comments.spec.mjs`, 28 tests. Run against the code before the fix (568069f), 24 fail, each on the bug it names, and 4 controls pass; with the fix all 28 pass. Saves go to a fake file handle, the browser's private file system (OPFS) or a fake desktop bridge | Runtime (Chrome, automated) |
 
 **Not yet verified:**
 - saving back to a real file on disk, which needs a real user gesture (the save logic itself is covered by the
