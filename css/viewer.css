@@ -1451,7 +1451,7 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .diagram-overlay-controls { display: flex; gap: 4px; align-items: center; }
-.diagram-overlay-controls button {
+.diagram-overlay-controls button, .diagram-overlay-actual {
   display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   height: 32px; min-width: 34px; padding: 0 10px;
   border: 1px solid var(--border-primary); background: var(--bg-card);
@@ -1460,7 +1460,8 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
   cursor: pointer;
   transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
-.diagram-overlay-controls button:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-accent); }
+.diagram-overlay-controls button:hover, .diagram-overlay-actual:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-accent); }
+.diagram-overlay-actual { flex-shrink: 0; margin-right: -8px; }
 .diagram-overlay-controls button.active { background: var(--accent-soft); color: var(--accent-strong); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
 .diagram-overlay-controls button:last-child { margin-left: 8px; }
 #diagramZoomLabel {

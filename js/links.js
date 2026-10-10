@@ -234,7 +234,7 @@ function buildLinksPanel(links) {
 // ============================================
 // Copies only the code (known issue 13). markdown-it wraps the highlight callback's output in its own
 // <pre><code>, so the block holds the header (language label and this button) and then the inner code element:
-// copy that inner element, never the outer one. Takes the button itself (onclick="copyCode(this)") or finds it in
+// copy that inner element, never the outer one. Takes the button itself (what an inline handler used to pass) or finds it in
 // whatever a delegated listener passes (an element or an event, in any argument position).
 function copyCode(...args) {
   let btn = null;
@@ -250,7 +250,7 @@ function copyCode(...args) {
   if (!code) return;
   const text = code.textContent.replace(/\n$/, ''); // the fence's closing newline is not part of the code
   mdvCopyText(text).then(
-    () => mdvFlashCopyButton(btn, 'Copied', 'copied'),
+    () => mdvFlashCopyButton(btn, 'Copied!', 'copied'),
     () => mdvFlashCopyButton(btn, 'Copy failed', 'copy-failed'),
   );
 }

@@ -233,12 +233,14 @@ function mdvWireOverlay() {
   els.body.setAttribute('aria-label', 'Diagram. Drag to pan; use the plus and minus keys to zoom.');
   if (els.fitBtn) els.fitBtn.title = 'Fit to screen (0)';
 
-  // "1:1" (actual size) sits next to Fit. Never an inline handler: through the page's delegated actions
-  // (js/actions.js) when the page has them, otherwise a listener of its own.
-  if (els.fitBtn && !document.getElementById('diagramActualBtn')) {
+  // "1:1" (actual size) sits just before the markup's own controls, which keep their order. Never an inline
+  // handler: through the page's delegated actions (js/actions.js) when the page has them, otherwise a listener.
+  const controls = els.overlay.querySelector('.diagram-overlay-controls');
+  if (controls && !document.getElementById('diagramActualBtn')) {
     const actual = document.createElement('button');
     actual.type = 'button';
     actual.id = 'diagramActualBtn';
+    actual.className = 'diagram-overlay-actual';
     actual.textContent = '1:1';
     actual.title = 'Actual size (1)';
     actual.setAttribute('aria-label', 'Actual size');
@@ -248,9 +250,8 @@ function mdvWireOverlay() {
     } else {
       actual.addEventListener('click', () => mdvDiagramActualSize(true));
     }
-    els.fitBtn.after(actual);
+    controls.before(actual);
   }
-  const controls = els.overlay.querySelector('.diagram-overlay-controls');
   if (controls && !els.overlay.querySelector('.diagram-overlay-hint')) {
     // Fixed text (no document content). It sits in the header, so it never covers the diagram.
     const hint = document.createElement('div');
@@ -258,7 +259,7 @@ function mdvWireOverlay() {
     hint.setAttribute('aria-hidden', 'true');
     hint.innerHTML = '<span>Drag to pan</span><span>Scroll or pinch to zoom</span>' +
       '<span><kbd>0</kbd> fit</span><span><kbd>1</kbd> actual size</span><span><kbd>Esc</kbd> close</span>';
-    controls.before(hint);
+    (document.getElementById('diagramActualBtn') || controls).before(hint);
   }
 
   els.body.addEventListener('wheel', mdvOnWheel, { passive: false });

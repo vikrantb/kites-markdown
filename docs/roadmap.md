@@ -126,6 +126,8 @@ Fixed in the initial import, and kept here as a record:
 | 16 | Diagram overlay titles are guessed by regex: any source containing "pie" is titled "Pie Chart" | **Fixed 2026-10-10.** `tests/e2e/visuals.spec.mjs` › *the expanded view is titled by the type Mermaid reports*. The old code titled the kitchen sink's flowchart and sequence diagram "Diagram" | The title is the `diagramType` that `mermaid.render` returns, plus the diagram's own title when it has one ("Pie chart · Estimated effort by area") |
 | 17 | A frontmatter `status:` or `date:` with no value stops the whole document from rendering (`TypeError` in `renderFrontmatterDashboard`). When the file was opened by `?file=`, `loadFromUrl` swallows the error and shows **"File not found on server"** for a file that exists | Verified in Chrome: a 7-line file with an empty `status:` renders nothing, logs nothing, and shows the not-found prompt ([features.md](features.md#current-limitations)) | Coerce dashboard fields to strings, and move the dashboard into the guarded post-processing. Never report a render error as "not found" |
 
+Before and after the visual-system change that closed issues 9, 10, 11, 13, 14, 15 and 16: [light theme](images/visuals-light-before-after.png), [diagrams in the dark theme](images/visuals-dark-diagrams-before-after.png), [code blocks and callouts](images/visuals-code-callouts-before-after.png).
+
 ### Robustness and polish
 
 - **A failed optional library disables its feature silently,** because the `if (window.X)` guards have no warning. Task lists were silently off this way until the initial import fixed a misspelled global.

@@ -228,7 +228,7 @@ test('the copy button copies only the code (issue 13)', async ({ page, context }
     '            break',
     '        queue.remove(op)',
   ].join('\n'));
-  await expect(block.locator('.copy-btn')).toHaveText('Copied');
+  await expect(block.locator('.copy-btn')).toHaveText('Copied!');
   await expect(block.locator('.copy-btn')).toHaveText('Copy', { timeout: 5_000 });
 });
 

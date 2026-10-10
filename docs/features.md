@@ -193,6 +193,8 @@ The choice is stored in `localStorage` under `mdv-fontsize`.
 - Code highlighting uses each theme's own syntax colours (the vendored highlight.js stylesheets still load, and the viewer's colours override them).
 - Mermaid diagrams are drawn in the theme's palette: Mermaid's `base` theme, fed from the `--diagram-*` tokens. A theme change redraws every diagram already on the page from its saved source, and an open expanded view follows.
 
+![One flowchart in the light, sepia and dark themes](images/visuals-diagram-themes.png)
+
 ### Reading progress and scroll buttons
 
 - A thin bar under the toolbar fills as you scroll (`scroll` listener).
@@ -246,7 +248,7 @@ Open with the **Search** button or `Ctrl/Cmd+K` (`openSearch`). `Ctrl/Cmd+K` whi
 
 ### Diagrams: expand, zoom and fit
 
-Fenced code blocks tagged `mermaid` are drawn by `renderMermaidDiagrams` in the current theme's palette, each on a card labelled with its type (Flowchart, Sequence diagram, Pie chart…). [`samples/diagram-gallery.md`](../samples/diagram-gallery.md) shows every type in one file. If a diagram cannot be drawn, its card says so, gives Mermaid's reason, and keeps the source readable underneath.
+Fenced code blocks tagged `mermaid` are drawn by `renderMermaidDiagrams` in the current theme's palette, each on a card labelled with its type (Flowchart, Sequence diagram, Pie chart…). [`samples/diagram-gallery.md`](../samples/diagram-gallery.md) shows every type in one file ([dark theme screenshot](images/visuals-diagram-gallery-dark.png); [the expanded view](images/visuals-overlay.png)). If a diagram cannot be drawn, its card says so, gives Mermaid's reason, and keeps the source readable underneath.
 
 Once a diagram is drawn:
 
@@ -278,7 +280,7 @@ A node whose label is exactly the text of a heading in the document links to tha
 
 For fenced code blocks, the markdown-it `highlight` option (set where `md` is created) adds a header with the language name (`text` if none is given) and a **Copy** button (`copyCode`). highlight.js colours the code only when it recognises the language. Otherwise the code is shown escaped and uncoloured. Indented code blocks do not get the header.
 
-The button copies exactly the code: not the language label, not the word "Copy", and not the fence's closing newline. It shows "Copied" with a check mark for 1.6 seconds, or "Copy failed" if the browser refuses. Outside a secure context it falls back to the legacy copy command.
+The button copies exactly the code: not the language label, not the word "Copy", and not the fence's closing newline. It shows "Copied!" with a check mark for 1.6 seconds, or "Copy failed" if the browser refuses. Outside a secure context it falls back to the legacy copy command.
 
 Each code block has a header with a coloured dot for common languages, the language name and the copy button. Long lines scroll inside the block, with a soft edge on the side the line continues to. Ligatures are off, so `!=` reads as two characters, as typed.
 
