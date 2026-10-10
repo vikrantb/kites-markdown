@@ -404,6 +404,22 @@ for (const theme of THEMES) {
   });
 }
 
+test("a diagram's own style and classDef lines still win over the theme palette", async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  await renderSource(page, '# Author styles\n\n```mermaid\nflowchart LR\n    A[Plain] --> B[Styled] --> C[Classed]\n    style B fill:#ffcc00\n    classDef hot fill:#ff6644\n    class C hot\n```\n');
+  const fills = await page.evaluate(() => {
+    const fill = (label) => {
+      const node = [...document.querySelectorAll('#mdBody .node')]
+        .find((n) => (n.querySelector('.nodeLabel') || n).textContent.trim() === label);
+      return getComputedStyle(node.querySelector('rect, polygon, path')).fill;
+    };
+    return { plain: fill('Plain'), styled: fill('Styled'), classed: fill('Classed') };
+  });
+  expect(fills.styled).toBe('rgb(255, 204, 0)');
+  expect(fills.classed).toBe('rgb(255, 102, 68)');
+  expect(fills.plain).toBe(rgb(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--diagram-node'))));
+});
+
 test('a diagram with a syntax error shows the reason and its source, and leaves nothing behind', async ({ page }) => {
   const errors = await open(page, 'kitchen-sink.md');
   await renderSource(page, '# Broken\n\n```mermaid\nflowchart TD\n    A --> B -->\n```\n');
@@ -424,6 +440,12 @@ test('an image alone in a paragraph becomes a captioned figure, and number colum
   const figure = page.locator('#mdBody p.mdv-figure');
   await expect(figure).toHaveCount(1);
   await expect(figure.locator('.mdv-figcaption')).toHaveText('Blue gradient banner with a white stripe');
+
+  // A linked image with alt text stays an image (a figure), instead of becoming a text-only link card.
+  const pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  await renderSource(page, `# Linked\n\n[![Release chart](${pixel})](https://example.com/chart)\n`);
+  await expect(page.locator('#mdBody a.link-chip')).toHaveCount(0);
+  await expect(page.locator('#mdBody p.mdv-figure a img')).toHaveCount(1);
 
   await renderSource(page, '# Numbers\n\n| Area | Words | Share |\n|---|---|---|\n| Prose | 1,204 | 52% |\n| Code | 380 | 18% |\n| Notes | — | 3% |\n');
   const aligned = await page.$$eval('#mdBody table tr', (rows) => rows.map((r) => [...r.children].map((c) => getComputedStyle(c).textAlign)));

@@ -135,7 +135,7 @@ own global when executed on its own).
 | 12 | `<link id="hljs-light" href="vendor/github.min.css">` | — | `setTheme` sets `disabled = (theme === 'dark')` | Code colours, light theme | Code is uncoloured in light theme |
 | 13 | `<link id="hljs-dark" href="vendor/github-dark.min.css" disabled>` | — | `setTheme` sets `disabled = (theme !== 'dark')` | Code colours, dark theme | Code is uncoloured in dark theme |
 | 14 | `highlight.min.js` | `hljs` | The `highlight(str, lang)` option passed to `markdownit`: `hljs.getLanguage(lang)` then `hljs.highlight(str, { language: lang })` | Syntax highlighting | Guarded by `typeof hljs !== 'undefined'`; code is HTML-escaped and shown plain. No auto-detection is used, so an unknown or missing language is also shown plain |
-| 15 | `mermaid.min.js` | `mermaid` (set by the bundle's last line, `globalThis.mermaid = ...`) | `renderMermaidDiagrams`: `mermaid.initialize({ startOnLoad: false, theme, securityLevel: 'loose' })` then `mermaid.render(id + '-svg', code)`; `setTheme` calls it again 100 ms after a theme change, but it only selects `.mermaid:not(.rendered)`, so diagrams already drawn are not re-rendered (see §5). The fence override (`md.renderer.rules.fence`) emits `<pre class="mermaid">` for ` ```mermaid ` blocks. `openDiagramOverlay` and `setupMermaidClickToSection` work on the rendered SVG | Diagrams, expand overlay, click-a-node-to-jump | Guarded by `typeof mermaid === 'undefined'` (returns early). Diagram source stays visible as escaped text inside `pre.mermaid` |
+| 15 | `mermaid.min.js` | `mermaid` (set by the bundle's last line, `globalThis.mermaid = ...`) | `js/mermaid.js` calls `mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' })` when it loads, then, for each render pass, `mermaid.initialize` with `theme: 'base'`, `themeVariables` read from the `--diagram-*` tokens and a `themeCSS`, and `mermaid.render('mdv-mermaid-N', source)` for each diagram (a fresh id every time). `setTheme` calls `renderMermaidDiagrams` 100 ms after a theme change, and every diagram is redrawn from its saved source (`data-mdv-source`). The fence override (`md.renderer.rules.fence`) emits `<pre class="mermaid">` for ` ```mermaid ` blocks. `openDiagramOverlay` clones the drawn SVG; `mdvLinkDiagramNodes` links its nodes to headings | Diagrams, expand overlay, click-a-node-to-jump | Guarded by `typeof mermaid === 'undefined'` (returns early). Diagram source stays visible as escaped text inside `pre.mermaid` |
 | 16 | `<link href="vendor/katex.min.css">` | — | Styles the HTML that KaTeX emits; loads `fonts/*.woff2` via relative `url(fonts/...)` | Math layout | Math renders incorrectly laid out (inferred: KaTeX output depends on this CSS) |
 | 17 | `katex.min.js` | `katex` | `renderMath(src)`: `katex.renderToString(m, { displayMode, throwOnError: false })` for `$$...$$` and `$...$`; called from `renderMarkdown` **before** `md.render` | Math | Guarded by `typeof katex === 'undefined'`; source is returned unchanged and the `$` delimiters appear as text |
 
@@ -254,7 +254,7 @@ Newest versions on npm were checked on 2026-10-04; they are listed only to show 
 | markdown-it-footnote / mark / sub / sup / abbr | 4.0.0 / 4.0.0 / 2.0.0 / 2.0.0 / 2.0.0 | same | Nothing newer. Global names must match the `if (window.markdownitX)` guards exactly |
 | markdown-it-deflist | 3.0.0 | 4.0.0 | Major version: global name `markdownitDeflist`; definition list markup and CSS |
 | highlight.js + themes | 11.10.0 | 11.12.0 | Use `@highlightjs/cdn-assets` (same "common" build) or build a custom bundle if more languages are wanted; upgrade `highlight.min.js` and both theme CSS files **together**; keep the `<link>` ids `hljs-light` / `hljs-dark` that `setTheme` toggles. Re-test code blocks in both themes and the Copy button |
-| mermaid | 11.4.1 | 12.1.0 | Major version: global `mermaid`, `initialize({ startOnLoad: false, theme, securityLevel: 'loose' })`, the promise result `{ svg }` of `mermaid.render(id, code)`; SVG structure used by `setupMermaidClickToSection` (selectors `.node`, `.nodeLabel`, `g[id]`) and `openDiagramOverlay`; behaviour on theme switch (§5). Re-test every diagram type in the samples, error display for invalid diagrams, expand overlay, node click-to-section, dark theme |
+| mermaid | 11.4.1 | 12.1.0 | Major version: global `mermaid`; `initialize` options (`theme: 'base'`, the `themeVariables` names, `themeCSS`, `suppressErrorRendering`, `sequence.wrap`, `gantt.useWidth`); the promise result `{ svg, diagramType }` of `mermaid.render(id, code)` and the `diagramType` names in `MDV_DIAGRAM_TITLES`; the SVG classes that `themeCSS`, `mdvLinkDiagramNodes` (`g.node`, `g.mindmap-node`) and `mdvDiagramOverlayTitle` rely on. Re-run `tests/e2e/visuals.spec.mjs` (every type in `samples/diagram-gallery.md`, in all three themes) and look at the gallery in each theme |
 | KaTeX (js + css + fonts) | 0.16.11 | 0.19.0 | Upgrade `katex.min.js`, `katex.min.css` **and the whole `fonts/` set** from the same version, since the CSS names the font files. Re-test inline and display math, invalid math (with `throwOnError: false` KaTeX renders the offending source instead of throwing), both themes |
 | diff-match-patch | `master` (2019) | upstream archived | No upstream changes expected. Only `match_main` with `Match_Threshold` and `Match_Distance` is used |
 
@@ -262,13 +262,11 @@ Newest versions on npm were checked on 2026-10-04; they are listed only to show 
 
 ## 5. Known integration issues found while documenting
 
-These are recorded here for the next maintainer; they are not fixed.
+These are recorded here for the next maintainer; they are not fixed unless marked.
 
-1. **Theme switch does not re-theme existing diagrams.** `setTheme` schedules
-   `renderMermaidDiagrams` 100 ms later, but that function selects only
-   `.mermaid:not(.rendered)` and marks each diagram `rendered` after drawing it. Diagrams already
-   on the page therefore keep the Mermaid theme (`default` or `dark`) they were first drawn with
-   until the document is rendered again (read from the code; not tested in a browser).
+1. **Theme switch does not re-theme existing diagrams.** *Fixed 2026-10-10 (roadmap issue 9):*
+   each diagram keeps its source and is redrawn in the new palette; see
+   [rendering.md](rendering.md#mermaid-diagrams).
 2. **Nested `<code>` in code blocks.** The `highlight` option returns
    `<div class="code-header">…</div><code class="hljs …">…</code>`. markdown-it wraps any highlight
    output that does not start with `<pre` in `<pre><code class="language-…">…</code></pre>`, so the

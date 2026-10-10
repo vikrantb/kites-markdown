@@ -149,7 +149,7 @@ repos:
 | `date` | string | Shown next to the status badge |
 | `metrics` | list of `{label, value}` | Rendered as stat cards |
 | `repos` | list of `{name, github, branch}` | Badges; `github` makes the badge a link. `branch` is accepted but not shown |
-| `abbreviations` | map of `ABBR: Full Name` | **Not applied at present**: the parser cannot read a map, so no tooltips appear. Use `*[ABBR]: Full Name` lines in the body instead (see [Quick Reference](#quick-reference)) |
+| `abbreviations` | map of `ABBR: Full Name` (indented lines, or `- ABBR: Full Name` items) | Every whole-word occurrence gets a hover tooltip with the full name. `*[ABBR]: Full Name` lines in the body work too, and are portable to other renderers (see [Quick Reference](#quick-reference)) |
 
 ---
 
@@ -293,20 +293,20 @@ GitHub also renders mermaid natively. No special syntax needed. The fence info m
 
 Our viewer adds several enhancements to mermaid diagrams. These are all automatic — no special syntax needed:
 
-**Click-to-expand:** Every diagram has an expand button (top-right corner on hover). Click the diagram or the button to open a fullscreen overlay with zoom controls (+/-, mouse wheel, fit-to-screen).
+**Click-to-expand:** Every diagram has an expand button (top-right corner on hover). Click the diagram or the button to open it full screen: drag to pan; scroll, pinch or press `+`/`-` to zoom around the pointer; press `0` to fit, `1` for actual size, `Esc` to close.
 
-**Click-to-section:** The viewer is meant to make a mermaid node clickable when its text matches a document heading (the whole heading, or a single word longer than three letters from it), scrolling to that section. At present this does not reliably attach, because it runs before the diagrams have finished drawing (see [rendering.md](rendering.md#mermaid-diagrams)). Naming nodes after headings is still harmless and makes diagrams easier to follow.
+**Click-to-section:** A mermaid node whose label is exactly the text of a heading in the document becomes a link to that section: it is underlined, a click (or Enter, after reaching it with Tab) scrolls there, and the heading flashes. The whole label must match the whole heading, ignoring case and punctuation. Elsewhere, naming nodes after headings is harmless and still makes diagrams easier to follow.
 
-Example: if your document has `## Intake` and your diagram has a node called `Intake`, that node is the one intended to scroll to the heading.
+Example: if your document has `## Intake` and your diagram has a node called `Intake`, that node scrolls to the heading.
 
 ```mermaid
 graph TD
     Intake --> Classification --> Generation --> Delivery
 ```
 
-**Auto-type detection:** The expand overlay shows the diagram type in the title bar: Sequence Diagram, Flowchart, Class Diagram, Gantt Chart, Pie Chart, ER Diagram or State Diagram, otherwise "Diagram". Only the `graph` keyword is recognised as a flowchart; `flowchart TD` is titled "Diagram".
+**Type label:** each diagram's card, and the full-screen title bar, name the type Mermaid detected (Flowchart, Sequence diagram, Mind map, Gantt chart…). A diagram's own title (`title` in a pie or Gantt chart, or `accTitle`) is added in the title bar.
 
-**Theme:** diagrams are drawn with mermaid's dark theme when the viewer is in dark mode and its default theme otherwise. Diagrams already on screen are not redrawn when you switch theme; reopen the file to redraw them.
+**Theme:** diagrams are drawn in the viewer's own palette for the current theme (light, sepia or dark), and every diagram is redrawn when you switch theme. You do not need `%%{init: {'theme': …}}%%` directives; a `classDef` or `style` line in a diagram still wins for the nodes it names.
 
 ### Making diagrams more readable
 
@@ -479,7 +479,7 @@ The viewer column is read from the code. The other columns reflect commonly docu
 | Custom `[!TLDR]` etc. | Styled blocks | Blockquote | Blockquote | Styled callout |
 | Frontmatter dashboard | Status/metrics/repos | Table | Hidden | Properties |
 | `*[ABBR]:` tooltips | Hover tooltips | No | No | No |
-| Frontmatter `abbreviations` | Not applied | No | No | No |
+| Frontmatter `abbreviations` | Hover tooltips | No | No | No |
 | Section minimap | Auto (3+ H2s) | No | No | No |
 | `<!-- narrate: -->` | **TTS audio** (diagrams, tables) | Hidden | Hidden | Hidden |
 | Heading fold | Auto (H1–H4) | No | Outline only | Built-in |

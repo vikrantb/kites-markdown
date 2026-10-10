@@ -233,14 +233,21 @@ function mdvWireOverlay() {
   els.body.setAttribute('aria-label', 'Diagram. Drag to pan; use the plus and minus keys to zoom.');
   if (els.fitBtn) els.fitBtn.title = 'Fit to screen (0)';
 
-  // "1:1" (actual size) sits next to Fit. Wired here with addEventListener: no inline handler.
+  // "1:1" (actual size) sits next to Fit. Never an inline handler: through the page's delegated actions
+  // (js/actions.js) when the page has them, otherwise a listener of its own.
   if (els.fitBtn && !document.getElementById('diagramActualBtn')) {
     const actual = document.createElement('button');
     actual.type = 'button';
     actual.id = 'diagramActualBtn';
     actual.textContent = '1:1';
     actual.title = 'Actual size (1)';
-    actual.addEventListener('click', () => mdvDiagramActualSize(true));
+    actual.setAttribute('aria-label', 'Actual size');
+    if (typeof mdvRegisterActions === 'function') {
+      mdvRegisterActions({ 'diagram-actual-size': { click: () => mdvDiagramActualSize(true) } });
+      actual.dataset.action = 'diagram-actual-size';
+    } else {
+      actual.addEventListener('click', () => mdvDiagramActualSize(true));
+    }
     els.fitBtn.after(actual);
   }
   const controls = els.overlay.querySelector('.diagram-overlay-controls');

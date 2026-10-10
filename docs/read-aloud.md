@@ -85,8 +85,8 @@ Because `renderMarkdown` runs again whenever a document is loaded, pasted, or a 
 Notes on the generic `text` branch, all following from `textContent`:
 
 - Lists, blockquotes, callouts, definition lists, footnote sections and HTML blocks are read as their plain text.
-- Images contribute nothing; `alt` text is not part of `textContent`.
-- Every other element sitting directly in `#mdBody` or a `section-content` is read too, including the front-matter dashboard (`.fm-dashboard`) and, when the document has three or more `h2` headings, the section minimap (`.section-minimap`, whose buttons hold the `h2` titles) (inferred; see [Limitations](#limitations-and-browser-quirks)).
+- An image inside other text contributes nothing; `alt` text is not part of `textContent`. An image alone in its paragraph gets a visible caption (its title, or its alt text) from `mdvCaptionImages`, and that caption is read.
+- Every other element sitting directly in `#mdBody` or a `section-content` is read too, including the front-matter dashboard (`.fm-dashboard`) (inferred; see [Limitations](#limitations-and-browser-quirks)). The section minimap is not read: its labels are drawn by CSS, so its `textContent` is empty.
 
 ```mermaid
 flowchart TD
@@ -298,7 +298,7 @@ There is no voice picker. The code never calls `speechSynthesis.getVoices()` and
 | Navigation while paused (desktop) | Next / Previous / Seek cancel speech but do not call `resume()`. If the browser keeps its paused flag after `cancel()`, newly queued speech stays silent, and the next Play only calls `resume()` on an empty queue (unverified) | `ttsNext`, `ttsPrev`, `ttsSeekClick`, `ttsPlay` |
 | Android pause | Pause cancels; Play restarts the current section from the beginning | `ttsPause`, `ttsPlay` |
 | Re-render while playing | Loading another document, adding a comment or deleting a thread re-runs `renderMarkdown` and rebuilds `ttsSections`, but nothing stops speech or resets `ttsCurrentIdx`. The rest of the old section's chunks are still spoken, then playback continues at the old index in the new section list (inferred) | `renderMarkdown`, `buildTtsSections` |
-| Extra blocks read | The front-matter dashboard and (with three or more `h2` headings) the section minimap are direct children of `#mdBody`, so their text is read as part of the first section; the minimap's button labels are concatenated without spaces (inferred) | `extractText`, `renderFrontmatterDashboard`, `buildSectionMinimap` |
+| Extra blocks read | The front-matter dashboard is a direct child of `#mdBody`, so its text is read as part of the first section (inferred). The section minimap used to be read the same way, its labels run together; since its labels are drawn by CSS it is silent | `extractText`, `renderFrontmatterDashboard` |
 | Math | KaTeX output carries both MathML (including the TeX source annotation) and HTML glyphs, so `textContent` repeats a formula in several forms (inferred) | `extractText`, `renderMath` |
 | `#` in headings | Every `#` is removed from heading text, so "C# basics" is read as "C basics" | `extractText` |
 | Tables | Without narration, only the first 300 characters of the table text are read, with no column or row cues | `extractText` |

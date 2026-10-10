@@ -196,12 +196,13 @@ more. GitHub, GitLab and most markdown tools render ```` ```mermaid ````.
 
 **How it is wired.** `md.renderer.rules.fence` emits
 `div.mermaid-wrapper > pre.mermaid#mermaid-<tokenIndex>` with the escaped source.
-`renderMermaidDiagrams` calls `mermaid.initialize({ startOnLoad: false, theme, securityLevel: 'loose' })`
-with `theme` set to `dark` or `default`, then awaits `mermaid.render` for each diagram in turn,
-inserts the SVG, adds `.rendered`, and adds the expand button. Errors become an inline
-`Mermaid error: <message>` block. `setupMermaidClickToSection` links node labels to headings with
-the same slug, but it runs before the asynchronous render finishes (documented in
-[features.md](features.md)).
+`renderMermaidDiagrams` saves each diagram's source, initialises Mermaid's `base` theme with
+variables read from the current theme's `--diagram-*` tokens (`securityLevel: 'strict'`), then
+awaits `mermaid.render` for each diagram in turn, inserts the SVG, records the type Mermaid
+reports, and adds the expand button. A theme change redraws every diagram from its source. Errors
+show the reason and the source. Node labels that match a heading link to it once each diagram is
+drawn. [rendering.md](rendering.md#mermaid-diagrams) has the details, and
+[`../samples/diagram-gallery.md`](../samples/diagram-gallery.md) draws every type.
 
 **Upgrade notes, 11.4.1 to 12.x** (from the 12.0.0 and 12.1.0 release notes):
 
@@ -688,9 +689,9 @@ Value Medium, effort M.
 
 - `.section-content.collapsed { display: none; }` has no print override, so folded sections are left
   out of the printout.
-- `.section-minimap` is not in the print hide list.
 - Canvas-based renderers print as bitmaps; SVG prints sharply.
-- Dark and sepia colours print as they are shown.
+- Text and surfaces print in the light palette from any theme; diagrams keep the colours they were
+  drawn in, so a diagram drawn in the dark theme prints dark.
 
 **Improvements.** On `beforeprint`, expand all sections and force light colours; restore on
 `afterprint`. Add `break-inside: avoid` for diagrams, tables, code blocks and callouts. Optionally
