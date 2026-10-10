@@ -1,0 +1,17 @@
+{
+  "name": "kites-markdown-desktop",
+  "private": true,
+  "description": "The desktop app: the viewer in a native window, opened by double-clicking a Markdown file.",
+  "scripts": {
+    "stage": "node scripts/stage-frontend.mjs",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icon": "node scripts/make-icons.mjs",
+    "self-test": "node scripts/run-self-test.mjs",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.5"
+  },
+  "packageManager": "pnpm@10.17.1"
+}
