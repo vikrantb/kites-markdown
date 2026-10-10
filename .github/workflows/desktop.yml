@@ -1,0 +1,209 @@
+# The desktop app: build it for macOS (universal) and Windows (x64), install it, and run its self-test,
+# which opens a real document in the real app and checks what rendered (see docs/desktop.md).
+# On a v* tag, a separate job attaches the installers to a DRAFT release; the owner publishes it.
+name: desktop
+
+on:
+  pull_request:
+    paths:
+      - markdown-viewer.html
+      - css/**
+      - js/**
+      - vendor/**
+      - samples/**
+      - desktop/**
+      - .github/workflows/desktop.yml
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (universal)
+            os: macos-latest
+            label: macos
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            build-args: --target universal-apple-darwin --bundles app,dmg
+            bundle: desktop/src-tauri/target/universal-apple-darwin/release/bundle
+          - name: Windows (x64)
+            os: windows-latest
+            label: windows
+            rust-targets: x86_64-pc-windows-msvc
+            build-args: --bundles nsis
+            bundle: desktop/src-tauri/target/release/bundle
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+      - run: pnpm --dir desktop install --frozen-lockfile
+
+      - name: Stage the viewer
+        run: pnpm --dir desktop stage
+      - name: Unit tests (paths, saving, conflicts, the window registry)
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib
+      - name: Build
+        run: pnpm --dir desktop tauri build ${{ matrix.build-args }}
+
+      # macOS: the bundle is universal, then the self-test runs three ways.
+      - name: The app is universal
+        if: runner.os == 'macOS'
+        run: |
+          ARCHS=$(lipo -archs "${{ matrix.bundle }}/macos/Kites Markdown.app/Contents/MacOS/kites-markdown")
+          echo "architectures: $ARCHS"
+          [[ "$ARCHS" == *x86_64* && "$ARCHS" == *arm64* ]]
+      - name: Self-test (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          APP="${{ matrix.bundle }}/macos/Kites Markdown.app"
+          node desktop/scripts/run-self-test.mjs --app "$APP" --doc samples/kitchen-sink.md --save-probe --expect render,kitchen-sink,save --out self-test/macos-kitchen-sink.json
+          node desktop/scripts/run-self-test.mjs --app "$APP" --doc desktop/tests/fixtures/linked/doc.md --expect render,assets --out self-test/macos-assets.json
+          # The way Finder opens a double-clicked file: Launch Services hands the app the file.
+          node desktop/scripts/run-self-test.mjs --app "$APP" --doc samples/kitchen-sink.md --launch open --expect render,kitchen-sink --out self-test/macos-open.json
+
+      # Windows: install silently, check what the installer registered, then self-test the installed app.
+      - name: Install silently (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "${{ matrix.bundle }}/nsis/*-setup.exe" | Select-Object -First 1
+          Write-Host "installing $($installer.Name)"
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait
+          $exe = Join-Path $env:LOCALAPPDATA 'Kites Markdown\kites-markdown.exe'
+          if (-not (Test-Path $exe)) { throw "not installed: $exe" }
+          "KITES_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: The installer registered the app for Markdown files (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $progId = 'KitesMarkdown.Document'
+          function Expect-Value($key, $name, $want) {
+            $item = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+            if ($null -eq $item -or -not ($item.PSObject.Properties.Name -contains $name)) { throw "missing: $key [$name]" }
+            $got = $item.$name
+            if ($got -ne $want) { throw "$key [$name] is '$got', expected '$want'" }
+            Write-Host "ok  $key [$name] = '$got'"
+          }
+          foreach ($ext in 'md','markdown','mdown','mkd','mkdn','mdwn','mdtxt','mdtext') {
+            Expect-Value "HKCU:\Software\Classes\.$ext\OpenWithProgids" $progId ''
+            Expect-Value "HKCU:\Software\Kites Markdown\Capabilities\FileAssociations" ".$ext" $progId
+          }
+          Expect-Value 'HKCU:\Software\RegisteredApplications' 'Kites Markdown' 'Software\Kites Markdown\Capabilities'
+          Expect-Value 'HKCU:\Software\Kites Markdown\Capabilities' 'ApplicationName' 'Kites Markdown'
+          Expect-Value "HKCU:\Software\Classes\$progId\shell\open\command" '(default)' "`"$env:KITES_EXE`" `"%1`""
+          Expect-Value 'HKCU:\Software\Classes\Applications\kites-markdown.exe' 'FriendlyAppName' 'Kites Markdown'
+      - name: Self-test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # PowerShell does not stop on a failing program by itself; check each one.
+          node desktop/scripts/run-self-test.mjs --app "$env:KITES_EXE" --doc samples/kitchen-sink.md --save-probe --expect render,kitchen-sink,save --out self-test/windows-kitchen-sink.json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node desktop/scripts/run-self-test.mjs --app "$env:KITES_EXE" --doc desktop/tests/fixtures/linked/doc.md --expect render,assets --out self-test/windows-assets.json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # The command Explorer runs when a .md file is double-clicked, read back from the registry.
+          node desktop/scripts/run-self-test.mjs --doc samples/kitchen-sink.md --launch registry --app "$env:KITES_EXE" --expect render,kitchen-sink --out self-test/windows-registry.json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Uninstalling removes the registration (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:LOCALAPPDATA 'Kites Markdown'
+          Start-Process -FilePath (Join-Path $dir 'uninstall.exe') -ArgumentList '/S', "_?=$dir" -Wait
+          $left = @()
+          if ((Get-ItemProperty 'HKCU:\Software\RegisteredApplications' -ErrorAction SilentlyContinue).PSObject.Properties.Name -contains 'Kites Markdown') { $left += 'RegisteredApplications' }
+          if (Test-Path 'HKCU:\Software\Kites Markdown\Capabilities') { $left += 'Capabilities' }
+          if (Test-Path 'HKCU:\Software\Classes\KitesMarkdown.Document') { $left += 'ProgId' }
+          $owp = Get-ItemProperty 'HKCU:\Software\Classes\.md\OpenWithProgids' -ErrorAction SilentlyContinue
+          if ($owp -and ($owp.PSObject.Properties.Name -contains 'KitesMarkdown.Document')) { $left += '.md OpenWithProgids' }
+          if ($left.Count) { throw "left behind after uninstall: $($left -join ', ')" }
+          Write-Host 'ok  nothing left behind'
+
+      - name: Keep the installers and the self-test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kites-markdown-${{ matrix.label }}
+          path: |
+            ${{ matrix.bundle }}/dmg/*.dmg
+            ${{ matrix.bundle }}/nsis/*-setup.exe
+            self-test/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Last, so every step above reports on its own: the viewer's inline handlers (onclick="…") do
+      # nothing under the app's Content Security Policy until they move to addEventListener.
+      - name: No inline event handlers left for the app's CSP to block
+        run: node desktop/scripts/run-self-test.mjs --report self-test/${{ matrix.label }}-kitchen-sink.json --expect no-inline-handlers
+
+  release:
+    name: Draft release (${{ matrix.name }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles app,dmg
+          - name: Windows
+            os: windows-latest
+            rust-targets: x86_64-pc-windows-msvc
+            args: --bundles nsis
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+      - run: pnpm --dir desktop install --frozen-lockfile
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tauriScript: pnpm tauri
+          args: ${{ matrix.args }}
+          tagName: ${{ github.ref_name }}
+          releaseName: Kites Markdown ${{ github.ref_name }}
+          releaseBody: |
+            Install: see docs/desktop.md. These builds are not signed: on a Mac, open the app the first time from System Settings > Privacy & Security > Open Anyway (or right-click > Open); on Windows, choose More info > Run anyway.
+          releaseDraft: true
+          prerelease: false

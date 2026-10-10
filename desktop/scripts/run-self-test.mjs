@@ -13,13 +13,17 @@
 //                    open (macOS): `open -a <app>` with the file, the path Finder takes on a double-click;
 //                    registry (Windows): the open command the installer registered for .md files, the
 //                    command Explorer runs on a double-click.
-//   --out <json>     where to keep the report (default: in the scratch folder)
+//   --out <json>     where to keep the report (default: a file in the system temp folder)
+//   --keep-registration   macOS: leave a build that is not in /Applications registered with Launch
+//                    Services. By default it is unregistered after the run: macOS makes a newly launched
+//                    app the automatic handler for a type nobody chose a default for, so a build folder
+//                    would otherwise start opening the person's .md files.
 //
 // Checks (--expect): render (no errors, every diagram drawn), kitchen-sink (the sample's features all
 // rendered), assets (relative images load, one outside the folder does not), save (the save probe
 // passed), no-inline-handlers (none left for the app's CSP to block).
 import { spawn, execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,7 +94,7 @@ async function selfTest() {
   const docArg = opt('--doc');
   if (!docArg) throw new Error('--doc <file.md> is required');
   const { scratch, doc } = scratchCopy(resolve(docArg));
-  const out = resolve(opt('--out') || join(scratch, 'result.json'));
+  const out = resolve(opt('--out') || join(tmpdir(), `kites-self-test-${Date.now()}.json`));
   mkdirSync(dirname(out), { recursive: true });
   const probe = flag('--save-probe');
   console.log(`app:      ${app}\ndocument: ${doc}\nlaunch:   ${launch}${probe ? ' (with the save probe)' : ''}`);
@@ -109,10 +113,26 @@ async function selfTest() {
     const extra = probe ? ['--self-test-save-probe'] : [];
     result = await run(programOf(app), ['--self-test', doc, '--self-test-out', out, ...extra], {}, 120_000);
   }
+  rmSync(scratch, { recursive: true, force: true });
+  forgetBuild(app);
   if (result.timedOut) throw new Error('the app did not exit within 120 s');
   if (result.error) throw new Error(`could not start the app: ${result.error}`);
   if (!existsSync(out)) throw new Error(`the app exited (${result.code}) without writing ${out}`);
   return { report: JSON.parse(readFileSync(out, 'utf8')), exitCode: result.code, out };
+}
+
+const LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
+
+// Running a .app registers it with Launch Services. A build outside /Applications is unregistered again.
+function forgetBuild(app) {
+  if (process.platform !== 'darwin' || !app.endsWith('.app') || flag('--keep-registration')) return;
+  if (resolve(app).startsWith('/Applications/')) return;
+  try {
+    execFileSync(LSREGISTER, ['-u', resolve(app)]);
+    console.log('unregistered the build from Launch Services (keep it with --keep-registration)');
+  } catch (e) {
+    console.warn(`could not unregister ${app}: ${e.message}`);
+  }
 }
 
 function mermaidFences(file) {
