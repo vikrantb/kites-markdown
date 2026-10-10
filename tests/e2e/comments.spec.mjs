@@ -411,6 +411,23 @@ test('a reply being typed survives the sidebar redrawing for another thread', as
   await expect(page.locator('#mdvThreadList .mdv-reply-input').last()).toHaveValue('Half-written reply');
 });
 
+test('thread cards keep their reply box and buttons visible when the sidebar is full', async ({ page }) => {
+  await openViewer(page);
+  await page.setViewportSize({ width: 1366, height: 600 });
+  await page.evaluate((sample) => {
+    // The sample's two threads, both open, with enough replies to outgrow the sidebar
+    const comments = mdvParseFile(sample).comments.map((c) => Object.assign({}, c, { status: 'open' }));
+    const root = comments.find((c) => !c.parent_id).id;
+    for (let i = 1; i <= 3; i++) comments.push(window.__t.comment('Reply number ' + i + ' in a long discussion.', { parent_id: root }));
+    window.__t.open(mdvSerialize(sample, comments), 'commented.md', null);
+    mdvToggleSidebar(true);
+  }, SAMPLE);
+  await threads(page, 2);
+  const clipped = await page.evaluate(() => [...document.querySelectorAll('#mdvThreadList .mdv-thread')]
+    .filter((c) => c.scrollHeight > c.clientHeight + 1).length);
+  expect(clipped, 'cards whose content is cut off').toBe(0);
+});
+
 test('comment data from a file cannot inject markup into the sidebar', async ({ page }) => {
   const errors = await openViewer(page);
   await page.evaluate(() => {

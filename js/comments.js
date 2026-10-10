@@ -783,6 +783,7 @@ function mdvRenderNotices() {
   if (!area) {
     area = document.createElement('div');
     area.id = 'mdvNotices';
+    area.style.flexShrink = '0';
     list.parentNode.insertBefore(area, list);
   }
   area.textContent = '';
@@ -1093,6 +1094,9 @@ function mdvRenderSidebar() {
   roots.forEach((thread) => {
     const card = document.createElement('div');
     card.className = 'mdv-thread' + (thread.status === 'resolved' ? ' mdv-resolved' : '');
+    // The list is a column flexbox of fixed height and a card hides its overflow: without this, cards shrink
+    // to fit once there are several, and their reply box and buttons are cut off.
+    card.style.flexShrink = '0';
     card.dataset.threadId = thread.id;
     const host = thread.anchor && mdvChipHost(idMap[thread.anchor.id], thread.anchor);
     const isOrphan = !host && !!thread.anchor;

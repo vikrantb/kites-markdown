@@ -49,6 +49,8 @@ Contents:
 6. In the sidebar, each open thread has a reply box and **Reply**, **Resolve** and **Delete** buttons. Resolved threads show only **Reopen**. Every change is saved at once. Click a thread's quote to scroll to its block.
 7. Cmd/Ctrl+S saves immediately, and opens a Save dialog if no save location is known (or downloads a copy in browsers without the File System Access API).
 
+![A new thread on a paragraph inside a section: its chip at the end of the paragraph, its card in the comments sidebar, and "Saved" in the toolbar](images/comments-thread-light.png)
+
 A ready-made file with two threads is in [../samples/commented.md](../samples/commented.md). Opening it shows one open thread with a reply and one resolved thread, both attached to the first two paragraphs.
 
 ---
@@ -366,6 +368,8 @@ On a conflict the status says "Not saved: the file changed on disk", the sidebar
 - **Reload from disk**: show the other program's version (after a confirmation; the unsaved comment changes are discarded);
 - **Download my version**: a copy of the file with the comments, nothing overwritten;
 - **Overwrite the file**: the reader's explicit choice, after a confirmation.
+
+![The conflict notice in the dark theme: "Not saved: the file changed on disk", with Reload from disk, Download my version and Overwrite the file](images/comments-conflict-dark.png)
 
 A file picked in the Save dialog is written without a check the first time: the reader chose it (and confirmed replacing it) in that dialog.
 
