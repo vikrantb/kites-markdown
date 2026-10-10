@@ -162,18 +162,18 @@ inserted unsanitized, with `securityLevel: 'loose'`.
 | Links | Plain | Type icons, standalone link cards, hover tooltip, links panel (`enhanceLinks`) |
 | Opening files | Open (picker or input), drop on the tip box | Open (picker), file input, drop anywhere, paste, `?file=` when served, `#demo` |
 | File types | Picker: `.md`, `.markdown`, `.mmd` (the fallback input also accepts `text/markdown` and `text/plain`); drop: any file, no check | `.md`, `.markdown`, `.mdx`, `.txt`; drop also accepts `.text` |
-| Comment targets | Top-level headings, paragraphs, blockquotes, code blocks and tables | Nearest `P`, `LI`, `H1`-`H6`, `BLOCKQUOTE`, `PRE`, `TD`, `DT`, `DD` (`mdvFindBlock`) |
+| Comment targets | Top-level headings, paragraphs, blockquotes, code blocks and tables | Nearest `P`, `LI`, `H1`-`H6`, `BLOCKQUOTE`, `PRE`, `TD`, `TH`, `DT`, `DD` (`mdvFindBlock`) |
 | Comment on a text selection | - | Floating popover (`mdvHandleSelection`) |
 | Touch | Long-press opens the menu | - |
-| Anchoring | Segment position (see above) | `MDV-ANCHOR` id marker (`mdvBuildAnchorMap`); structural and fuzzy fallbacks written but unused (`mdvResolveAnchor`) |
+| Anchoring | Segment position (see above) | `MDV-ANCHOR` id marker before the top-level block, found again through block numbers set at render time (`mdvAnnotateBlocks`, `mdvBuildAnchorMap`); the item inside a list or table by its text hash (`mdvChipHost`) |
 | Orphans | Comments before the first block kept but hidden | Shown in the sidebar with an orphan style |
 | Comment body | Markdown, sanitized; image URL field | Plain text, HTML-escaped (`mdvRenderCommentBody`) |
 | Author | `me` / `ai` picked per comment in the composer | Name from `localStorage` key `mdv-author-name` (default `You`), kind always `human`; a comment with `author.kind: "agent"` written into the file gets an "(AI)" label from CSS |
 | Threads | One reply level; reply and resolve on top-level comments | Replies to the thread root; resolve, reopen, delete (`mdvPostReply`, `mdvResolveThread`, `mdvDeleteThread`) |
 | Filter resolved | Checkbox | - (resolved threads are styled) |
-| Saving | Manual Save / `Cmd+S`, Save as; download when no handle | Auto-save 1.5 s after a change, `Cmd+S`; prompts for a location on Chromium; download only without the File System Access API |
+| Saving | Manual Save / `Cmd+S`, Save as; download when no handle | Saved at once after every change through one writer (`mdvWriteDocument`), which never overwrites a file changed on disk; `Cmd+S`; prompts for a location on Chromium; downloads on `Cmd+S` only without the File System Access API |
 | Save target memory | - | Last file and workspace folder restored from IndexedDB |
-| Unsaved warning | `beforeunload` prompt | - |
+| Unsaved warning | `beforeunload` prompt | `beforeunload` prompt while comment changes are not in a file, and a notice that keeps them when another document is opened |
 | AI hand-off | **Copy AI export** to clipboard | - |
 | Keyboard | `Cmd/Ctrl+S`, `Cmd/Ctrl+Enter`, `Esc` | Adds `Cmd/Ctrl+Shift+C` (sidebar), search, read-aloud and other shortcuts |
 

@@ -362,7 +362,7 @@ The section being read is highlighted and scrolled into view. A `<!-- narrate: �
 - **Save from the popup:** `Ctrl/Cmd+Enter`. `Esc` cancels (`mdvShowAddPopup`).
 - **Where comments appear:** threads show as chips on the commented block and as cards in the comments sidebar (`mdvRenderChips`, `mdvRenderSidebar`).
 - **Sidebar actions:** an open thread has a reply box and **Reply**, **Resolve** and **Delete** buttons. A resolved thread shows only **Reopen** (`mdvRenderThreadCard`, `mdvPostReply`, `mdvResolveThread`, `mdvDeleteThread`). Delete asks for confirmation.
-- **Saving:** changes auto-save 1.5 seconds later through the writable file handle (`mdvScheduleSave`, `mdvSaveFile`). `Ctrl/Cmd+S` saves immediately and, if needed, asks for a save location.
+- **Saving:** every change is saved into the file at once, through `mdvWriteDocument`, the only function that writes a document. A file that another program changed after the viewer read it is never overwritten: the sidebar explains and offers **Reload from disk**, **Download my version** or **Overwrite the file**. `Ctrl/Cmd+S` saves immediately and, if needed, asks for a save location (or downloads a copy in browsers without the File System Access API). Leaving the page with unsaved comment changes asks first.
 - **Author name:** taken from `localStorage` key `mdv-author-name`, default `You`. There is no settings control for it.
 
 Comments are stored inside the markdown file as `<!-- MDV-ANCHOR id="…" -->` markers and a trailing `<!-- MDV-COMMENTS:v1 … MDV-COMMENTS:end -->` block. Full details are in [commenting.md](commenting.md).
@@ -429,15 +429,15 @@ All reading features use standard web APIs. Saving to disk is the one area that 
 | `?file=` auto-load | `fetch` | Only over `http(s)`, not `file://` | Same | Same |
 | Writable open, save in place, automatic reopen | File System Access API: `showOpenFilePicker`, `showSaveFilePicker`, `FileSystemHandle.queryPermission`/`requestPermission`, `createWritable` | Yes | No | No |
 | Workspace folder | `showDirectoryPicker`, handles kept in IndexedDB | Yes | No (toast: "This browser does not support workspace folders") | No |
-| Adding comments | `crypto.subtle.digest` (anchor hash) | Yes in a secure context | Yes *(not tested)* | Yes *(not tested)* |
-| Saving comments | as above | In place | Downloads a copy of the file on every save (`mdvDownloadFallback`) | Same as Firefox |
+| Adding comments | DOM only (the anchor hash is computed in JavaScript) | Yes | Yes *(not tested)* | Yes *(not tested)* |
+| Saving comments | as above | In place, with a check that the file did not change on disk | Downloads a copy when you press `Ctrl/Cmd+S` (`mdvDownloadFallback`); a change never downloads by itself | Same as Firefox |
 | Read aloud | Web Speech API `speechSynthesis` | Yes, with a 12-second pause/resume keep-alive for a Chrome cut-off bug (`ttsStartKeepAlive`) | Yes *(not tested)* | Yes *(not tested)* |
 | Copy buttons | `navigator.clipboard.writeText` | Yes in a secure context | *(not tested)* | *(not tested)* |
 
 Notes:
 
 - **Why Chromium.** In-place save needs the File System Access API, which is implemented by Chromium-based browsers and not by Firefox or Safari. Brave is Chromium-based, but may ship with this API turned off *(unverified)*.
-- **Secure contexts.** `crypto.subtle`, `navigator.clipboard` and the File System Access API require a secure context. `https://` and `http://localhost` qualify, but a plain-`http` LAN address does not. Whether `file://` counts as secure differs between browsers *(unverified)*.
+- **Secure contexts.** `navigator.clipboard` and the File System Access API require a secure context (comments no longer use `crypto.subtle`). `https://` and `http://localhost` qualify, but a plain-`http` LAN address does not. Whether `file://` counts as secure differs between browsers *(unverified)*.
 - **Android.** `speechSynthesis.pause()` behaves like cancel there, so pausing cancels speech and keeps only the section index; pressing play again restarts the current section from its beginning (`isAndroid` checks in `ttsPause` and `ttsStartKeepAlive`; `ttsPlay` calls `speakSection`).
 - **Fonts.** Inter, Literata and JetBrains Mono load from Google Fonts. This is the page's only network request. Offline, the browser falls back to other fonts *(inferred)*. See [dependencies.md](dependencies.md).
 
@@ -455,6 +455,5 @@ These are behaviours of the code as of the initial import. Planned fixes belong 
 - **Collapsing an H1 can stop working.** When the minimap is inserted directly after the first H1 (three or more H2s, no dashboard), it sits between that H1 and its section container. `toggleSection` reads `heading.nextElementSibling` and returns without doing anything *(inferred)*. Fold-all is not affected.
 - **Math and dollar signs.** `renderMath` runs on the raw source before markdown-it, so two dollar signs on one line (including inside code) are treated as math *(inferred)*. Details are in [rendering.md](rendering.md).
 - **Diagram overlay titles are approximate.** Diagrams declared with `flowchart` are not titled "Flowchart", because the check only recognises `graph`. The checks run in a fixed order and `/pie/i` matches any source containing the letters "pie", so, for example, an ER or state diagram with a node named "Recipe" is titled "Pie Chart" (`openDiagramOverlay`).
-- **File-plus button outside Chromium.** With no document loaded, `mdvPickFile` shows a toast that mentions a "Download with comments" button that does not exist, then calls `document.getElementById('mdFile').click()`. The file input's id is `fileInput`, so this throws and no picker opens *(inferred)*.
 - **An empty `status:` or `date:` in frontmatter blanks the page.** `parseFrontmatter` turns a top-level key with no value into an empty list. `renderFrontmatterDashboard` then calls `status.toLowerCase()` (or `escapeHtml(date)`, when the dashboard is shown) on that list and throws a `TypeError`. The dashboard is built before `#mdBody.innerHTML` is assigned and outside the per-pass `try/catch` blocks, so `renderMarkdown` aborts and the document is not shown. I confirmed this by running `parseFrontmatter` and `renderFrontmatterDashboard` on their own in Node: `status: Draft` renders, while `status:` with no value throws `status.toLowerCase is not a function`.
-- **`#demo` loads without the commenting layer.** `loadFromUrl` calls `loadDemo` synchronously while the script is still running, before the commenting wrapper around `renderMarkdown` is installed near the end of the script. The comments button therefore stays hidden and right-click does not offer **Add comment** for the demo *(inferred)*.
+- ~~**`#demo` loads without the commenting layer.**~~ Fixed 2026-10-10: `comments.js` renders a document that was shown before it loaded once more through its hook.

@@ -536,10 +536,16 @@ async function mdvWriteHandle(text, opts) {
   const base = mdvBases.get(handle);
   if (!base) return { ok: false, reason: 'unverified', message: 'The viewer does not know which version of this file was opened, so it will not overwrite it.' };
   if (!opts.overwrite && !base.overwrite) {
+    const conflict = { ok: false, reason: 'conflict', message: 'The file changed on disk after the viewer read it.' };
     const file = await handle.getFile();
     const sameStamp = base.lastModified != null && file.lastModified === base.lastModified && file.size === base.size;
-    if (!sameStamp && (await file.text()) !== base.text) {
-      return { ok: false, reason: 'conflict', message: 'The file changed on disk after the viewer read it.' };
+    if (!sameStamp) {
+      let onDisk;
+      try { onDisk = await file.text(); } catch (e) {
+        if (e && e.name === 'NotReadableError') return conflict; // it changed again while being read
+        throw e;
+      }
+      if (onDisk !== base.text) return conflict;
     }
   }
   const w = await handle.createWritable();

@@ -240,11 +240,11 @@ test('issue 4: an unreadable comment block is never rewritten, and comments beco
 
 test('the commented sample round-trips byte for byte, and its stored hash is reproduced', async ({ page }) => {
   await openViewer(page);
-  const r = await page.evaluate((src) => {
+  const r = await page.evaluate(async (src) => {
     const parsed = mdvParseFile(src);
     return { same: mdvSerialize(src, parsed.comments) === src, count: parsed.comments.length, error: parsed.parseError,
       // blockHash of the first thread: SHA-256 of the normalized paragraph (a positive control for mdvHash)
-      hash: String(mdvHash('status: draft for review by the platform team, last updated on 3 october 2026.')),
+      hash: String(await mdvHash('status: draft for review by the platform team, last updated on 3 october 2026.')),
       stored: parsed.comments[0].anchor.blockHash };
   }, SAMPLE);
   expect(r.error).toBeNull();
@@ -340,18 +340,17 @@ test('starting a thread on a list item or a table cell keeps the list and table 
     await mdvAddComment(window.__t.item('td', 'cell three'), null, 'On the table cell');
     await mdvSaveFile({ allowPrompt: false });
   });
-  await expect.poll(() => page.evaluate(() => window.h.text), { timeout: 5000 }).toContain('On the table cell');
+  await expect.poll(() => page.evaluate(() => window.h.writes.length), { timeout: 5000 }).toBeGreaterThan(0);
   await page.evaluate(() => window.__t.open(window.h.text, 'plan.md', null));
-  await expect(page.locator('#mdBody .mdv-chip')).toHaveCount(2);
-  await expect(page.locator('#mdvThreadList .mdv-orphan')).toHaveCount(0);
-  const after = await page.evaluate(() => ({
-    li: document.querySelectorAll('#mdBody li').length,
-    tr: document.querySelectorAll('#mdBody tr').length,
-    chips: [...document.querySelectorAll('#mdBody .mdv-chip')].map((c) => c.parentElement.tagName + ' ' + c.parentElement.textContent.replace(/💬 \d+/g, '').trim())
-  }));
+  const after = await page.evaluate(() => ({ li: document.querySelectorAll('#mdBody li').length, tr: document.querySelectorAll('#mdBody tr').length }));
   expect(after.li, 'the list keeps its items').toBe(before.li);
   expect(after.tr, 'the table keeps its rows').toBe(before.tr);
-  expect(after.chips.sort()).toEqual(['LI item beta with emphasis', 'TD cell three']);
+  expect(await page.evaluate(() => window.h.text)).toContain('On the table cell');
+  await expect(page.locator('#mdBody .mdv-chip')).toHaveCount(2);
+  await expect(page.locator('#mdvThreadList .mdv-orphan')).toHaveCount(0);
+  const chips = await page.evaluate(() => [...document.querySelectorAll('#mdBody .mdv-chip')]
+    .map((c) => c.parentElement.tagName + ' ' + c.parentElement.textContent.replace(/💬 \d+/g, '').trim()));
+  expect(chips.sort()).toEqual(['LI item beta with emphasis', 'TD cell three']);
   expect(errors).toEqual([]);
 });
 
@@ -529,8 +528,10 @@ test('saves never overlap, and the file ends with the newest text', async ({ pag
       mdvPostReply(root, box);
     }
   });
-  await expect.poll(() => page.evaluate(() => window.h.text === rawMarkdown), { timeout: 5000 }).toBe(true);
-  const r = await page.evaluate(() => ({ text: window.h.text, maxActive: window.h.maxActive }));
+  await expect.poll(() => page.evaluate(() => window.h.text), { timeout: 5000 }).toContain('Quick reply 5');
+  await page.waitForTimeout(300);
+  const r = await page.evaluate(() => ({ text: window.h.text, maxActive: window.h.maxActive, same: window.h.text === rawMarkdown }));
+  expect(r.same, 'the file holds exactly what the viewer holds').toBe(true);
   expect(r.maxActive, 'at most one write at a time').toBe(1);
   for (let i = 1; i <= 5; i++) expect(r.text).toContain('Quick reply ' + i);
 });
@@ -655,7 +656,16 @@ test('issue 5: a dropped file links to the workspace file of the same name only 
     await w.write(text);
     await w.close();
     mdvWorkspaceDir = ws;
-    window.readNote = async () => (await (await ws.getFileHandle('note.md')).getFile()).text();
+    // Reads the workspace file; a read that overlaps the viewer's write is retried (Chrome refuses to read a
+    // File snapshot of a file that changed after the snapshot was taken)
+    window.readNote = async () => {
+      for (let i = 0; ; i++) {
+        try { return await (await (await ws.getFileHandle('note.md')).getFile()).text(); } catch (e) {
+          if (e.name !== 'NotReadableError' || i > 10) throw e;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      }
+    };
   }, onDisk);
   // A different file that happens to have the same name
   await page.locator('#fileInput').setInputFiles({ name: 'note.md', mimeType: 'text/markdown', buffer: Buffer.from('# Note\n\nA different file from another folder.\n') });

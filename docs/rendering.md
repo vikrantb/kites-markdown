@@ -28,7 +28,7 @@ graph TD
 
 | Step | Function | Works on | What it does |
 |---|---|---|---|
-| 1 | `mdvParseFile` | source text | Reads the `MDV-COMMENTS` block (the first match of `MDV_RE_BLOCK`; the viewer writes it at the end of the file) into the comment list. It does **not** remove anything from the source; the block and the `MDV-ANCHOR` markers are rendered as HTML comments. See [commenting.md](commenting.md). |
+| 1 | `mdvParseFile` | source text | Reads the `MDV-COMMENTS` block that ends the file (from the last opening token, `mdvLocateBlock`) into the comment list. It does **not** remove anything from the source; the block and the `MDV-ANCHOR` markers are rendered as HTML comments, and the comment code's markdown-it rule adds `data-mdv-block` and `data-mdv-anchor` attributes to top-level blocks. See [commenting.md](commenting.md). |
 | 2 | `parseFrontmatter` | source text | Splits off a leading YAML block and parses it with a small hand-written parser. |
 | 3 | `extractNarrations` | source text | Records every narration comment. The source is not changed. |
 | 4 | `renderMath` | source text | Regex pre-pass that replaces dollar-delimited math with KaTeX HTML **before** markdown parsing. |

@@ -25,7 +25,7 @@ renderers.
 | Extension sandbox hardened | `../extensions/github-html-viewer/` sandboxes rendered pages without `allow-same-origin` (see its README) |
 | Task lists fixed | A misspelled global (`markdownItTaskLists` vs the plugin's `markdownitTaskLists`) had silently disabled task-list checkboxes |
 | Two destructive save paths closed | Paste and URL loading could leave a document linked to a different file, so a comment save could overwrite it (see [Known issues](#known-issues)) |
-| Comments marked experimental | The README warns against using comments on important files until data-safety issues 1–6 are fixed |
+| Comment data safety fixed (2026-10-10) | Known issues 1–6 fixed, each with a browser test in `tests/e2e/comments.spec.mjs`; the README's "experimental" warning removed. `mdvWriteDocument` is the single save seam, shared with the desktop app |
 
 ## Open decisions
 
@@ -72,9 +72,11 @@ individually today ([architecture.md](architecture.md) shows how).
 | Paste into the settings field and a reply box, before and after the fix | Before: the document was replaced. After: the document is kept, and a page-level paste unlinks the file handle (`null`) | Runtime (Chrome only) |
 | `?file=` fetch finishing after a handle was linked (simulated race) | Handle cleared, document renders, console clean | Runtime (Chrome only) |
 | Known issues 1, 3, 7, 8, 9, 10, 12, 13 | Reproduced as described in [Known issues](#known-issues) | Runtime (Chrome only) |
+| Comment data safety, issues 1–6 plus the file-plus button and the startup restore (2026-10-10) | `tests/e2e/comments.spec.mjs`, 27 tests. Run against the code before the fix (568069f), 23 fail, each on the bug it names, and 4 controls pass; with the fix all 27 pass. Saves go to a fake file handle, the browser's private file system (OPFS) or a fake desktop bridge | Runtime (Chrome, automated) |
 
 **Not yet verified:**
-- saving back to disk, which needs a real user gesture;
+- saving back to a real file on disk, which needs a real user gesture (the save logic itself is covered by the
+  comment tests, with fake and browser-private files);
 - read-aloud audio;
 - Firefox and Safari;
 - the GitHub extension after its sandbox change.
@@ -90,16 +92,19 @@ Each entry says how it was established:
 - **Simulated** means the viewer's own code was run in Node with DOM stubs.
 - **Read** means it was established from the code alone.
 
-### Data safety (fix first)
+### Data safety (fixed 2026-10-10)
 
-| # | Issue | Evidence | Fix direction |
+All six are fixed in `js/comments.js`. Each has a test in `tests/e2e/comments.spec.mjs` that fails against the
+earlier code (568069f) and passes now; [commenting.md](commenting.md#data-safety-tests) lists them.
+
+| # | Issue | Evidence | Fix |
 |---|---|---|---|
-| 1 | Starting a new comment thread does not save it. `mdvAddComment` adds the comment, then re-renders, and the comment hook re-parses comments from the source, which does not contain the new one yet. The anchor marker is still written, leaving an orphan marker in the file. | Verified: the count stayed at 3, the new body is absent from `mdvSerialize` output, and the sidebar shows no new card | Write the in-memory comments into the source (`mdvSerialize`) before any re-render that re-parses it. See [commenting.md](commenting.md#known-bugs-and-limitations), bug 1 |
-| 2 | Deleting a thread does not remove it: the re-parse restores it, and it is saved back | Simulated (commenting.md, bug 2) | Same as #1 |
-| 3 | A document that mentions the comment-block tokens (`<!-- MDV-COMMENTS:v1` … `MDV-COMMENTS:end -->`), even in code spans, loses the text between them on the next save | Verified with the viewer's own `mdvParseFile`/`mdvSerialize`: a 9-line document lost 121 characters, including a paragraph | Parse only a block that ends the file, found from the **last** opening token. Anchoring the current regex is not enough: the search still starts at the first mention. Bug 6 |
-| 4 | A comment containing the literal text `\u003c` or `\u002d` (a backslash followed by `u003c` or `u002d`), or any unparsable block, makes the next save delete every comment | Read (bugs 7–8) | Escape and unescape via the JSON parser, not textual replacement. Never write after a failed parse |
-| 5 | Workspace matching links by file name only, so dropping a different file with the same name can later overwrite the workspace file | Read (bug 15) | Link only when the contents match, or ask |
-| 6 | No conflict detection: edits made in another editor are overwritten by the next save | Read (bug 5) | Compare `lastModified` before writing |
+| 1 | Starting a new comment thread did not save it. `mdvAddComment` added the comment, then re-rendered, and the comment hook re-parsed comments from the source, which did not contain the new one yet. The anchor marker was still written, leaving an orphan marker in the file. | Verified: the count stayed at 3, the new body was absent from `mdvSerialize` output, and the sidebar showed no new card | **Fixed.** Every change writes the list into the source together with it (`mdvCommit`), and adding a thread no longer re-renders. Test: "a new thread is saved into the file, on the block it was started on" |
+| 2 | Deleting a thread did not remove it: the re-parse restored it, and it was saved back | Simulated (commenting.md, bug 2) | **Fixed** the same way; only that thread's marker is removed, never text in code. Test: "a deleted thread stays deleted, and its marker goes with it" |
+| 3 | A document that mentions the comment-block tokens (`<!-- MDV-COMMENTS:v1` … `MDV-COMMENTS:end -->`), even in code spans, lost the text between them on the next save | Verified with the viewer's own `mdvParseFile`/`mdvSerialize`: a 9-line document lost 121 characters, including a paragraph | **Fixed.** Only a block that ends the file is read, found from the **last** opening token at a line start (`mdvLocateBlock`). Test: "a document that mentions the comment tokens, even in code, keeps every character" |
+| 4 | A comment containing the literal text `\u003c` or `\u002d` (a backslash followed by `u003c` or `u002d`), or any unparsable block, made the next save delete every comment | Read (bugs 7–8) | **Fixed.** `JSON.parse` alone unescapes. An unreadable block, or one in another format version, makes comments read-only for that file and `mdvSerialize` refuses to drop it. Tests: "comment text containing the escape sequences themselves round-trips", "an unreadable comment block is never rewritten" |
+| 5 | Workspace matching linked by file name only, so dropping a different file with the same name could later overwrite the workspace file | Read (bug 15) | **Fixed.** A file is linked only when its contents are identical (`mdvTryWorkspaceMatch`, `mdvPickWorkspace`). Test: "a dropped file links to the workspace file of the same name only when the contents match" |
+| 6 | No conflict detection: edits made in another editor were overwritten by the next save | Read (bug 5) | **Fixed.** `mdvWriteDocument`, the only writer, checks that the file still holds the version the viewer read (`lastModified` and size, then the text); on a conflict it writes nothing, says so, and keeps the comment until the reader reloads, downloads or overwrites. In the desktop app it goes through `mdvHost.saveDocument` with the mtime that was read. Tests: two "issue 6" tests and two desktop tests |
 
 Fixed in the initial import, and kept here as a record:
 - **Paste replaced the document even inside a text field, and left the opened file linked.** Pasting anything over 10 characters, even into a comment box or the settings field, replaced the document, and the next comment save could write the pasted text over the opened file. Pastes into text fields now stay in the field, and a document-level paste unlinks the file. Verified both before and after the fix.
@@ -129,8 +134,8 @@ Fixed in the initial import, and kept here as a record:
 ### Robustness and polish
 
 - **A failed optional library disables its feature silently,** because the `if (window.X)` guards have no warning. Task lists were silently off this way until the initial import fixed a misspelled global.
-- **The file-plus button (writable open) throws outside Chromium** when no document is loaded, because `mdvPickFile` clicks `#mdFile` while the input's id is `fileInput`. The plain **Open** button is unaffected. Read (commenting.md, bug 14).
-- **The startup restore of the last-opened file can override an explicit `?file=` link** if the restore finishes after the fetch. Read.
+- ~~**The file-plus button (writable open) throws outside Chromium**~~ **Fixed 2026-10-10:** `mdvPickFile` opens `#fileInput`. Test: "the file-plus button opens the file chooser in browsers without the File System Access API".
+- ~~**The startup restore of the last-opened file can override an explicit `?file=` link**~~ **Fixed 2026-10-10:** the restore never runs over a `?file=` link, `#demo`, a document already shown, or in the desktop app. Tests: "the startup restore never overrides an explicit ?file= link" (with a control that the restore still works without a link) and "the desktop app never restores the last browser file".
 - **Every load logs a `favicon.ico` 404.**
 - **Several things are untested:** Firefox and Safari, a real save round-trip, read-aloud audio, and the GitHub extension after its sandbox change.
 
@@ -159,8 +164,7 @@ The final review across all docs found these gaps:
 
 ## Suggested first session
 
-1. **Make comments safe** (known issues 1–6). Until then the README warns readers off using them on
-   important files.
+1. ~~**Make comments safe** (known issues 1–6).~~ **Done 2026-10-10**, with a browser test for each.
 2. **Sanitize rendered HTML** (issue 7), keeping HTML comments intact.
 3. **Fix the rendering bugs readers hit first:** dollar signs (8), dark-theme diagrams (9), the copy
    button (13). Each has a verified repro above.

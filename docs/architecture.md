@@ -82,7 +82,7 @@ flowchart TD
 | 2 | `<html lang="en" data-theme="light">`: the theme attribute starts as `light`, and `setTheme` overwrites it at boot |
 | 8–11 | Google Fonts: Inter (UI), Literata (reading), JetBrains Mono (code) |
 | 14–22 | `markdown-it.min.js`, then the plugins anchor, task-lists, footnote, mark, sub, sup, deflist, abbr |
-| 23 | `diff-match-patch.js` (fuzzy matching for comment anchors) |
+| 23 | `diff-match-patch.js` (loaded, unused since 2026-10-10: it served the removed fuzzy anchor resolver) |
 | 25–26 | `github.min.css` (`id="hljs-light"`) and `github-dark.min.css` (`id="hljs-dark"`, starts `disabled`) |
 | 27 | `highlight.min.js` |
 | 29 | `mermaid.min.js` |
@@ -193,8 +193,8 @@ Everything below runs in this order on page load.
    - `hljs`: `typeof hljs !== 'undefined'` inside the `highlight` callback (1777).
    - `katex`: `renderMath` returns its input unchanged if `katex` is undefined (1810).
    - `mermaid`: `renderMermaidDiagrams` returns early if `mermaid` is undefined (2234).
-   - `diff_match_patch`: `_mdvDmp` is `null` when it is missing (3511), and only `mdvResolveAnchor`
-     uses it.
+   - `diff_match_patch`: still loaded, but no code uses it since the dead `mdvResolveAnchor` was removed
+     (2026-10-10). Its `<script>` tag can be dropped.
 6. **Top-level listeners** are attached as the script reaches them. Section 6 has the full list.
 7. **Init (3323–3325):**
    1. `setTheme(currentTheme)` sets `data-theme`, swaps the highlight.js stylesheet and marks the
@@ -209,24 +209,21 @@ Everything below runs in this order on page load.
       - **`?file=` over `file://`, or not found**: it sets the title and breadcrumb, replaces the
         welcome screen's HTML with an "Open: <name>" prompt (on `file://` this includes a
         `python3 -m http.server` hint), and binds drag-over styling to the new `dropZone2`.
-8. **Comment subsystem (3500–4291)** is evaluated *after* init. It reads
-   `localStorage['mdv-author-name']` (default `You`), creates `_mdvDmp`, attaches the document
-   `mouseup` and comment `keydown` listeners, **replaces `window.renderMarkdown` with a wrapper**
-   (4185–4199), registers a `window` `load` listener, and exports five functions on `window`.
-9. **`window` `load` event (4202–4217).** The handler reads the IndexedDB key `workspace`. If its
-   `read` permission is already `granted`, it becomes `mdvWorkspaceDir`. It then reads the key
-   `current`, and if that handle's `read` permission is `granted` it calls `mdvOpenWithHandle`,
-   which renders the file. `mdvOpenWithHandle` first checks `readwrite` permission and calls
-   `requestPermission` if it is not granted. That call happens outside a user gesture, so if only
-   `read` is granted the browser is expected to reject it, the handler's `catch` swallows the error
-   and nothing renders (inferred; not run in a browser).
-
-> [!WARNING]
-> Two ordering consequences follow from step 8 coming after step 7 (both inferred):
-> - `#demo` renders through the **unwrapped** `renderMarkdown`. The comment parser, sidebar and
->   right-click menu are not set up for the demo until something renders again.
-> - A `?file=` fetch and the IndexedDB restore in step 9 can both render. Whichever finishes last
->   wins.
+8. **Comment subsystem (`js/comments.js`)** is evaluated *after* init. It reads
+   `localStorage['mdv-author-name']` (default `You`, inside a `try`), registers the markdown-it core rule
+   `mdv_blocks` and wraps the fence renderer (block numbers and anchor ids, see
+   [commenting.md](commenting.md#resolving-an-anchor)), attaches the document `mouseup`, comment `keydown` and
+   `beforeunload` listeners, registers a `window` `load` listener, **replaces `window.renderMarkdown` with a
+   hook**, wires the right-click menu on `#mdBody`, and exports six functions on `window`. If a document was
+   already rendered (the `#demo` page, step 7), it renders it once more through the hook, so the demo has
+   comments too.
+9. **`window` `load` event.** Skipped entirely in the desktop app. The handler reads the IndexedDB key
+   `workspace`; if its `read` permission is already `granted`, it becomes `mdvWorkspaceDir`. It then reads
+   `current` and opens it with `mdvOpenWithHandle(handle, { prompt: false })` (never a permission prompt
+   outside a gesture: without write permission the file opens read-only), **unless** the URL has a `?file=`
+   link or `#demo`, or a document is already shown or gets opened while the restore runs. A `?file=` link
+   therefore always wins over the restore (on `file://`, where a link cannot load, the remembered file of
+   that very name stands in).
 
 ---
 
@@ -236,7 +233,7 @@ Everything below runs in this order on page load.
 
 | Variable | Written by | Read by |
 |---|---|---|
-| `rawMarkdown` | `readFile`, paste listener, `loadFromUrl`, `loadDemo`, `mdvOpenWithHandle`, `mdvSaveFile`, `mdvDownloadFallback`, `mdvAddComment`, `mdvDeleteThread` | `setTheme` (as a "document loaded" flag), `mdvSaveFile`, `mdvDownloadFallback`, `mdvAddComment`, `mdvDeleteThread`, `mdvOpenOrSetSaveLocation`, Ctrl/Cmd+S handler |
+| `rawMarkdown` | `readFile`, paste listener, `loadFromUrl`, `loadDemo`, `mdvOpenWithHandle`, `mdvReloadFromDisk`, and `mdvCommit` (every comment change writes the serialized comments into it) | `setTheme` (as a "document loaded" flag), `mdvLocateInsertion`, `mdvRequestSave`, `mdvDownloadFallback`, `mdvOpenOrSetSaveLocation`, the startup restore, Ctrl/Cmd+S handler |
 | `currentTheme` | `setTheme` | `renderMermaidDiagrams`, the init call `setTheme(currentTheme)` |
 | `fontStep` | `changeFontSize` (clamped to −2..2) | `applyFontSize` |
 | `fontSizes` (const) | — | `applyFontSize` (index `2 + fontStep`) |
@@ -247,7 +244,7 @@ Everything below runs in this order on page load.
 | `searchIndex` | `buildSearchIndex` | `handleSearch` |
 | `searchFocusIdx` | `openSearch`, `handleSearch`, `handleSearchKeys` | `handleSearchKeys` |
 | `narrationMap` | reset to `{}` by `extractNarrations` | nobody (dead) |
-| `currentFileName` | `readFile`, `loadFromUrl`, `mdvOpenWithHandle` (the paste path does **not** update it) | `mdvEnsureWritableHandle`, `mdvDownloadFallback`, `mdvAddComment`, `mdvDeleteThread`, `mdvPickWorkspace` |
+| `currentFileName` | `readFile`, `loadFromUrl`, `mdvOpenWithHandle`, `mdvReloadFromDisk` (the paste path does **not** update it) | `mdvBeginDocument` and `mdvDownloadName`, only as a fallback: the comment code names files after the title each document was rendered with (`mdvDocName`) |
 
 ### 4.2 Rendering and feature modules
 
@@ -266,19 +263,25 @@ Everything below runs in this order on page load.
 | `ttsKeepAliveTimer`, `isAndroid` | 2986–2987 | `ttsStartKeepAlive`, `ttsStopKeepAlive`, `ttsPause` |
 | `ttsChunks`, `ttsChunkIdx` | 2991–2992 | `speakSection`, `speakNextChunk` |
 
-### 4.3 Comment subsystem (lines 3500–3500, 3626–3616, 4080)
+### 4.3 Comment subsystem (`js/comments.js`)
 
 | Variable | Owner |
 |---|---|
-| `MDV_VERSION` (=1), `MDV_RE_BLOCK`, `MDV_RE_ANCHOR` | `mdvParseFile`, `mdvSerialize`, `mdvDeleteThread` |
-| `mdvComments` | Set by the `renderMarkdown` wrapper from `mdvParseFile`. Mutated by `mdvAddComment`, `mdvPostReply`, `mdvResolveThread`, `mdvDeleteThread`. Read by `mdvThreadTree`, `mdvSaveFile`, `mdvDownloadFallback`. Because the wrapper overwrites it on **every** render, the re-render inside `mdvAddComment` and `mdvDeleteThread` replaces the in-memory change with whatever the source text holds (see section 12). |
-| `mdvFileHandle` | Set by `readFile` (workspace match or `null`), `mdvOpenWithHandle`, `mdvEnsureWritableHandle`, `mdvPickWorkspace`. Read by `mdvSaveFile`, `mdvScheduleSave`, `mdvShowAddPopup`, `mdvOpenOrSetSaveLocation`. |
+| `MDV_VERSION` (=1), `MDV_GENERATOR`, `MDV_RE_ANCHOR`, `MDV_RE_BLOCK_OPEN`, `MDV_RE_BLOCK_END` | `mdvLocateBlock`, `mdvReadPayload`, `mdvParseFile`, `mdvSerialize`, `mdvMarkerIds`, `mdvRemoveMarkers` |
+| `mdvComments` | Set by the `renderMarkdown` hook from `mdvParseFile`, and by `mdvCommit`. Every change (`mdvAddComment`, `mdvPostReply`, `mdvResolveThread`, `mdvDeleteThread`) builds a new list and commits it together with the serialized source, so a later re-render reads back the same comments. |
+| `mdvFileHandle` | The handle the current document was read from, or `null`. Set by `readFile` (workspace match or `null`), the paste listener and `loadFromUrl` (`null`), `mdvOpenWithHandle`, `mdvEnsureWritableHandle`, `mdvPickWorkspace`; cleared by `mdvBeginDocument` when its recorded version is not the document being rendered. Read by `mdvCurrentTarget`, `mdvWriteHandle`, `mdvSaveFile`, `mdvShowAddPopup`, `mdvOpenOrSetSaveLocation`. |
+| `mdvBases` (WeakMap) | Per handle, the version the viewer read or last wrote: `{text, lastModified, size}`, or `{overwrite: true}` for a file picked in the Save dialog. Written by `mdvOpenWithHandle`, `mdvMatchInFolder`, `mdvEnsureWritableHandle`, `mdvBeginDocument` (a handle linked without one) and `mdvWriteHandle` (after a write). Read by `mdvWriteHandle` (the conflict check) and `mdvBeginDocument`. |
 | `mdvWorkspaceDir` | Set by the `load` restore and `mdvPickWorkspace`. Read by `mdvTryWorkspaceMatch`. |
-| `mdvDirty` | Written by `mdvSaveFile` and `mdvScheduleSave`, never read (dead) |
-| `mdvSaveTimer` | `mdvScheduleSave` (1500 ms debounce), cleared by `mdvSaveFile` |
-| `mdvLastSavedAt` | `mdvSaveFile` (clears the "Saved" status after about 3 s) |
+| `mdvDirty` | True from a comment change until that version is written. Read by `mdvBeginDocument` and `beforeunload`. |
+| `mdvLoadSeq`, `mdvDocVersion` | Count document loads and committed changes. A queued write, the restore and a late open use them to know their document is still the one shown. |
+| `mdvDocName`, `mdvDocTitle`, `mdvDocText`, `mdvLoadedText` | The current document's name and title as rendered, its last committed text, and its text as opened. |
+| `mdvLockReason` | Why comments are read-only for the current document (an unreadable or newer comment block), or `null`. |
+| `mdvOwnRender` | True while `mdvRerender` re-renders the current document itself. |
+| `mdvWriteChain`, `mdvNewestJob`, `mdvQueuedVersion`, `mdvWritesQueued` | The write queue (`mdvEnqueueWrite`). |
+| `mdvNotices` | Conflicts, failed saves and unsaved changes of closed documents, shown at the top of the sidebar. |
+| `mdvStatusTimer` | Clears the "Saved ✓" status after 3 s. |
 | `mdvAuthorName` | Read once from `localStorage['mdv-author-name']`, used by `mdvAddComment` and `mdvPostReply` |
-| `_mdvDmp` | `mdvResolveAnchor` only |
+| `MDV_SHA256_K` | `mdvSha256Hex` |
 | `MDV_DB`, `MDV_STORE` | `mdvOpenDb`, `mdvPutHandle`, `mdvGetHandle` |
 | `MDV_BLOCK_TAGS` | `mdvFindBlock` |
 
@@ -289,7 +292,8 @@ Everything below runs in this order on page load.
 | `window._frontmatter` | `renderMarkdown` | nobody |
 | `window._narrations` | `renderMarkdown` (from `extractNarrations`) | `buildTtsSections`, `findNarrationFor` (only as a "has any narration" gate) |
 | `window.__mdvMouseupWired` | top-level guard (4105) | same guard |
-| `mdBody.__mdvWired` | `mdvAttachContextMenu` | same function. `#mdBody` survives re-renders because only its `innerHTML` is replaced, so the context menu is wired once. |
+| `mdBody.__mdvWired` | `mdvAttachContextMenu` (called when `comments.js` loads) | same function. `#mdBody` survives re-renders because only its `innerHTML` is replaced, so the context menu is wired once. |
+| `data-mdv-block`, `data-mdv-anchor` attributes on top-level blocks in `#mdBody` | the markdown-it core rule `mdvAnnotateBlocks` at render time; `mdvAddComment` and `mdvDeleteThread` update `data-mdv-anchor` in place | `mdvBuildAnchorMap`, `mdvLocateInsertion` |
 | `searchResults._matches` | `handleSearch` | `goSearch` |
 | `linkTooltip.dataset.href` | `showLinkTooltip` | `copyLinkUrl` |
 | CSS custom properties on `<html>`: `--reading-size`, `--reading-lh`, `--tts-height` | `applyFontSize`, `ttsToggle`, `ttsStop` | CSS |
@@ -487,9 +491,9 @@ blocked, the reads at lines 1750–1751 stop the whole script (inferred).
 - `mdvPutHandle(key, handle)` writes. Callers: `readFile` (`current`, on a workspace match),
   `mdvOpenWithHandle` (`current`), `mdvEnsureWritableHandle` (`current`), `mdvPickWorkspace`
   (`workspace`, and `current` if the loaded file is found in the folder).
-- `mdvGetHandle(key)` reads, and returns `null` if the database cannot be opened (a failed `get`
-  request rejects instead). Its only caller is the `window` `load`
-  handler, for `workspace` then `current`.
+- `mdvGetHandle(key)` reads, and returns `null` on any error. Its only caller is the `window` `load`
+  handler, for `workspace` then `current`. Each helper closes its database connection when done, and a
+  failure to store a handle never stops a file from opening.
 - Nothing ever deletes a key.
 
 ### 8.3 URL
@@ -619,10 +623,9 @@ single-dollar spans (inline, within one line) with
    the raw source if rendering failed) gets read out. Add a branch that uses `findNarrationFor`
    like Mermaid does. See [read-aloud.md](read-aloud.md).
 8. **Comments.** `MDV_BLOCK_TAGS` includes `PRE`, so right-clicking a rendered diagram offers "Add
-   comment". `mdvAddComment` then searches `rawMarkdown` for the block's `innerText`, which for an
-   SVG will not match the source, so the comment becomes an orphan (inferred). Decide whether
-   diagrams should be commentable and, if so, anchor on the wrapper. See
-   [commenting.md](commenting.md).
+   comment". The comment code's fence wrapper copies the block number onto the first element of a custom
+   fence renderer's output, so a thread on a diagram is anchored on its wrapper. Keep a renderer's output to
+   one top-level element and the anchor follows it. See [commenting.md](commenting.md#creating-an-anchor).
 9. **CSS.** Style the wrapper with tokens only (`var(--bg-card)`, `var(--border-secondary)`,
    `var(--radius-lg)`) so all three themes work, and check `@media print` and focus mode
    (`body.focus-mode` dims every top-level block that is not a heading, `.section-content` or
@@ -761,65 +764,89 @@ template string and is not code. Anonymous handlers follow the table.
 
 ### 11.10 Comments: format and anchors
 
-| Function | Line | One line |
-|---|---|---|
-| `mdvParseFile(src)` | 3514 | Extracts the JSON payload from `MDV-COMMENTS:v1` and reverses the escaping that `mdvSerialize` applies to `--` and `<` (JSON unicode escapes for the hyphen and less-than sign) |
-| `mdvSerialize(src, comments)` | 3529 | Removes the old block and appends a new one, escaping `--` and `<` |
-| `mdvShortId()` | 3539 | `c_` plus up to 10 base-36 characters (anchor ids) |
-| `mdvNormalize(t)` | 3542 | Lowercase, collapse whitespace |
-| `mdvHash(text)` | 3544 | First 8 bytes of SHA-256, as hex |
-| `mdvComputeAnchor(elem, selectionText)` | 3550 | `{ id, blockKind, blockHash, sibIdx, quote }` |
-| `mdvBuildAnchorMap(container)` | 3573 | Anchor id → next element after each `MDV-ANCHOR` DOM comment |
-| `mdvResolveAnchor(anchor, container)` | 3591 | Exact, then sibling-index, then fuzzy fallback. **Never called (dead).** |
+All comment functions are in `js/comments.js`; find them by name.
 
-### 11.11 Comments: storage and file access
+| Function | One line |
+|---|---|
+| `mdvSha256Hex(str)`, `mdvHash(text)` | SHA-256 in JavaScript (works without `crypto.subtle`); `mdvHash` is its first 8 bytes as hex |
+| `mdvLocateBlock(src)` | The comment block that ends the file, from the last opening token at a line start, or `null` |
+| `mdvReadPayload(loc)` | Version check and `JSON.parse` of a located block; an error makes comments read-only |
+| `mdvParseFile(src)` | `{ stripped, comments, parseError }` for a document |
+| `mdvSerialize(src, comments)` | Replaces the trailing block, keeping the text before it byte for byte and the document's line endings; throws (changing nothing) when the existing block cannot be read |
+| `mdvEol(src)` | The document's line ending (CRLF or LF) |
+| `mdvMarker(id)`, `mdvMarkerIds(html)` | Writes an anchor marker; lists the marker ids in an HTML string |
+| `mdvRemoveMarkers(src, ids)` | Removes those markers only, never text in code, front matter or the comment block |
+| `mdvProtectedRanges(src)` | Source ranges of code and front matter |
+| `mdvIsCommentOnly(html)`, `mdvTopBlocks(tokens)` | The numbering rule: top-level blocks, skipping HTML blocks that hold only comments |
+| `mdvAnnotateBlocks(state)` | markdown-it core rule `mdv_blocks`: `data-mdv-block` numbers and `data-mdv-anchor` ids on top-level blocks |
+| `mdvSplitFrontmatter(src)`, `mdvLineOffset(text, line)`, `mdvParseMarkdown(text)` | Map block numbers back to source lines with the viewer's own markdown-it |
+| `mdvSameBlocks(body, blocks)` | Whether math pre-processing kept the block structure, so block numbers can be trusted |
+| `mdvLocateInsertion(elem)` | Where a new thread's marker goes: the start of the line of the top-level block holding `elem` |
+| `mdvShortId()`, `mdvNewCommentId()`, `mdvNormalize(t)` | Anchor ids, comment ids, text normalization |
+| `mdvBlockText(el)`, `mdvBlockLabel(el)` | A block's text without chips (hashed); a readable label for a thread card |
+| `mdvComputeAnchor(elem, selectionText)` | `{ id, blockKind, blockHash, sibIdx, quote }` |
+| `mdvBuildAnchorMap(container)` | Anchor id → element, from `data-mdv-anchor`, else the element after the marker comment |
+| `mdvChipHost(el, anchor)` | The item a thread belongs to inside a list, table, quote or definition list |
 
-| Function | Line | One line |
-|---|---|---|
-| `mdvOpenDb()` | 3628 | Opens `mdv-viewer` v1 and creates `handles` |
-| `mdvPutHandle(key, h)` | 3636 | Writes a handle |
-| `mdvGetHandle(key)` | 3645 | Reads a handle; `null` if the database cannot be opened (a failed `get` rejects instead) |
-| `mdvPickFile()` | 3658 | `showOpenFilePicker` → `mdvOpenWithHandle` |
-| `mdvOpenWithHandle(handle)` | 3677 | Requests read-write, stores it as `current`, reads and renders |
-| `mdvEnsureWritableHandle()` | 3696 | Re-permissions the existing handle or prompts `showSaveFilePicker` |
-| `mdvSaveFile(opts)` | 3724 | Serialises comments into `rawMarkdown` and writes it, or downloads it on non-Chromium browsers |
-| `mdvDownloadFallback()` | 3775 | Blob download of the serialised file |
-| `mdvScheduleSave()` | 3788 | 1500 ms debounced `mdvSaveFile({ allowPrompt: false })` |
-| `mdvSetStatus(text, kind)` | 3795 | Toolbar save-status pill |
-| `mdvPickWorkspace()` | 4220 | `showDirectoryPicker`, stores it as `workspace`, links the current file if found |
-| `mdvTryWorkspaceMatch(filename)` | 4260 | Silent lookup of a file by name in the workspace folder |
-| `mdvOpenOrSetSaveLocation()` | 4271 | Toolbar button: pin a save location, or open a new file |
+### 11.11 Comments: storage, files and the save seam
+
+| Function | One line |
+|---|---|
+| `mdvOpenDb()`, `mdvPutHandle(key, h)`, `mdvGetHandle(key)` | IndexedDB `mdv-viewer` v1, store `handles`; each call closes its connection; `mdvGetHandle` returns `null` on any error |
+| `mdvIsDesktop()`, `mdvCurrentTarget()` | Desktop app or browser; where the current document saves |
+| `mdvWriteDocument(text, opts)` | **The only writer.** Desktop: `mdvHost.saveDocument`; browser: the handle, after the version check. Never writes on a conflict |
+| `mdvWriteDesktop`, `mdvWriteHandle` | Its two branches |
+| `mdvReportWrite(res, ctx)` | Status line and notices for a write's outcome |
+| `mdvEnqueueWrite(job)`, `mdvFlushWrites()` | The write queue: one write at a time, each to its own file |
+| `mdvRequestSave()` | Queues a write of the committed document after a change |
+| `mdvSaveFile(opts)` | Save now (Cmd/Ctrl+S, toolbar): Save dialog or permission prompt when allowed; download in browsers without the File System Access API |
+| `mdvDownloadName()`, `mdvDownloadText(text, name)`, `mdvDownloadFallback()` | Download a copy |
+| `mdvSetStatus(text, kind)` | Toolbar save-status pill |
+| `mdvAddNotice`, `mdvRemoveNotices`, `mdvRenderNotices`, `mdvNoticeElement`, `mdvNoticeButton`, `mdvNoticeIsCurrent` | The sidebar notices |
+| `mdvNoticeReload(n)`, `mdvNoticeOverwrite(n)`, `mdvReloadFromDisk()` | The reader's choices after a conflict |
+| `mdvPickFile()` | `showOpenFilePicker` → `mdvOpenWithHandle`; without the API, the file input; in the desktop app, `mdvHost.openDialog()` |
+| `mdvOpenWithHandle(handle, opts)` | Records the version read, links the handle, renders; `prompt: false` never asks for permission |
+| `mdvEnsureWritableHandle()` | Re-permissions the existing handle or prompts `showSaveFilePicker` |
+| `mdvPickWorkspace()` | `showDirectoryPicker`, stores it as `workspace`, links the current file when its contents match |
+| `mdvMatchInFolder(dir, name, text)`, `mdvTryWorkspaceMatch(filename, text)` | Links a workspace file only when its contents are identical |
+| `mdvOpenOrSetSaveLocation()` | Toolbar button: pin a save location, or open a new file |
 
 ### 11.12 Comments: UI and editing
 
-| Function | Line | One line |
-|---|---|---|
-| `mdvShowToast(msg, kind)` | 3804 | Toast for 3.5 s |
-| `mdvEscape(s)` | 3813 | HTML-escape (null-safe) |
-| `mdvThreadTree()` | 3815 | Builds a root → replies tree sorted by `created_at` |
-| `mdvToggleSidebar(force)` | 3829 | Opens or closes the sidebar (`force === true` opens) |
-| `mdvRenderSidebar()` | 3838 | Thread cards, wiring, chips, badge, reveals the toggle button |
-| `mdvRenderThreadCard(thread, isOrphan)` | 3885 | Card HTML: quote, comments, reply/resolve/delete or reopen |
-| `mdvRenderCommentBody(c)` | 3910 | One comment's HTML (author, time, escaped body) |
-| `mdvRenderChips()` | 3920 | `💬 n` chip appended to each anchored block |
-| `mdvFocusThread(id)` | 3941 | Opens the sidebar, scrolls to and outlines the card |
-| `mdvShowAddPopup(elem, selectionText)` | 3954 | Add-comment popup. Gets a writable handle within the click gesture. |
-| `mdvAddComment(elem, selectionText, body)` | 3997 | Injects an `MDV-ANCHOR` line into `rawMarkdown`, adds the comment, re-renders, saves. The re-render's re-parse discards the new comment (section 12). |
-| `mdvPostReply(threadId, textareaEl)` | 4037 | Adds a reply, re-renders the sidebar, saves |
-| `mdvResolveThread(threadId)` | 4054 | Toggles resolved/open |
-| `mdvDeleteThread(threadId)` | 4063 | Removes the root and direct replies, strips unreferenced anchors, re-renders. The re-render's re-parse restores the thread if the source's comment block still contains it (section 12). |
-| `mdvFindBlock(node)` | 4082 | Nearest ancestor in `MDV_BLOCK_TAGS` |
-| `mdvAttachContextMenu()` | 4088 | Wires `contextmenu` on `#mdBody` once |
-| `mdvShowContextMenu(x, y, elem, selectionText)` | 4118 | Single-item "Add comment" menu |
-| `mdvHandleSelection()` | 4137 | Floating "Comment" popover above a selection |
+| Function | One line |
+|---|---|
+| `mdvShowToast(msg, kind)` | Toast for 3.5 s |
+| `mdvEscape(s)` | HTML-escape, quotes included (null-safe) |
+| `mdvThreadTree()` | Builds a root → replies tree sorted by `created_at`, skipping entries it cannot read |
+| `mdvToggleSidebar(force)` | Opens or closes the sidebar (`force === true` opens) |
+| `mdvRenderSidebar()` | Notices, thread cards (keeping reply drafts), wiring, chips, badge, reveals the toggle button |
+| `mdvRenderThreadCard(thread, isOrphan, host)` | Card HTML: quote, comments, reply/resolve/delete or reopen |
+| `mdvRenderCommentBody(c)` | One comment's HTML (author, time, escaped body) |
+| `mdvRenderChips(idMap)` | `💬 n` chip on each anchored block or item |
+| `mdvFocusThread(id)` | Opens the sidebar, scrolls to and outlines the card |
+| `mdvRefuseIfLocked()`, `mdvCommit(text, comments)` | Read-only guard; every change commits the list and the source together |
+| `mdvShowAddPopup(elem, selectionText)` | Add-comment popup next to the block. Gets a writable handle within the click gesture. The typed text stays if adding fails |
+| `mdvAddComment(elem, selectionText, body)` | Inserts the marker, adds and commits the thread, attaches it on the page without a re-render, saves |
+| `mdvPostReply(threadId, textareaEl)` | Adds and commits a reply, saves |
+| `mdvResolveThread(threadId)` | Toggles resolved/open, commits, saves |
+| `mdvDeleteThread(threadId)` | Removes the thread and its replies and its marker, commits, saves |
+| `mdvRerender()` | Re-renders the current document in place, keeping the scroll |
+| `mdvFindBlock(node)` | Nearest ancestor in `MDV_BLOCK_TAGS` |
+| `mdvAttachContextMenu()` | Wires `contextmenu` on `#mdBody` once |
+| `mdvShowContextMenu(x, y, elem, selectionText)` | Single-item "Add comment" menu |
+| `mdvHandleSelection()` | Floating "Comment" popover above a selection |
+| `mdvHasUnsavedWork()` | Whether leaving the page should ask first |
+| `mdvBeginDocument(source, title)` | A new document: keeps the previous one's unsaved changes in a notice, resets the per-document state, drops a stale file link |
 
 ### 11.13 Anonymous and wrapper functions
 
 | Where | What |
 |---|---|
-| 4185–4199 IIFE | Captures the original `renderMarkdown` and installs the wrapper (`mdvParseFile` → original → deferred sidebar) |
-| 4202 `load` handler | IndexedDB restore of `workspace` and `current` |
-| 4287–4291 | `window.mdvPickFile`, `mdvPickWorkspace`, `mdvOpenOrSetSaveLocation`, `mdvToggleSidebar`, `mdvSaveFile` (redundant for top-level declarations, but harmless) |
+| `md.renderer.rules.fence` wrapper | Copies the block number and anchor ids onto the first element of a custom fence renderer's output (Mermaid) |
+| IIFE near the end of `comments.js` | Captures the original `renderMarkdown` and installs the hook (`mdvBeginDocument` → `mdvParseFile` → original → deferred sidebar) |
+| `load` handler | IndexedDB restore of `workspace` and `current`, with the rules in section 3, step 9 |
+| `beforeunload` handler | Asks before leaving with unsaved comment changes |
+| End of `comments.js` | `window.mdvPickFile`, `mdvPickWorkspace`, `mdvOpenOrSetSaveLocation`, `mdvToggleSidebar`, `mdvSaveFile`, `mdvWriteDocument` |
 | 4131 `function close(e)` | One-shot `mousedown` dismisser for the context menu |
 | Section 6 tables | All other arrow-function listeners |
 
@@ -830,18 +857,20 @@ template string and is not code. Anonymous handlers follow the table.
 - **Keep `renderMarkdown` as the only render entry point.** The comment wrapper relies on every
   render passing through `window.renderMarkdown`. A new loader that calls an internal helper
   directly would skip comment parsing.
-- **`rawMarkdown` is the document of record.** Comment saves serialise *it*, not the file on disk.
-  Anything that replaces it must also set `mdvFileHandle` to the matching handle or `null`, or the
-  next auto-save writes the new text over the previously opened file. `readFile` (drop and the
-  file picker), the paste listener and the `?file=` fetch in `loadFromUrl` all do this. Any new
-  loader must do the same (see [roadmap.md](roadmap.md#known-issues)).
-- **The `renderMarkdown` wrapper re-parses comments from the source on every render.** It sets
-  `mdvComments = mdvParseFile(source).comments`. Any code that changes `mdvComments` and then
-  re-renders loses that change unless it first writes the comments into `rawMarkdown` (for example
-  with `mdvSerialize`). Today this means a new thread from `mdvAddComment` is dropped and a thread
-  deleted by `mdvDeleteThread` comes back if the source's block still holds it. A reduced Node
-  reproduction of the same wrapper pattern confirmed the overwrite; the full flow was not run in a
-  browser. [commenting.md](commenting.md) lists these as known bugs.
+- **`rawMarkdown` is the document of record.** Comment saves write *it*, not the file on disk, and every
+  comment change is serialized into it at once (`mdvCommit`). Anything that replaces it must also set
+  `mdvFileHandle` to the matching handle or `null`. `readFile` (drop and the file picker), the paste
+  listener and the `?file=` fetch in `loadFromUrl` all do this, and the comment hook drops a link whose
+  recorded version is not the document being rendered. A loader that opens a file through a handle should
+  call `mdvOpenWithHandle`, which records the version for the conflict check.
+- **`mdvWriteDocument` is the only function that writes a document.** In the desktop app it calls
+  `mdvHost.saveDocument(currentPath, text, currentMtimeMs)`; in the browser it writes through the File System
+  Access handle after checking the file still holds the version the viewer read. Never write a document any
+  other way: the conflict check, the write queue and the reader's notices all live there.
+- **The `renderMarkdown` hook treats every call as a document load** (`mdvBeginDocument`): it re-parses the
+  comments from the source and resets the per-document state. Code that changes `mdvComments` must commit
+  them into `rawMarkdown` first (`mdvCommit`), which every comment action does; `mdvRerender` re-renders the
+  same document without resetting it.
 - **The DOM is rebuilt on every render.** `#mdBody.innerHTML` is replaced, so per-element listeners
   are re-attached by the passes, while document-level listeners are attached once.
 - **Raw HTML in documents is live.** markdown-it runs with `html: true`, Mermaid runs with

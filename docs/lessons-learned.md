@@ -257,19 +257,26 @@ may need to be requested again, which also requires a gesture.
   set a location.
 - `readFile` clears `mdvFileHandle` on every drag-drop or file-input load.
 
+The flow as of 2026-10-10 (every change is saved at once; a download happens only on an explicit
+`Cmd/Ctrl+S`, see [commenting.md](commenting.md#save-flow)):
+
 ```mermaid
 flowchart TD
-  A[Change to comments] --> B[mdvScheduleSave: 1.5 s timer]
-  B --> C{Handle exists?}
-  C -- yes --> D{Write permission granted?}
-  D -- yes --> E[Write file in place]
+  A[Change to comments] --> B[mdvCommit, then mdvRequestSave]
+  B --> C{Save target?}
+  C -- desktop app --> W[mdvWriteDocument]
+  C -- handle --> D{Write permission granted?}
+  D -- yes --> W
   D -- no --> F[Status: grant permission via button or Cmd+S]
-  C -- no --> G{showSaveFilePicker available?}
-  G -- no --> H[Download a copy]
+  C -- none --> G{showSaveFilePicker available?}
+  G -- no --> H[Status: Cmd+S downloads a copy]
   G -- yes --> I[Status: set a save location]
   F -. user gesture .-> J[mdvEnsureWritableHandle / requestPermission]
   I -. user gesture .-> J
-  J --> E
+  J --> W
+  W --> K{File still the version read?}
+  K -- yes --> E[Write file in place]
+  K -- no --> N[Write nothing; notice: reload, download or overwrite]
 ```
 
 **Rule.** A fallback that changes where the user's data goes must never trigger silently. Get the
@@ -294,9 +301,11 @@ across visits when the reader chooses to allow it on every visit.
 **Rule.** Ask for the widest scope the reader is comfortable granting, once, and persist it. Then
 be careful with what the grant lets you do silently:
 
-- `mdvTryWorkspaceMatch` matches by file name only, in the top level of the folder. A dropped `File`
-  carries no path, so a file of the same name dropped from a *different* folder is linked to the
-  workspace copy, and the next save writes there *(inferred; see the open issues below)*.
+- `mdvTryWorkspaceMatch` matched by file name only, in the top level of the folder. A dropped `File`
+  carries no path, so a file of the same name dropped from a *different* folder was linked to the
+  workspace copy, and the next save wrote there. **Fixed 2026-10-10:** it links only when the contents
+  are identical, and a test drops a same-named different file to prove the workspace file stays
+  untouched. A name is not an identity; compare what you are about to overwrite.
 - Files in subfolders of the workspace are never matched, because only direct children are looked
   up.
 
@@ -319,9 +328,12 @@ be found is shown in the sidebar as an orphan instead of being dropped (`mdvRend
 **Rule.** Anchor to something written into the source, not to a count. Keep fallbacks for when the
 marker is lost, and never drop an annotation silently.
 
-Two gaps remain in the current code:
+Two gaps remained in the code at import, both **fixed on 2026-10-10** (see
+[commenting.md](commenting.md#anchors-creation-and-resolution)): the marker position now comes from
+markdown-it's own source map through block numbers written at render time, and the anchor id travels
+with its element as an attribute, so section wrappers cannot separate them. As they were:
 
-- `mdvAddComment` finds where to insert the marker with `rawMarkdown.indexOf(blockText)`, using the
+- `mdvAddComment` found where to insert the marker with `rawMarkdown.indexOf(blockText)`, using the
   *rendered* text of the block. Any block with inline formatting, links or soft line breaks has
   rendered text that does not appear in the source, so no marker is written and the thread is an
   orphan from the start. This includes every heading, because the rendered heading also contains
@@ -343,8 +355,9 @@ document as visible text.
 **How it is handled.** `mdvSerialize` writes all comments as a single JSON payload in a trailing
 `<!-- MDV-COMMENTS:v1 ... MDV-COMMENTS:end -->` block, and inside the JSON replaces every `--` with
 `-\u002d` and every `<` with `\u003c`. Both are valid JSON escapes, so `JSON.parse` alone would
-restore the original text. `mdvParseFile` also reverses them textually before parsing, which is
-redundant and harmful: a comment whose body contains the literal text `\u002d` or `\u003c`
+restore the original text. `mdvParseFile` also reversed them textually before parsing (until
+2026-10-10, when that replacement was removed and an unreadable block became read-only instead of
+being dropped), which was redundant and harmful: a comment whose body contains the literal text `\u002d` or `\u003c`
 (a backslash followed by `u002d` or `u003c`) is stored with a doubled backslash, the textual replacement leaves a lone backslash, and the whole
 payload then fails to parse *(inferred; see [commenting.md](commenting.md))*. Escape for the host,
 and let the format's own parser undo it. The older viewer wrote
@@ -364,16 +377,16 @@ Plans for them belong in [roadmap.md](roadmap.md).
 
 | Hazard | Where | What happens | Class |
 |---|---|---|---|
-| The paste handler replaces the document | `document.addEventListener('paste', ...)` | Pasting more than ten characters while the search overlay is closed and focus is not in a text field renders the pasted text as a new document with no confirmation. The handler now ignores pastes into `input`, `textarea`, `select` and editable elements and clears `mdvFileHandle`, so the pasted text can no longer be saved over the opened file; comments not yet saved to the previous document are still dropped *(inferred)*. | 9, 10 |
-| Workspace match by name | `mdvTryWorkspaceMatch` | A same-named file dropped from another folder is linked to the workspace file, and the next save overwrites it *(inferred)*. | 10, 11 |
+| The paste handler replaces the document | `document.addEventListener('paste', ...)` | Pasting more than ten characters while the search overlay is closed and focus is not in a text field renders the pasted text as a new document with no confirmation. The handler now ignores pastes into `input`, `textarea`, `select` and editable elements and clears `mdvFileHandle`, so the pasted text can no longer be saved over the opened file. Since 2026-10-10, comment changes not yet saved to the previous document are kept in a notice with a download button. | 9, 10 |
+| ~~Workspace match by name~~ | `mdvTryWorkspaceMatch` | **Fixed 2026-10-10:** linked only when the contents match. | 10, 11 |
 | Math runs before markdown | `renderMath` is called on the raw source in `renderMarkdown` | `$...$` inside fenced or inline code is turned into KaTeX too, so shell snippets such as `echo $HOME $PATH` are altered *(inferred)*. | 5 |
 | Theme switch does not redraw diagrams | `setTheme` → `renderMermaidDiagrams` | Only `.mermaid:not(.rendered)` elements are rendered, and the Mermaid source text has already been replaced by SVG, so existing diagrams keep their old theme *(inferred)*. | 2 |
 | Diagram title guessed from SVG text | `openDiagramOverlay` | The diagram type is detected from `mermaidEl.textContent`, which after rendering is the SVG's label text, not the source *(inferred)*. | 8 |
-| Anchor fallbacks not wired | `mdvResolveAnchor` | See lesson 12. | 12 |
+| ~~Anchor fallbacks not wired~~ | `mdvResolveAnchor` | **Fixed 2026-10-10:** the dead resolver was removed; anchors use block numbers set at render time. See lesson 12. | 12 |
 | Raw HTML is not sanitized | `markdownit({ html: true })` with output assigned via `innerHTML` | HTML in an opened document is inserted as-is, so event-handler attributes such as `onerror` run. The older viewer passed output through DOMPurify. | 1 |
-| Open fallback targets a missing element | `mdvPickFile` | Without `showOpenFilePicker`, it shows a toast and calls `document.getElementById('mdFile').click()`, but the page has no element with id `mdFile` (the file input is `fileInput`), so the toolbar file-plus (writable open) button throws instead of opening a file in those browsers; the plain **Open** button is unaffected *(inferred)*. | 7 |
+| ~~Open fallback targets a missing element~~ | `mdvPickFile` | **Fixed 2026-10-10:** it opens `#fileInput`. | 7 |
 | Frontmatter abbreviations never apply | `applyAbbreviationTooltips` | See lesson 5. | 5 |
-| No unsaved-changes warning | `beforeunload` only stops read aloud | `mdvDirty` is set but never read, so closing the tab with an unsaved comment (for example on Chromium with no save location) gives no warning. | 10 |
+| ~~No unsaved-changes warning~~ | `beforeunload` | **Fixed 2026-10-10:** leaving with comment changes that are not in a file asks first, and opening another document keeps them in a notice. | 10 |
 
 ## Lessons from the read-aloud engine
 
