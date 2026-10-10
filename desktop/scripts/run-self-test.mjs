@@ -89,7 +89,8 @@ function registeredCommand() {
 }
 
 async function selfTest() {
-  const app = opt('--app') || findApp();
+  // Absolute, because `open -a` reads a relative path as the name of an installed app.
+  const app = opt('--app') ? resolve(opt('--app')) : findApp();
   if (!app || !existsSync(app)) throw new Error(`no built app found (${app || 'src-tauri/target'}); build it with: pnpm build`);
   const docArg = opt('--doc');
   if (!docArg) throw new Error('--doc <file.md> is required');
