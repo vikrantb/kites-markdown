@@ -204,7 +204,7 @@ function mdvDiagramOverlayTitle(wrapper, svg) {
   const own = svg.querySelector('.pieTitleText, .titleText, text.title, .chart-title text');
   const accTitle = svg.querySelector(':scope > title');
   const name = ((own && own.textContent) || (accTitle && accTitle.textContent) || '').trim();
-  return name ? `${type} · ${name}` : type;
+  return name ? `${type} \u00b7 ${name}` : type;
 }
 
 // mermaid.js calls this after redrawing a diagram (for example on a theme change): an open view of that diagram
@@ -267,7 +267,15 @@ function mdvWireOverlay() {
   els.body.addEventListener('pointermove', mdvOnPointerMove);
   els.body.addEventListener('pointerup', mdvOnPointerUp);
   els.body.addEventListener('pointercancel', mdvOnPointerUp);
-  els.body.addEventListener('lostpointercapture', (e) => { mdvView.pointers.delete(e.pointerId); });
+  // Capture can be lost without a pointerup (the window loses focus, for instance): end the gesture cleanly.
+  els.body.addEventListener('lostpointercapture', (e) => {
+    if (!mdvView.pointers.delete(e.pointerId)) return; // already handled by pointerup
+    if (mdvView.pointers.size) mdvStartGesture(null);
+    else {
+      mdvView.gesture = null;
+      els.body.classList.remove('is-grabbing');
+    }
+  });
   window.addEventListener('resize', () => {
     if (!mdvOverlayIsOpen()) return;
     if (diagramFitMode) mdvDiagramFit(false);

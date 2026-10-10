@@ -69,7 +69,7 @@ function mdvCaptionImages(body) {
 
 // A column whose every filled body cell is a number (1,234.5, -3, 12%, $5, 4.2k) is right-aligned with tabular
 // figures, unless the markdown already chose an alignment for it.
-const MDV_NUMBER = /^[-+−]?(?:[$€£¥₹]\s?)?\d[\d,.   ]*(?:%|[kKMB]|ms|s|x|×)?$/;
+const MDV_NUMBER = /^[-+\u2212]?(?:[$\u20ac\u00a3\u00a5\u20b9]\s?)?\d[\d,.\u202f\u00a0 ]*(?:%|[kKMB]|ms|s|x|\u00d7)?$/;
 function mdvAlignNumericColumns(body) {
   for (const table of body.querySelectorAll('table')) {
     const rows = [...table.querySelectorAll('tbody tr')];
@@ -79,7 +79,7 @@ function mdvAlignNumericColumns(body) {
     for (let c = 0; c < width; c++) {
       const cells = rows.map((r) => r.children[c]).filter(Boolean);
       if (cells.some((cell) => cell.style.textAlign)) continue;
-      const filled = cells.map((cell) => cell.textContent.trim()).filter((t) => t && !/^[-–—]$/.test(t));
+      const filled = cells.map((cell) => cell.textContent.trim()).filter((t) => t && !/^[-\u2013\u2014]$/.test(t));
       if (!filled.length || !filled.every((t) => MDV_NUMBER.test(t))) continue;
       cells.forEach((cell) => cell.classList.add('mdv-num'));
       if (heads[c] && !heads[c].style.textAlign) heads[c].classList.add('mdv-num');
