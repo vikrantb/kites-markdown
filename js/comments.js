@@ -496,12 +496,16 @@ function mdvCurrentTarget() {
 // only ever set by the reader's own choice in the conflict notice.
 // Resolves {ok: true} or {ok: false, reason, message}; reason is 'conflict', 'permission', 'no-target',
 // 'unverified', 'not-allowed' or 'io'.
+let mdvWriteLock = Promise.resolve(); // no two writes ever overlap, whoever calls
+
 async function mdvWriteDocument(text, opts) {
   opts = opts || {};
   const name = opts.name || mdvDownloadName();
+  const run = mdvWriteLock.then(() => (mdvIsDesktop() ? mdvWriteDesktop(String(text), opts) : mdvWriteHandle(String(text), opts)));
+  mdvWriteLock = run.catch(() => {});
   let res;
   try {
-    res = mdvIsDesktop() ? await mdvWriteDesktop(String(text), opts) : await mdvWriteHandle(String(text), opts);
+    res = await run;
   } catch (e) {
     res = { ok: false, reason: 'io', message: (e && e.message) || String(e) };
   }
@@ -799,9 +803,14 @@ function mdvNoticeIsCurrent(n) {
 
 async function mdvNoticeReload(n) {
   if (!confirm('Show the version on disk? Your unsaved comment changes will be discarded (use "Download my version" first to keep them).')) return;
-  mdvDirty = false;
+  const wasDirty = mdvDirty;
+  mdvDirty = false; // the reader chose to discard them: the reload must not keep them as "unsaved"
   mdvRemoveNotices((x) => x.id === n.id);
-  if (!(await mdvReloadFromDisk())) mdvShowToast('The file could not be read again.', 'error');
+  if (!(await mdvReloadFromDisk())) {
+    mdvDirty = wasDirty;
+    mdvAddNotice(n);
+    mdvShowToast('The file could not be read again; your comment changes are still here.', 'error');
+  }
 }
 
 async function mdvNoticeOverwrite(n) {

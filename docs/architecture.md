@@ -278,6 +278,7 @@ Everything below runs in this order on page load.
 | `mdvLockReason` | Why comments are read-only for the current document (an unreadable or newer comment block), or `null`. |
 | `mdvOwnRender` | True while `mdvRerender` re-renders the current document itself. |
 | `mdvWriteChain`, `mdvNewestJob`, `mdvQueuedVersion`, `mdvWritesQueued` | The write queue (`mdvEnqueueWrite`). |
+| `mdvWriteLock` | Serializes `mdvWriteDocument` itself, so no two writes overlap whoever calls it (the queue, or the reader's Overwrite). |
 | `mdvNotices` | Conflicts, failed saves and unsaved changes of closed documents, shown at the top of the sidebar. |
 | `mdvStatusTimer` | Clears the "Saved ✓" status after 3 s. |
 | `mdvAuthorName` | Read once from `localStorage['mdv-author-name']`, used by `mdvAddComment` and `mdvPostReply` |
