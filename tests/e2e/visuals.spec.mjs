@@ -430,6 +430,20 @@ test('an image alone in a paragraph becomes a captioned figure, and number colum
   for (const row of aligned) expect(row).toEqual(['left', 'right', 'right']);
 });
 
+test('at phone width nothing scrolls sideways and every toolbar button is on screen', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page, 'kitchen-sink.md');
+  const layout = await page.evaluate(() => ({
+    pageWidth: document.documentElement.scrollWidth,
+    offscreen: [...document.querySelectorAll('.toolbar button')]
+      .filter((b) => b.offsetParent !== null)
+      .filter((b) => { const r = b.getBoundingClientRect(); return r.right > window.innerWidth + 0.5 || r.left < 0; })
+      .map((b) => b.title || b.textContent.trim()),
+  }));
+  expect(layout.pageWidth).toBeLessThanOrEqual(390);
+  expect(layout.offscreen).toEqual([]);
+});
+
 const AA_PAIRS = [
   ['--text-primary', '--bg-primary'], ['--text-secondary', '--bg-primary'], ['--text-tertiary', '--bg-primary'],
   ['--text-secondary', '--bg-secondary'], ['--text-tertiary', '--bg-secondary'], ['--text-tertiary', '--bg-tertiary'],

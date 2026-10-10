@@ -111,7 +111,6 @@ function buildSectionMinimap() {
   const minimap = document.createElement('nav');
   minimap.className = 'section-minimap';
   minimap.setAttribute('aria-label', 'Sections');
-  minimap.style.setProperty('--segments', String(h2s.length));
 
   h2s.forEach(h => {
     const label = mdvHeadingText(h);

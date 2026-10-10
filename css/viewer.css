@@ -2,7 +2,8 @@
    Markdown viewer — design system
    --------------------------------------------------------------------------
    Every colour, shadow and size is a token on :root (light), overridden for
-   [data-theme="sepia"] and [data-theme="dark"]. Components use tokens only,
+   :root[data-theme="sepia"] and :root[data-theme="dark"] (scoped to the root,
+   because the theme menu's own buttons carry data-theme too). Components use tokens only,
    so a theme is one token block. Text tokens meet WCAG AA (4.5:1) on the
    surfaces they are used on; tests/e2e/visuals.spec.mjs re-measures them.
    Diagram colours (--diagram-*) are read by js/mermaid.js and handed to
@@ -165,7 +166,7 @@
 }
 
 /* ===== Tokens: sepia ===== */
-[data-theme="sepia"] {
+:root[data-theme="sepia"] {
   color-scheme: light;
   --bg-primary: #F4ECDA;
   --bg-secondary: #EDE3CC;
@@ -285,7 +286,7 @@
 }
 
 /* ===== Tokens: dark ===== */
-[data-theme="dark"] {
+:root[data-theme="dark"] {
   color-scheme: dark;
   --bg-primary: #14161B;
   --bg-secondary: #191C22;
@@ -1311,28 +1312,26 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
   .minimap-segment:hover::before { background: var(--text-tertiary); height: 10px; }
   .minimap-segment.active:hover::before { background: var(--accent-hover); }
 }
-/* Full title on hover and keyboard focus */
+/* Full title on hover and keyboard focus. Out of layout (display: none) until then: a hidden but laid-out
+   tooltip near the right edge would widen the page. */
 .minimap-segment::after {
   content: attr(data-label);
+  display: none;
   position: absolute; top: calc(100% + 8px); left: 50%;
-  transform: translate(-50%, -2px);
+  transform: translateX(-50%);
   z-index: 20; pointer-events: none;
-  max-width: 280px; width: max-content;
+  max-width: min(280px, 80vw); width: max-content;
   padding: 6px 10px; border-radius: 8px;
   background: var(--bg-tooltip); color: var(--text-on-tooltip);
   font-size: 0.74rem; font-weight: 500; letter-spacing: 0; line-height: 1.35;
   white-space: normal; text-align: center;
   box-shadow: var(--shadow-md);
-  opacity: 0; visibility: hidden;
-  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
 }
-.minimap-segment:first-child::after { left: 0; transform: translate(0, -2px); text-align: left; }
-.minimap-segment:last-child::after { left: auto; right: 0; transform: translate(0, -2px); text-align: right; }
+.minimap-segment:first-child::after { left: 0; transform: none; text-align: left; }
+.minimap-segment:last-child::after { left: auto; right: 0; transform: none; text-align: right; }
 .minimap-segment:hover::after, .minimap-segment:focus-visible::after {
-  opacity: 1; visibility: visible; transform: translate(-50%, 0);
+  display: block; animation: mdv-fade-in 0.12s ease-out;
 }
-.minimap-segment:first-child:hover::after, .minimap-segment:first-child:focus-visible::after,
-.minimap-segment:last-child:hover::after, .minimap-segment:last-child:focus-visible::after { transform: none; }
 
 /* ==========================================================================
    Diagrams
@@ -1590,11 +1589,12 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
   border-left: 1px solid var(--border-secondary);
   z-index: 55; overflow-y: auto; padding: 16px 14px;
   transform: translateX(100%);
-  transition: transform var(--transition-slow);
-  box-shadow: var(--shadow-lg);
+  visibility: hidden;
+  transition: transform var(--transition-slow), visibility 0s linear var(--transition-slow);
   font-family: var(--font-ui);
 }
-.links-panel.show { transform: translateX(0); }
+/* The shadow only while open: off screen it would still darken the right edge of the page. */
+.links-panel.show { transform: translateX(0); visibility: visible; box-shadow: var(--shadow-lg); transition: transform var(--transition-slow); }
 .links-panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .links-panel-header h4 {
   font-size: 0.72rem; font-weight: 600;
@@ -1687,7 +1687,7 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
   cursor: pointer; transition: background-color var(--transition-fast);
 }
 .search-result-item:hover, .search-result-item.focused { background: var(--accent-soft); color: var(--text-primary); }
-.search-match { background: var(--search-match); color: var(--text-primary); border-radius: 3px; padding: 0 2px; }
+.search-match { background: var(--search-match); color: var(--text-primary); border-radius: 2px; box-shadow: 0 0 0 1.5px var(--search-match); }
 .search-result-heading { font-weight: 600; display: block; margin-bottom: 2px; color: var(--text-primary); }
 .search-result-ctx { font-size: 0.78rem; color: var(--text-tertiary); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .search-footer {
@@ -2050,8 +2050,8 @@ body.mdv-sidebar-open .content-wrapper { padding-right: 380px; }
   body.mdv-sidebar-open .mdv-sidebar { box-shadow: var(--shadow-lg); }
 }
 @media (max-width: 900px) {
-  .toc-sidebar { transform: translateX(-100%); box-shadow: var(--shadow-lg); }
-  .toc-sidebar.mobile-show { transform: translateX(0); }
+  .toc-sidebar { transform: translateX(-100%); }
+  .toc-sidebar.mobile-show { transform: translateX(0); box-shadow: var(--shadow-lg); }
   .content-wrapper { margin-left: 0 !important; }
   .btn .lbl { display: none; }
   .toolbar .btn:has(+ #fileInput) { width: 32px; padding: 0; }
@@ -2073,6 +2073,12 @@ body.mdv-sidebar-open .content-wrapper { padding-right: 380px; }
   .mermaid-wrapper { padding: 40px 12px 16px; }
   .md-body pre > code > code, .md-body pre > code { padding-left: 14px; padding-right: 14px; }
   .fm-metrics { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
-  .toolbar { padding: 0 6px 0 10px; }
-  .font-ctrl { display: none; }
+  /* A phone has room for the essentials only. Page width is already full, focus mode matters less on a small
+     screen, and the save-location buttons need the File System Access API, which phone browsers lack. */
+  .toolbar { padding: 0 4px 0 10px; gap: 0; }
+  .toolbar-group { gap: 0; }
+  .font-ctrl, .toolbar-sep, #widthBtn, #focusBtn, #foldBtn, #mdvOpenBtn, #mdvWorkspaceBtn { display: none !important; }
+  .btn-icon, .toolbar .btn { width: 34px; padding: 0; }
+  .toolbar .btn:has(+ #fileInput) { margin-left: 2px; }
+  .toolbar-title { flex: 1 1 auto; margin-right: 4px; }
 }
