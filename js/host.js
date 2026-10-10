@@ -498,6 +498,17 @@
       try { delete Window.prototype[name]; delete window[name]; } catch (_) { /* not present */ }
     }
 
+    // The app's name where the browser build says "Markdown Viewer", until a document replaces it.
+    const title = document.getElementById('titleText');
+    if (title && !host.currentPath) title.textContent = 'Kites Markdown';
+    document.title = 'Kites Markdown';
+    // On a Mac the shortcuts are Command-based (the viewer accepts Ctrl or Cmd), so say so.
+    if (/Mac/i.test(navigator.platform || '')) {
+      for (const kbd of document.querySelectorAll('.paste-hint kbd, #shortcutsOverlay kbd')) {
+        if (kbd.textContent.trim() === 'Ctrl') kbd.textContent = '⌘';
+      }
+    }
+
     const zone = document.getElementById('dropZone');
     if (!zone) return;
     const sub = zone.querySelector('.drop-zone-sub');

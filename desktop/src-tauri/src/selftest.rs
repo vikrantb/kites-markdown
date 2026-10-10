@@ -222,13 +222,13 @@ fn write_report(out: &std::path::Path, report: &Value) -> std::io::Result<()> {
   std::fs::write(out, serde_json::to_vec_pretty(report).unwrap_or_default())
 }
 
-fn exit(app: &AppHandle, code: i32) {
-  app.exit(code);
-  // If the event loop does not stop promptly, stop the process.
-  std::thread::spawn(move || {
-    std::thread::sleep(Duration::from_secs(5));
-    std::process::exit(code);
-  });
+/// Ends the process with `code`. Not `AppHandle::exit`: the runtime ends its event loop with status 0
+/// whatever code that is given, and CI reads the status.
+fn exit(_app: &AppHandle, code: i32) {
+  use std::io::Write;
+  let _ = std::io::stdout().flush();
+  let _ = std::io::stderr().flush();
+  std::process::exit(code);
 }
 
 #[cfg(test)]

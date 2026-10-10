@@ -301,6 +301,9 @@ test.describe('in the desktop app (stand-in shell)', () => {
     test(`the welcome screen offers to become the default app (${theme})`, async ({ page }, info) => {
       await openApp(page, { doc: null, theme });
       await expect(page.locator('#dropZone .drop-zone-sub')).toHaveText('Drag a Markdown file here, or choose one.');
+      await expect(page.locator('#titleText')).toHaveText('Kites Markdown');
+      const mac = await page.evaluate(() => /Mac/i.test(navigator.platform));
+      await expect(page.locator('#dropZone .paste-hint kbd').first()).toHaveText(mac ? '⌘' : 'Ctrl');
       await expect(page.locator('#dropZone .drop-btn')).toContainText('Open a file…');
       const offer = page.locator('#mdvDefaultApp button');
       await expect(offer).toHaveText('Make Kites Markdown the default');
