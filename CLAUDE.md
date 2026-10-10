@@ -12,13 +12,16 @@ keep it that way: no product names, private paths or project-specific examples.
 
 | Path | What it is |
 |---|---|
-| `markdown-viewer.html` | The whole app: CSS, HTML skeleton and one inline `<script>`. No build step. |
+| `markdown-viewer.html` | The app's markup. It loads `css/viewer.css` and the classic scripts in `js/` in a fixed order. No build step. |
+| `css/viewer.css` | All of the viewer's own styles. |
+| `js/*.js` | The app, as 12 classic scripts sharing one global scope, loaded in the order `markdown-viewer.html` lists them: `core`, `display`, `files`, `render`, `mermaid`, `navigation`, `diagram-overlay`, `links`, `enhancements`, `read-aloud`, `app`, `comments`. Classic scripts (not ES modules) still load from `file://`. |
+| `tests/` | Browser tests (`pnpm test`): every sample in both themes, plus file:// loading. `tests/serve.mjs` is their static server. |
 | `vendor/` | Third-party libraries, vendored unmodified and loaded by relative tags. No CDN. Licenses are in `THIRD_PARTY_NOTICES.md`. |
 | `extensions/github-html-viewer/` | Chrome extension that renders `.html` blobs on GitHub. Read its security model before changing the iframe sandbox. |
 | `legacy/` | The superseded first viewer. Reference only; do not develop it. |
 | `docs/` | The documentation. Start with `docs/architecture.md`; the plan is `docs/roadmap.md`. |
 | `samples/` | Fixtures: `kitchen-sink.md` exercises every supported syntax, `commented.md` the comment format, and `repro-*.md` files reproduce open bugs. |
-| `scripts/check-inline-js.py` | $0 syntax check of the inline script(s). |
+| `scripts/check-js.mjs` | $0 syntax check of every `js/` script, parsed as a classic script (`pnpm check`). `scripts/check-inline-js.py` now only checks the legacy viewer. |
 
 ## Run
 
@@ -38,7 +41,9 @@ keep it that way: no product names, private paths or project-specific examples.
 
 ## Verify a change
 
-1. `python3 scripts/check-inline-js.py markdown-viewer.html` must pass. It checks syntax only.
+1. `pnpm check` must pass: every `js/` script parses. It checks syntax only.
+1. `pnpm test` must pass: every sample renders in both themes with no page or console errors, every Mermaid
+   block becomes an SVG, math has no errors, and the viewer works from `file://`. Screenshots land in `test-results/`.
 2. Open `samples/kitchen-sink.md` and `samples/commented.md` in Chrome, in **both themes**:
    - the console must be clean (a `favicon.ico` 404 is known);
    - diagrams, math, task-list checkboxes and code highlighting must render;

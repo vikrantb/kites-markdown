@@ -14,3 +14,7 @@ __pycache__/
 *.log
 .env
 .env.*
+
+# Browser test output
+test-results/
+playwright-report/

@@ -1,0 +1,13 @@
+{
+  "name": "kites-markdown",
+  "private": true,
+  "description": "Development tooling only. The viewer itself has no build step.",
+  "scripts": {
+    "test": "playwright test",
+    "check": "node scripts/check-js.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  },
+  "packageManager": "pnpm@10.17.1"
+}
