@@ -48,7 +48,7 @@
   }
 
   // ---------------------------------------------------------------
-  // Paths. Documents may be POSIX (/Users/a/notes.md) or Windows (C:\notes\a.md, \\server\share\a.md).
+  // Paths. Documents may be POSIX (/home/reader/notes.md) or Windows (C:\notes\a.md, \\server\share\a.md).
   // ---------------------------------------------------------------
   const isWindowsPath = (p) => /^[a-zA-Z]:[\\/]/.test(p) || /^\\\\[^\\]/.test(p);
 

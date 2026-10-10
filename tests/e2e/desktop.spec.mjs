@@ -269,11 +269,11 @@ test.describe('in the desktop app (stand-in shell)', () => {
     const r = await page.evaluate(() => {
       const at = (base, target) => { mdvHost.currentPath = base; return mdvHost.resolvePath(target); };
       return [
-        at('/Users/a/notes/today.md', 'img/x.png'),
-        at('/Users/a/notes/today.md', '../other.md'),
-        at('/Users/a/notes/today.md', './deep/../same.md'),
-        at('/Users/a/notes/today.md', '../../../../../top.md'),
-        at('/Users/a/notes/today.md', '/etc/abs.md'),
+        at('/home/reader/notes/today.md', 'img/x.png'),
+        at('/home/reader/notes/today.md', '../other.md'),
+        at('/home/reader/notes/today.md', './deep/../same.md'),
+        at('/home/reader/notes/today.md', '../../../../../top.md'),
+        at('/home/reader/notes/today.md', '/etc/abs.md'),
         at('C:\\Users\\a\\notes\\today.md', 'img/x.png'),
         at('C:\\Users\\a\\notes\\today.md', '..\\other.md'),
         at('C:\\Users\\a\\notes\\today.md', '/root.md'),
@@ -283,9 +283,9 @@ test.describe('in the desktop app (stand-in shell)', () => {
       ];
     });
     expect(r).toEqual([
-      '/Users/a/notes/img/x.png',
-      '/Users/a/other.md',
-      '/Users/a/notes/same.md',
+      '/home/reader/notes/img/x.png',
+      '/home/reader/other.md',
+      '/home/reader/notes/same.md',
       '/top.md',
       '/etc/abs.md',
       'C:\\Users\\a\\notes\\img\\x.png',

@@ -14,7 +14,8 @@ keep it that way: no product names, private paths or project-specific examples.
 |---|---|
 | `markdown-viewer.html` | The app's markup. It loads `css/viewer.css` and the classic scripts in `js/` in a fixed order. No build step. |
 | `css/viewer.css` | All of the viewer's own styles. |
-| `js/*.js` | The app, as 12 classic scripts sharing one global scope, loaded in the order `markdown-viewer.html` lists them: `core`, `display`, `files`, `render`, `mermaid`, `navigation`, `diagram-overlay`, `links`, `enhancements`, `read-aloud`, `app`, `comments`. Classic scripts (not ES modules) still load from `file://`. |
+| `js/*.js` | The app, as 13 classic scripts sharing one global scope, loaded in the order `markdown-viewer.html` lists them: `core`, `display`, `files`, `render`, `mermaid`, `navigation`, `diagram-overlay`, `links`, `enhancements`, `read-aloud`, `app`, `comments`, `host`. Classic scripts (not ES modules) still load from `file://`. `host.js` is the desktop bridge (`window.mdvHost`, a no-op in a browser); it loads last because it wraps the final `renderMarkdown`. |
+| `desktop/` | The Mac and Windows app (Tauri 2): it hosts `markdown-viewer.html` in a window per document, so a double-clicked `.md` opens in the viewer. Guide and internals: `docs/desktop.md`. Its CI is `.github/workflows/desktop.yml`, which builds both platforms and runs the app's self-test. |
 | `tests/` | Browser tests (`pnpm test`): every sample in both themes, plus file:// loading. `tests/serve.mjs` is their static server. |
 | `vendor/` | Third-party libraries, vendored unmodified and loaded by relative tags. No CDN. Licenses are in `THIRD_PARTY_NOTICES.md`. |
 | `extensions/github-html-viewer/` | Chrome extension that renders `.html` blobs on GitHub. Read its security model before changing the iframe sandbox. |

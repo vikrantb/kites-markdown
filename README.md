@@ -64,6 +64,22 @@ python3 -m http.server 8080 --bind 127.0.0.1
 `samples/kitchen-sink.md` exercises every supported feature; `samples/commented.md` shows the
 comment format.
 
+## Install the desktop app
+
+Prefer double-clicking? **Kites Markdown** is the same viewer as a Mac and Windows app: double-click any
+`.md` file and it opens, rendered, in its own window. It saves comments into the file, opens linked
+Markdown files in their own windows, shows images that sit next to the document, and updates when
+another program changes the file.
+
+- **Mac:** download the `.dmg` from the [releases](../../releases), drag the app to Applications, and
+  allow the first launch in **System Settings → Privacy & Security → Open Anyway** (the app is not signed
+  yet; on macOS 14 and earlier, Control-click it → **Open**).
+- **Windows:** run the `-setup.exe` from the [releases](../../releases); at the SmartScreen warning choose
+  **More info → Run anyway**. When it finishes, pick Kites Markdown for `.md` in the Settings page it opens.
+
+Both ask once to become the app for `.md` files. The full guide, including uninstalling, building it
+yourself and its security model, is [docs/desktop.md](docs/desktop.md).
+
 ## Browser support
 
 Developed and tested in Chrome. Reading uses standard web APIs and should work in any current
@@ -105,6 +121,7 @@ Everything runs locally. The only network request the viewer makes itself is for
 | [visualization-catalog.md](docs/visualization-catalog.md) | Visualization renderers worth adding, researched |
 | [lessons-learned.md](docs/lessons-learned.md) | Engineering lessons from building the viewer |
 | [legacy-viewer.md](docs/legacy-viewer.md) | The first viewer compared, and ideas to port |
+| [desktop.md](docs/desktop.md) | The Mac and Windows app: install, make it the default, how it works |
 | [roadmap.md](docs/roadmap.md) | Known issues, open decisions and next steps |
 
 ## License
