@@ -120,7 +120,8 @@ async function setup(page, opts = {}) {
   // The web fonts are a network request: answer it locally (optionally late, which delays the page's load event)
   await page.route(/fonts\.(googleapis|gstatic)\.com/, async (route) => {
     if (opts.fontDelayMs) await new Promise((r) => setTimeout(r, opts.fontDelayMs));
-    await route.fulfill({ status: 200, contentType: 'text/css', body: '' });
+    // no-store: a cached answer would let a later page load skip the delay
+    await route.fulfill({ status: 200, contentType: 'text/css', body: '', headers: { 'Cache-Control': 'no-store' } });
   });
   await page.addInitScript(pageHelpers, { desktop: opts.desktop || null, noFsAccess: !!opts.noFsAccess });
   return errors;
