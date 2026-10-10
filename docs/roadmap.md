@@ -58,7 +58,7 @@ individually today ([architecture.md](architecture.md) shows how).
   ([dependencies.md](dependencies.md))?
 - Port the legacy viewer's ideas: Copy AI export, an explicit author field, and HTML sanitization
   ([legacy-viewer.md](legacy-viewer.md)).
-- Split the inline script into modules? Only possible after leaving `file://` support (option A).
+- ~~Split the inline script into modules?~~ **Done** as twelve classic scripts in `js/` plus `css/viewer.css`. Classic `<script src>` files load from `file://`, so option A still holds.
 
 ## What has been verified, and how
 
@@ -140,7 +140,8 @@ Every doc has its own limitations section with more detail and lower-severity it
 
 The final review across all docs found these gaps:
 
-- **No automated tests or CI.** Behaviour in these docs was checked by hand: Node runs of extracted
+- ~~**No automated tests or CI.**~~ **Done:** `pnpm test` (Playwright) runs every sample in both themes and the
+  `file://` path, and `.github/workflows/test.yml` runs it on every PR. Earlier, behaviour in these docs was checked by hand: Node runs of extracted
   functions, DOM simulations, and one Chrome session. A small test harness (for example Playwright
   running the samples) would turn the verified issues above into regression tests. Document it in a
   `docs/testing.md`.

@@ -24,6 +24,10 @@ Related documents:
 
 ---
 
+
+> [!NOTE]
+> Since the split into files, the styles live in `css/viewer.css` and the script in the twelve `js/*.js` files, concatenated in load order. Line numbers in this document refer to the pre-split single file and are kept for orientation: find a function by name. The script order is listed in `../CLAUDE.md`.
+
 ## 1. The shape of the program
 
 The viewer is a single HTML file of about 4,290 lines. There is no build step, no module system and
