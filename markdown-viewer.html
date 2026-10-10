@@ -896,9 +896,17 @@ body {
   max-width: none; /* Allow full size in expanded view */
   transition: transform 0.2s ease;
 }
+/* Fit: the container and the SVG take the whole overlay body, and the SVG's viewBox
+   (preserveAspectRatio meet) scales the drawing to fill it. A percentage width inside a
+   shrink-to-fit flex item has nothing to resolve against, and an SVG then falls back to its
+   300px default size, which is why an expanded diagram used to come out smaller. */
+.diagram-overlay-body.fit .diagram-zoom-container {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+}
 .diagram-overlay-body.fit svg {
-  max-width: 95vw;
-  max-height: calc(100vh - 80px);
+  width: 100%; height: 100%;
+  max-width: none; max-height: none;
 }
 
 /* Pinch/scroll zoom in overlay */
@@ -2490,12 +2498,21 @@ function openDiagramOverlay(wrapper) {
   const container = document.getElementById('diagramZoomContainer');
   const body = document.getElementById('diagramBody');
 
-  // Clone the SVG into the overlay
+  // Clone the SVG into the overlay. Its natural size comes from the diagram's own viewBox; fit mode
+  // fills the overlay body (CSS), and 100% shows the natural size (see mdvSizeOverlayDiagram).
   container.innerHTML = '';
   const clone = svgEl.cloneNode(true);
   clone.removeAttribute('style');
-  clone.style.width = '100%';
-  clone.style.height = 'auto';
+  clone.removeAttribute('width');
+  clone.removeAttribute('height');
+  const vb = svgEl.viewBox && svgEl.viewBox.baseVal;
+  const box = svgEl.getBoundingClientRect();
+  if (!(vb && vb.width && vb.height) && box.width && box.height) {
+    clone.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
+  }
+  clone.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  clone.dataset.naturalWidth = String((vb && vb.width) || box.width || 800);
+  clone.dataset.naturalHeight = String((vb && vb.height) || box.height || 600);
   container.appendChild(clone);
 
   // Reset zoom
@@ -2503,7 +2520,8 @@ function openDiagramOverlay(wrapper) {
   diagramFitMode = true;
   body.classList.add('fit');
   container.style.transform = '';
-  document.getElementById('diagramZoomLabel').textContent = '100%';
+  mdvSizeOverlayDiagram();
+  document.getElementById('diagramZoomLabel').textContent = 'Fit';
 
   // Detect diagram type for title
   const mermaidEl = wrapper.querySelector('.mermaid');
@@ -2523,6 +2541,20 @@ function openDiagramOverlay(wrapper) {
   overlay.classList.add('show');
 }
 
+// Fit mode: the CSS sizes the SVG to the overlay body. Zoom mode: the SVG takes its natural size
+// in pixels and the container's transform scales it.
+function mdvSizeOverlayDiagram() {
+  const svg = document.querySelector('#diagramZoomContainer svg');
+  if (!svg) return;
+  if (diagramFitMode) {
+    svg.style.width = '';
+    svg.style.height = '';
+  } else {
+    svg.style.width = svg.dataset.naturalWidth + 'px';
+    svg.style.height = svg.dataset.naturalHeight + 'px';
+  }
+}
+
 function closeDiagramOverlay() {
   document.getElementById('diagramOverlay').classList.remove('show');
 }
@@ -2530,6 +2562,7 @@ function closeDiagramOverlay() {
 function diagramZoom(dir) {
   diagramFitMode = false;
   document.getElementById('diagramBody').classList.remove('fit');
+  mdvSizeOverlayDiagram();
   diagramZoomLevel = Math.max(25, Math.min(400, diagramZoomLevel + dir * 25));
   document.getElementById('diagramZoomContainer').style.transform = `scale(${diagramZoomLevel / 100})`;
   document.getElementById('diagramZoomLabel').textContent = diagramZoomLevel + '%';
@@ -2550,6 +2583,7 @@ function diagramFitToggle() {
     diagramZoomLevel = 100;
     document.getElementById('diagramZoomLabel').textContent = '100%';
   }
+  mdvSizeOverlayDiagram();
 }
 
 // Keyboard: Esc closes diagram overlay
