@@ -140,6 +140,9 @@ jobs:
           if (Test-Path 'HKCU:\Software\Classes\KitesMarkdown.Document') { $left += 'ProgId' }
           $owp = Get-ItemProperty 'HKCU:\Software\Classes\.md\OpenWithProgids' -ErrorAction SilentlyContinue
           if ($owp -and ($owp.PSObject.Properties.Name -contains 'KitesMarkdown.Document')) { $left += '.md OpenWithProgids' }
+          $md = Get-ItemProperty 'HKCU:\Software\Classes\.md' -ErrorAction SilentlyContinue
+          if ($md -and ($md.PSObject.Properties.Name -contains 'KitesMarkdown.Document_backup')) { $left += '.md backup value' }
+          if ($md -and $md.'(default)' -eq 'KitesMarkdown.Document') { $left += '.md still points at the app' }
           if ($left.Count) { throw "left behind after uninstall: $($left -join ', ')" }
           Write-Host 'ok  nothing left behind'
 

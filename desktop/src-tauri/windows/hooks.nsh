@@ -24,6 +24,8 @@
 !macro MDV_UNREGISTER_EXT EXT
   DeleteRegValue SHCTX "Software\Classes\.${EXT}\OpenWithProgids" "${MDV_PROGID}"
   DeleteRegKey /ifempty SHCTX "Software\Classes\.${EXT}\OpenWithProgids"
+  ; The template's APP_UNASSOCIATE restores the previous handler from this value but leaves it behind.
+  DeleteRegValue SHCTX "Software\Classes\.${EXT}" "${MDV_PROGID}_backup"
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

@@ -26,7 +26,7 @@ tauri-plugin-opener = "~2.5"
 # Native file and message dialogs, driven from Rust. tauri-plugin-dialog is deliberately not used: it replaces
 # window.alert and window.confirm with asynchronous IPC calls, which would make the viewer's
 # `if (!confirm(...)) return;` always proceed.
-rfd = { version = "0.16", default-features = false, features = ["xdg-portal", "tokio"] }
+rfd = { version = "0.16", default-features = false, features = ["xdg-portal", "tokio", "common-controls-v6"] }
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 dunce = "1"
 serde = { version = "1", features = ["derive"] }
