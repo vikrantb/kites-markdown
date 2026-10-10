@@ -54,41 +54,43 @@ function mermaidFences(sample) {
 // ---------------------------------------------------------------------------------------------
 // Issue 9: diagrams follow the theme
 // ---------------------------------------------------------------------------------------------
+// Diagrams are found by the role Mermaid itself writes on each SVG, so these tests also run against older code.
+const FLOWCHART_NODE = '#mdBody .mermaid svg[aria-roledescription^="flowchart"] .node rect';
+const SEQUENCE = '#mdBody .mermaid svg[aria-roledescription="sequence"]';
+
 test('a theme change redraws every diagram in the dark palette, and back (issue 9)', async ({ page }) => {
   const errors = await open(page, 'kitchen-sink.md', 'light');
-  const read = () => page.evaluate(() => {
-    const root = getComputedStyle(document.documentElement);
-    const svgs = [...document.querySelectorAll('#mdBody .mermaid svg')];
-    const node = document.querySelector('#mdBody .mermaid-wrapper[data-diagram-type="flowchart-v2"] .node rect');
-    const message = document.querySelector('#mdBody .mermaid-wrapper[data-diagram-type="sequence"] .messageText');
-    return {
-      ids: svgs.map((s) => s.id),
-      node: getComputedStyle(node).fill,
-      message: getComputedStyle(message).fill,
-      tokenNode: root.getPropertyValue('--diagram-node'),
-      tokenText: root.getPropertyValue('--diagram-text'),
-    };
-  });
-  const redrawn = (before) => page.waitForFunction((ids) => {
-    const svgs = [...document.querySelectorAll('#mdBody .mermaid svg')];
-    return svgs.length === ids.length && svgs.every((s, i) => s.id !== ids[i]);
-  }, before.ids, { timeout: 30_000 });
+  const fills = () => page.evaluate(([nodeSel, seqSel]) => ({
+    node: getComputedStyle(document.querySelector(nodeSel)).fill,
+    message: getComputedStyle(document.querySelector(`${seqSel} .messageText`)).fill,
+    svgs: document.querySelectorAll('#mdBody .mermaid svg').length,
+  }), [FLOWCHART_NODE, SEQUENCE]);
+  const token = (name) => page.evaluate((n) => getComputedStyle(document.documentElement).getPropertyValue(n), name);
 
-  const light = await read();
-  expect(light.node).toBe(rgb(light.tokenNode));
+  // Contrast of the sequence diagram's message text against the card it is drawn on.
+  const messageContrast = () => page.evaluate((seqSel) => {
+    const nums = (c) => c.match(/[\d.]+/g).map(Number).slice(0, 3);
+    const lum = (rgbv) => rgbv.map((c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; })
+      .reduce((s, c, i) => s + c * [0.2126, 0.7152, 0.0722][i], 0);
+    const svg = document.querySelector(seqSel);
+    const fg = lum(nums(getComputedStyle(svg.querySelector('.messageText')).fill));
+    const bg = lum(nums(getComputedStyle(svg.closest('.mermaid-wrapper')).backgroundColor));
+    return (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
+  }, SEQUENCE);
 
+  const light = await fills();
   await page.evaluate(() => setTheme('dark'));
-  await redrawn(light);
-  const dark = await read();
-  expect(dark.ids).toHaveLength(light.ids.length);
-  expect(dark.node).toBe(rgb(dark.tokenNode)); // the dark palette's node fill
-  expect(dark.node).not.toBe(light.node);
-  expect(dark.message).toBe(rgb(dark.tokenText)); // light text on dark, not Mermaid's #333
+  // Every diagram already on screen is redrawn (its node fill changes) ...
+  await expect.poll(async () => (await fills()).node, { timeout: 10_000 }).not.toBe(light.node);
+  // ... and sequence text is readable on the dark card, unlike Mermaid's default #333.
+  await expect.poll(messageContrast, { timeout: 10_000 }).toBeGreaterThanOrEqual(4.5);
+  const dark = await fills();
+  expect(dark.svgs).toBe(light.svgs);
+  expect(dark.node).toBe(rgb(await token('--diagram-node'))); // the colours are the dark theme's own tokens
+  expect(dark.message).toBe(rgb(await token('--diagram-text')));
 
   await page.evaluate(() => setTheme('light'));
-  await redrawn(dark);
-  const back = await read();
-  expect(back.node).toBe(light.node);
+  await expect.poll(async () => (await fills()).node, { timeout: 10_000 }).toBe(light.node);
   expect(errors, errors.join('\n')).toEqual([]);
 });
 
@@ -123,14 +125,14 @@ test('an open expanded view follows a theme change', async ({ page }) => {
 for (const theme of ['light', 'dark']) {
   test(`sequence-diagram notes stay inside their box in the ${theme} theme (issue 10)`, async ({ page }) => {
     await open(page, 'kitchen-sink.md', theme);
-    const box = await page.evaluate(() => {
-      const w = document.querySelector('#mdBody .mermaid-wrapper[data-diagram-type="sequence"]');
+    const box = await page.evaluate((seqSel) => {
+      const w = document.querySelector(seqSel);
       const note = w.querySelector('rect.note').getBBox();
       const lines = [...w.querySelectorAll('text.noteText')].map((t) => t.getBBox());
       const left = Math.min(...lines.map((b) => b.x));
       const right = Math.max(...lines.map((b) => b.x + b.width));
       return { noteLeft: note.x, noteRight: note.x + note.width, left, right, lines: lines.length };
-    });
+    }, SEQUENCE);
     expect(box.lines).toBeGreaterThanOrEqual(1);
     expect(box.left).toBeGreaterThanOrEqual(box.noteLeft);
     expect(box.right).toBeLessThanOrEqual(box.noteRight);
@@ -140,12 +142,20 @@ for (const theme of ['light', 'dark']) {
 // ---------------------------------------------------------------------------------------------
 // Issue 11: minimap labels
 // ---------------------------------------------------------------------------------------------
-// The hover tooltip is an absolutely positioned ::after that also counts towards scrollWidth; leave it out so the
-// measurement is of the label alone.
+// Labels whose drawn text is wider than their segment. A label that is DOM text (older code) is measured with a
+// Range; one drawn by CSS (::before) by its box. The hover tooltip (::after) is left out of the measurement.
 async function labelOverflow(page) {
   const style = await page.addStyleTag({ content: '.minimap-segment::after { display: none !important; }' });
-  const out = await page.$$eval('#mdBody .minimap-segment', (els) => els
-    .filter((el) => el.scrollWidth > el.clientWidth + 1).map((el) => el.dataset.label));
+  const out = await page.$$eval('#mdBody .minimap-segment', (els) => els.filter((el) => {
+    const box = el.getBoundingClientRect().width;
+    let drawn = parseFloat(getComputedStyle(el, '::before').width) || 0;
+    if (el.textContent.trim()) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      drawn = Math.max(drawn, range.getBoundingClientRect().width);
+    }
+    return drawn > box + 0.5 || el.scrollWidth > el.clientWidth + 1;
+  }).map((el) => el.dataset.label || el.textContent));
   await style.evaluate((el) => el.remove());
   return out;
 }
@@ -156,11 +166,11 @@ test('minimap labels stay inside their segments and show the full title on hover
   const segs = page.locator('#mdBody .section-minimap .minimap-segment');
   await expect(segs).toHaveCount(sections);
   expect(await labelOverflow(page)).toEqual([]);
-  // The labels are not document text: read-aloud and search never see them.
-  expect(await page.locator('#mdBody .section-minimap').evaluate((el) => el.textContent)).toBe('');
   // Hover shows the full title.
   const third = segs.nth(2);
   const label = await third.getAttribute('data-label');
+  // The labels are not document text: read-aloud and search never see them.
+  expect(await page.locator('#mdBody .section-minimap').evaluate((el) => el.textContent)).toBe('');
   expect(await third.getAttribute('aria-label')).toBe(label);
   await third.hover();
   await expect.poll(() => third.evaluate((el) => getComputedStyle(el, '::after').opacity)).toBe('1');
@@ -208,10 +218,9 @@ test('the copy button copies only the code (issue 13)', async ({ page, context }
   await open(page, 'kitchen-sink.md');
   const block = page.locator('#mdBody pre').filter({ has: page.locator('code.language-python') }).first();
   await block.scrollIntoViewIfNeeded();
+  await page.evaluate(() => navigator.clipboard.writeText('(clipboard before the click)'));
   await block.locator('.copy-btn').click();
-  await expect(block.locator('.copy-btn')).toHaveText('Copied');
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
-  expect(copied).toBe([
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe([
     'def drain(queue, send):',
     '    """Send queued operations in order; stop at the first failure."""',
     '    for op in list(queue):',
@@ -219,6 +228,7 @@ test('the copy button copies only the code (issue 13)', async ({ page, context }
     '            break',
     '        queue.remove(op)',
   ].join('\n'));
+  await expect(block.locator('.copy-btn')).toHaveText('Copied');
   await expect(block.locator('.copy-btn')).toHaveText('Copy', { timeout: 5_000 });
 });
 
