@@ -19,10 +19,10 @@ graph TD
     A[Raw markdown source] --> B[mdvParseFile reads the comment block]
     B --> C[parseFrontmatter strips YAML frontmatter]
     C --> D[extractNarrations records narrate comments]
-    D --> E[renderMath replaces math with KaTeX HTML]
-    E --> F[renderFrontmatterDashboard plus md.render]
-    F --> G[Result assigned to mdBody innerHTML]
-    G --> H[Twelve DOM post-processing steps]
+    D --> E[md.render, with math as a markdown-it rule]
+    E --> F[dashboard plus md.render, through mdvSanitize]
+    F --> G[Sanitized nodes placed in mdBody]
+    G --> H[DOM post-processing steps]
     H --> I[After 50 ms the comment UI is attached]
 ```
 
@@ -31,16 +31,16 @@ graph TD
 | 1 | `mdvParseFile` | source text | Reads the `MDV-COMMENTS` block (the first match of `MDV_RE_BLOCK`; the viewer writes it at the end of the file) into the comment list. It does **not** remove anything from the source; the block and the `MDV-ANCHOR` markers are rendered as HTML comments. See [commenting.md](commenting.md). |
 | 2 | `parseFrontmatter` | source text | Splits off a leading YAML block and parses it with a small hand-written parser. |
 | 3 | `extractNarrations` | source text | Records every narration comment. The source is not changed. |
-| 4 | `renderMath` | source text | Regex pre-pass that replaces dollar-delimited math with KaTeX HTML **before** markdown parsing. |
-| 5 | `renderFrontmatterDashboard` + `md.render` | source text | Builds the dashboard HTML and renders the markdown with markdown-it. |
-| 6 | (inline in `renderMarkdown`) | DOM | `body.innerHTML = dashboardHtml + md.render(processed)`; shows the page, sets the title and breadcrumb, computes the word count and reading time (230 words per minute). |
-| 7 | 12 post-processors | DOM | Run in this order, each in its own `try`/`catch` so one failure does not stop the rest: `transformCalloutBlocks`, `addSectionToggles`, `buildToc`, `buildSectionMinimap`, `buildSearchIndex`, `buildTtsSections`, `renderMermaidDiagrams`, `setupScrollSpy`, `setupImageLightbox`, `enhanceLinks`, `applyAbbreviationTooltips`, `setupMermaidClickToSection`. |
-| 8 | `mdvAttachContextMenu`, `mdvRenderSidebar` | DOM | Scheduled with `setTimeout(..., 50)` by the commenting wrapper. |
+| 4 | `renderFrontmatterDashboard` + `md.render` | source text | Builds the dashboard HTML and renders the markdown with markdown-it. Math is a markdown-it rule now (`js/math.js`), so KaTeX runs during the parse, not in a pre-pass. |
+| 5 | `mdvSanitize` | HTML string → DOM nodes | Runs DOMPurify over `dashboardHtml + md.render(...)` and places the result in `#mdBody`. Steps 1–5 are wrapped so that a failure shows an error block with the document's text rather than a blank page. Then the title, breadcrumb, word count and reading time (230 words per minute) are set. |
+| 6 | post-processors | DOM | Run in order, each in its own `try`/`catch` so one failure does not stop the rest: `transformCalloutBlocks`, `addSectionToggles`, `buildToc`, `buildSectionMinimap`, `buildSearchIndex`, `buildTtsSections`, `renderMermaidDiagrams`, `setupScrollSpy`, `setupImageLightbox`, `enhanceLinks`, `applyAbbreviationTooltips`, `setupMermaidClickToSection`. |
+| 7 | `mdvAttachContextMenu`, `mdvRenderSidebar` | DOM | Scheduled with `setTimeout(..., 50)` by the commenting wrapper. |
 
-Two consequences of this order matter for authors:
+One consequence of this order matters for authors:
 
-- Math is processed on the raw text, before markdown knows where code spans and code blocks are. See [Math (KaTeX)](#math-katex).
 - `renderMermaidDiagrams` is `async` and is not awaited. The steps after it (including `setupMermaidClickToSection`) run before any diagram has finished rendering. See [Mermaid diagrams](#mermaid-diagrams).
+
+(Math no longer runs as a pre-pass, so it no longer touches code; see [Math (KaTeX)](#math-katex).)
 
 ---
 
@@ -129,36 +129,26 @@ The regex `<!--\s*narrate:\s*([\s\S]*?)-->` (case-insensitive) collects every na
 
 ### Math (KaTeX)
 
-**Function:** `renderMath(src)`; library KaTeX 0.16.11.
+**Functions:** `mdvMathPlugin`, `mdvMathInline`, `mdvMathBlock`, `mdvTypeset` in `js/math.js`; library KaTeX 0.16.11.
 
-`renderMath` runs two regex replacements over the **whole raw source** before markdown-it sees it:
+Math is a markdown-it rule, not a pre-pass. An inline rule (before `escape`) and a block rule (before `fence`) recognise the math spans; KaTeX typesets them while markdown-it renders. Because markdown-it tokenizes code spans and code blocks before inline rules run, **math is never detected inside code** — the long-standing dollar-sign bug (roadmap issue 8) is fixed at its root.
 
-| Order | Delimiter | Mode | Can span lines | Content may contain a dollar sign |
-|---|---|---|---|---|
-| 1 | <code>&#36;&#36; ... &#36;&#36;</code> | display (`displayMode: true`) | yes | no |
-| 2 | <code>&#36; ... &#36;</code> | inline (`displayMode: false`) | no | no |
+The dialect follows Pandoc's `tex_math_dollars` rules:
 
-The two regexes, in order (shown with HTML entities so that this page survives the same pre-pass):
+| Form | Rule |
+|---|---|
+| Inline <code>&#36;...&#36;</code> | The character after the opening <code>&#36;</code> must not be a space, the character before the closing <code>&#36;</code> must not be a space, and the closing <code>&#36;</code> must not be followed by a digit. A `\$` is a literal dollar and never opens or closes; a backtick inside the span cancels it (a code span wins). |
+| Inline display <code>&#36;&#36;...&#36;&#36;</code> | Two dollars, content, two dollars, within a line. |
+| Block display <code>&#36;&#36;</code> … <code>&#36;&#36;</code> | A line starting with <code>&#36;&#36;</code> up to the first line ending with <code>&#36;&#36;</code> (<code>&#36;&#36; x &#36;&#36;</code> on one line counts). It may not contain a blank line. Rendered as a paragraph holding a `katex-display` span, so spacing, comments and read-aloud treat it as a paragraph. |
 
-<pre><code>/\&#36;\&#36;([^&#36;]+?)\&#36;\&#36;/gs    display
-/\&#36;([^&#36;\n]+?)\&#36;/g           inline</code></pre>
+Both paths use `throwOnError: false`, and `trust` keeps its default `false`, so `\href`, `\url` and `\includegraphics` stay disabled. When KaTeX is not loaded, or a formula throws, the TeX is shown as a `code.mdv-math-source` element (the source, readable, with the error in its `title`) rather than disappearing.
 
-Both calls use `throwOnError: false`, so invalid TeX is rendered by KaTeX as red error text rather than throwing. The `catch` fallbacks (a `<pre>` for display, a `<code>` for inline) are only reached if KaTeX throws anyway. No other KaTeX options are set; in particular `trust` keeps its default `false`, so commands such as `\href` and `\includegraphics` stay disabled.
+What this means for the cases that used to break (all now covered by `tests/fixtures/math-dollars.md` and the `render-correctness.spec.mjs` test):
 
-The KaTeX HTML is then fed to markdown-it as raw inline HTML (it works because `html: true`). A display block written on its own lines becomes a paragraph containing a `katex-display` span.
-
-Not supported: `\( ... \)` and `\[ ... \]` delimiters, and fenced ` ```math ` blocks (rendered as an ordinary code block labelled `math`).
-
-**How dollar signs conflict with markdown: they are not handled.** Because the pre-pass ignores markdown structure (checked offline):
-
-- Two dollar signs on one line form inline math anywhere, including inside inline code and fenced code blocks. In code, the inserted KaTeX markup is then escaped by the code renderer and appears on screen as a long run of literal `<span class=...>` text. A shell line with two variables, such as `echo` followed by two dollar-prefixed variable names, is enough.
-- Prose such as "between 5 and 10 dollars" written with two dollar signs on one line is typeset as math.
-- A backslash before the dollar sign does not help. The pre-pass still matches, and the result is worse: KaTeX reports an error and the error markup is shown as literal text.
-- Any two occurrences of <code>&#36;&#36;</code> with no other dollar sign between them enclose one display block, even when they are far apart and the text between them spans code blocks and paragraphs.
-- The pre-pass also runs inside HTML comments, so a narration comment containing math is spoken as KaTeX markup (inferred).
-- markdown-it's inline rules still apply to the TeX copy that KaTeX stores in the hidden MathML `<annotation>`. For example `e^{-x^2}` gains a `<sup>` there and `\,` loses its backslash. The visible rendering is unaffected; screen readers and anything that reads the annotation see the altered text (checked offline, including a jsdom parse).
-
-Safe ways to write a literal dollar sign in prose: the HTML entity `&#36;` (or `&dollar;`), which the pre-pass cannot see and every markdown renderer decodes. In code that must contain several dollar signs, a raw HTML `<pre><code>` block with `&#36;` entities is the only form that survives this viewer and still renders elsewhere.
+- Two prices on one line — <code>costs &#36;5 and &#36;10</code> — stay text: the space after the first <code>&#36;</code> stops it being math, and the digit after the second rules out the other pairing.
+- Dollars inside inline code or a fenced block (<code>echo &#36;HOME &#36;PATH</code>) stay code: code is tokenized first.
+- A narration or comment marker that mentions dollars is an HTML comment, not inline text, so it is left alone.
+- A literal dollar in prose can still be written `&#36;`, but it is no longer required to avoid accidental math.
 
 ### markdown-it render
 
@@ -302,31 +292,30 @@ Images render as normal `<img>` elements. `setupImageLightbox` makes each one cl
 
 ## Security posture
 
-**Summary: the viewer is built for files you trust. Opening an untrusted markdown file is equivalent to running a web page written by its author inside the viewer.**
+**Summary: a document is treated as untrusted input. markdown-it still passes raw HTML through (`html: true`), but everything rendered from a document is sanitized with DOMPurify before it reaches the page, Mermaid runs at `securityLevel: 'strict'`, and a Content Security Policy refuses inline script and `javascript:` URLs even if sanitization were bypassed. This closes roadmap issue 7.** Opening an untrusted file is no longer equivalent to running its author's web page; the remaining exposure is the privacy one (a remote image reveals that the file was opened).
 
 | Question | Answer | Where |
 |---|---|---|
-| Is raw HTML allowed? | Yes. `html: true`. | `markdownit({ html: true, ... })` |
-| Is output sanitized? | No. The rendered HTML is assigned with `body.innerHTML = ...`. The script contains no sanitizer; the only one in `vendor/` is the DOMPurify copy bundled inside `mermaid.min.js`. Mermaid never applies it to the markdown, and its `render` function skips the final sanitize pass over the diagram SVG when `securityLevel` is `'loose'` (read from the minified bundle). | `renderMarkdown` |
-| Content Security Policy? | None. There is no CSP `<meta>` in the page. | page `<head>` |
-| Mermaid `securityLevel` | `'loose'` | `renderMermaidDiagrams` |
-| KaTeX `trust` | default (`false`); `\href` and similar are disabled | `renderMath` |
-| Markdown link URLs | markdown-it refuses `javascript:`, `vbscript:`, `file:` and non-image `data:` URLs in link and image syntax | markdown-it `validateLink` |
-| Comment sidebar | comment fields are escaped with `mdvEscape`, which escapes `&`, `<` and `>` but not quotes. `author.kind` and `id` are placed inside attribute values, so a crafted `MDV-COMMENTS` block can break out of those attributes | `mdvRenderThreadCard`, `mdvRenderCommentBody`, `mdvEscape` |
-| Frontmatter values | escaped with `escapeHtml`, which escapes `&`, `<` and `>` but not quotes; a quote in `repos[].github` can break out of the `href` attribute | `renderFrontmatterDashboard`, `escapeHtml` |
+| Is raw HTML allowed? | Yes, then sanitized. `html: true`, and the output passes through `mdvSanitize` (DOMPurify 3.4.16) before insertion. Without DOMPurify the viewer falls back to `html: false` (raw HTML shown as text). | `md`, `mdvSanitize` in `js/render.js` |
+| Is output sanitized? | Yes. DOMPurify removes `<script>`, every `on*` attribute, `javascript:`/`vbscript:` URLs, `<iframe>`/`<object>`/`<embed>`, `<form>`, `<base>`, `<meta>`, `<link>` and `<style>`. It keeps HTML comments (comment anchors and narration need them), KaTeX MathML and style attributes, inline SVG (minus scripts and handlers), and the viewer's own classes, ids, `data-*` and `aria-*`. A hook also strips any `id`/`name` that would collide with one of the viewer's own element ids. | `MDV_SANITIZE_CONFIG`, `mdvSanitize` |
+| Content Security Policy? | Yes: `<meta http-equiv="Content-Security-Policy" content="script-src 'self' file:; object-src 'none'; base-uri 'none'; form-action 'none'">`. No inline script, no `javascript:` URL, no plugin can run. `file:` is in `script-src` so the viewer's own scripts load when opened straight from disk. | page `<head>` |
+| Mermaid `securityLevel` | `'strict'`, pinned at load so no caller can lower it (HTML labels off, `click` directives ignored, `javascript:` links refused) | `mdvPinMermaidSecurity` in `js/render.js` |
+| KaTeX `trust` | default (`false`); `\href` and similar are disabled | `js/math.js` |
+| Inline handlers in the viewer's own UI | none: every control uses `data-action` and one delegated listener (`js/actions.js`), which is also what lets the CSP forbid inline script | `js/actions.js` |
+| Markdown link URLs | markdown-it refuses `javascript:`, `vbscript:`, `file:` and non-image `data:` URLs in link and image syntax; DOMPurify refuses them again | markdown-it `validateLink`, DOMPurify |
+| Comment sidebar | comment fields are escaped with `mdvEscape` (not quote-safe) and placed inside attributes, so a crafted `MDV-COMMENTS` block can still break out of an attribute in the sidebar markup — but the CSP stops the resulting handler from running. Making `mdvEscape` quote-safe is stream C's. | `mdvRenderThreadCard`, `mdvRenderCommentBody` |
+| Frontmatter values | escaped with `escapeHtml`; a URL field (`repos[].github`) is additionally quote-escaped (`mdvEscapeAttr`) and only emitted as a link when it is an `http(s)` or relative URL | `renderFrontmatterDashboard` |
 
-**What an untrusted `.md` file can do when opened**, concretely:
+**What a document cannot do**, and how it was checked (`tests/e2e/security.spec.mjs`, over `tests/fixtures/hostile.md`):
 
-- **Run JavaScript in the viewer's page.** A `<script>` element inserted through `innerHTML` does not execute, but event-handler attributes do, for example an `<img>` with a broken `src` and an `onerror` attribute. markdown-it passes such tags through unchanged (checked offline), and the handler runs: verified in Chrome on 2026-10-04 with `<img src="does-not-exist.png" onerror="window.__mdvHandlerRan = 'yes'">`, after which `window.__mdvHandlerRan` was `'yes'`. A raw `<a href="javascript:...">` also passes through and runs when clicked.
-- **Change the whole application.** A `<style>` element applies to the entire page, so a document can hide or restyle the toolbar, sidebars and overlays, or draw fake interface elements.
-- **Contact other servers.** Remote images, iframes and similar tags load as soon as the document renders, which tells the remote server that the file was opened and from which IP address. No HTML is needed for this; an ordinary markdown image with a remote URL is enough.
-- **With script running (inferred from what the page itself does):**
-  - read and change the viewer's `localStorage` settings (`mdv-theme`, `mdv-fontsize`, `mdv-basepath`, `mdv-author-name`);
-  - open the IndexedDB database `mdv-viewer`, which stores the File System Access handles for the current file and the workspace folder. If the user has granted read/write permission and it is still granted, page script can use those handles to read and overwrite files in that folder;
-  - when the viewer is served over `http://`, fetch any other file the same local server serves and send it elsewhere, since there is no CSP.
-- **Through mermaid.** With `securityLevel: 'loose'`, mermaid allows HTML labels and `click` directives that call global functions by name (from mermaid's documented behaviour, unverified against this build), and the bundled `render` function does not run its final DOMPurify pass over the SVG at this level (read from the minified bundle). Given that raw HTML already allows script, this adds little extra exposure.
+- **Run JavaScript.** `<script>` elements, every `on*` handler attribute, `javascript:`/`vbscript:` URLs (in markdown links, raw `<a>`, SVG links and Mermaid `click` directives), `<svg onload>`, `<iframe srcdoc>` — all are removed by DOMPurify. The test asserts that no payload ran (none of ~15 set its flag), that the rendered DOM has no forbidden element and no handler attribute, and, as a second line of defence, that inline script reaching the page another way is refused by the CSP (`script-src-attr` violation, nothing runs).
+- **Restyle or take over the viewer.** `<style>`, `<base>` and `<meta>` are removed, so a document cannot hide the toolbar or change the base URL. An `id` or `name` that matches one of the viewer's own element ids is stripped, so a document's `<div id="ttsSectionLabel">` cannot capture the read-aloud player's updates.
+- **Press the viewer's buttons.** A `data-action` attribute inside rendered content is ignored unless its registry entry is marked document-safe (only `copy-code` is), so a document's `<button data-action="pick-workspace">` does nothing.
 
-Practical guidance: open only files you trust, and serve the viewer from a folder that contains nothing sensitive. Sanitizing the output is a candidate item for [roadmap.md](roadmap.md).
+Still true, and unchanged by this work:
+
+- **Contact other servers.** A remote image loads as soon as the document renders, which tells that server the file was opened and from which IP address. This is a privacy property of remote images, not script; it is noted in the README. Vendoring the fonts (a roadmap item) would remove the viewer's own only third-party request.
+- **With a granted file handle.** If the user has granted and still holds read/write permission on a file or workspace folder, the viewer can write to it — but only the viewer's own code now runs, so a document cannot reach those handles.
 
 One related non-security note: the page loads its fonts from Google Fonts (`fonts.googleapis.com`), so opening the viewer makes a network request even for a local file. Without network access the page falls back to system fonts (inferred).
 
@@ -346,7 +335,7 @@ How each feature of this dialect behaves in other common tools. The other tools 
 | Callouts `NOTE`, `TIP`, `IMPORTANT`, `WARNING`, `CAUTION` | styled | styled (the marker must be alone on the first line) | depends on version | styled |
 | Callouts `TLDR`, `DECISION`, `COST` | styled | plain blockquote with the marker visible | plain blockquote | styled (`tldr` is a built-in alias; unknown types get the default callout style) |
 | Mermaid fences | rendered, with expand and zoom | rendered | extension needed | rendered |
-| Dollar-sign math | rendered by a pre-pass that also hits code (see [Math (KaTeX)](#math-katex)) | rendered (MathJax), not inside code | rendered (KaTeX) | rendered (MathJax) |
+| Dollar-sign math | rendered by a markdown-it rule, Pandoc's dollar rules, never inside code (see [Math (KaTeX)](#math-katex)) | rendered (MathJax), not inside code | rendered (KaTeX) | rendered (MathJax) |
 | ` ```math ` fences | plain code block | rendered | not rendered (unverified) | not rendered (unverified) |
 | Code highlighting | 36 bundled languages, no auto-detect | yes | yes | yes |
 | Task lists | clickable, not saved | rendered; editable in issues, not in files | rendered (unverified for older versions) | clickable and saved |
@@ -367,7 +356,7 @@ How each feature of this dialect behaves in other common tools. The other tools 
 Practical rules that follow from the table:
 
 - Prefer `<sub>` over `~sub~` if the file will also be read on GitHub.
-- Avoid dollar signs outside math, or write them as `&#36;`, if the file will be read in this viewer.
+- Dollar signs outside math are safe in this viewer now (prices, shell variables in code). `&#36;` is still the most portable way to write a literal dollar across all tools.
 - Heading links that use only ASCII letters, digits, spaces and hyphens resolve the same way here and on GitHub.
 
 ---
@@ -378,10 +367,10 @@ Each item is described in the section linked from it.
 
 | Limitation | Section |
 |---|---|
-| Dollar-sign math is detected inside code spans, code blocks, comments and prose; escaping does not help | [Math (KaTeX)](#math-katex) |
+| ~~Dollar-sign math is detected inside code~~ Fixed: math is a markdown-it rule and never matches inside code | [Math (KaTeX)](#math-katex) |
 | Frontmatter must start at the first byte and the closing `---` needs a trailing newline | [Frontmatter](#frontmatter) |
 | Frontmatter `abbreviations` map never reaches the tooltip code; `title` and `repos[].branch` are not displayed | [Frontmatter](#frontmatter), [Abbreviations](#abbreviations) |
-| An empty `status:` or `date:` value throws inside `renderFrontmatterDashboard` and the document does not render | [Frontmatter](#frontmatter) |
+| ~~An empty `status:`/`date:` throws and the document does not render~~ Fixed: fields are coerced to text and render failures are caught | [Frontmatter](#frontmatter) |
 | Mermaid diagrams are not redrawn on theme change; failed diagrams are retried with their error text | [Mermaid diagrams](#mermaid-diagrams) |
 | Mermaid click-to-section runs before diagrams exist (inferred) | [Mermaid diagrams](#mermaid-diagrams) |
 | Overlay title misses `flowchart` and matches `pie` as a substring | [Mermaid diagrams](#mermaid-diagrams) |
@@ -390,4 +379,4 @@ Each item is described in the section linked from it.
 | Heading slugs drop non-ASCII letters; `#` characters vanish from TOC text | [Heading ids and anchors](#heading-ids-and-anchors) |
 | A linked image alone in a paragraph becomes a text-only card (inferred) | [Link enhancement](#link-enhancement) |
 | Section folding moves elements but leaves HTML comments behind, so narration and comment anchors lose their target under headings (checked offline with jsdom) | [read-aloud.md](read-aloud.md), [commenting.md](commenting.md) |
-| No output sanitization | [Security posture](#security-posture) |
+| ~~No output sanitization~~ Fixed: DOMPurify + CSP + Mermaid strict | [Security posture](#security-posture) |
