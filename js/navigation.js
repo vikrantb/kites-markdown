@@ -325,7 +325,7 @@ function mdvOpenModal(el, { label, labelledBy, focus } = {}) {
   else if (label) el.setAttribute('aria-label', label);
   if (!el.hasAttribute('tabindex')) el.tabIndex = -1;
   const returnTo = document.activeElement;
-  const inerted = [...document.body.children].filter(c => c !== el && !c.inert && c.tagName !== 'SCRIPT');
+  const inerted = [...document.body.children].filter(c => !c.contains(el) && !c.inert && c.tagName !== 'SCRIPT');
   inerted.forEach(c => { c.inert = true; });
   mdvModal = { el, returnTo, inerted };
   el.classList.add('show');
@@ -356,7 +356,7 @@ document.addEventListener('keydown', (e) => {
   const items = mdvFocusables(mdvModal.el);
   const first = items[0], last = items[items.length - 1];
   const at = document.activeElement;
-  if (!items.length) { e.preventDefault(); mdvModal.el.focus(); return; }
+  if (!items.length) { e.preventDefault(); if (!mdvModal.el.contains(at)) mdvModal.el.focus(); return; }
   if (e.shiftKey && (at === first || at === mdvModal.el || !mdvModal.el.contains(at))) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && (at === last || !mdvModal.el.contains(at))) { e.preventDefault(); first.focus(); }
 }, true);
@@ -383,8 +383,8 @@ function mdvOwnText(el) {
 }
 
 // renderMarkdown calls this on every render. The index itself is built on the first search after a
-// render (mdvSearchIndex): most renders are never searched, and indexing a 3,000-section document
-// takes about 40 ms.
+// render (mdvSearchIndex): most renders are never searched, and indexing a large document takes
+// tens of milliseconds.
 let mdvSearchStale = true;
 function buildSearchIndex() {
   searchIndex = [];
@@ -475,6 +475,9 @@ function mdvSnippet(text, ql) {
 function mdvHighlight(text, q) {
   const frag = document.createDocumentFragment();
   const lower = text.toLowerCase(), ql = q.toLowerCase();
+  // A few characters change length when lower-cased (the Turkish dotted I); then positions in `lower`
+  // are not positions in `text`, so show the text without highlights rather than highlight the wrong part.
+  if (lower.length !== text.length) { frag.append(text); return frag; }
   let i = 0;
   for (let at = lower.indexOf(ql); ql && at >= 0; at = lower.indexOf(ql, at + ql.length)) {
     if (at > i) frag.append(text.slice(i, at));
@@ -520,6 +523,7 @@ function mdvSetSearchFocus(idx) {
 }
 
 function handleSearchKeys(e) {
+  if (e.isComposing || e.keyCode === 229) return; // Enter that confirms an input method's text is not a jump
   const n = document.getElementById('searchResults').querySelectorAll('.search-result-item').length;
   if (e.key === 'Escape') { e.preventDefault(); closeSearch(); return; }
   if (!n) return;
@@ -559,11 +563,14 @@ function setupImageLightbox() {
   });
 }
 
+// The focus goes to the enlarged image, so the focus ring frames the picture (not the whole window)
+// and a screen reader lands on it.
 function openLightbox(img) {
   const big = document.getElementById('lightboxImg');
   big.src = img.currentSrc || img.src;
   big.alt = img.alt || '';
-  mdvOpenModal(document.getElementById('lightbox'), { label: img.alt ? `Image: ${img.alt}` : 'Image' });
+  big.tabIndex = -1;
+  mdvOpenModal(document.getElementById('lightbox'), { label: img.alt ? `Image: ${img.alt}` : 'Image', focus: big });
 }
 function closeLightbox() { mdvCloseModal(document.getElementById('lightbox')); }
 

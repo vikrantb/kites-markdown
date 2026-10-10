@@ -92,8 +92,8 @@ function ttsDashboardText(el) {
 
 // renderMarkdown calls this on every render. The sections are built now only while the player is in
 // use (open, reading or paused), so a re-render keeps the listener's place; otherwise they are built
-// when the player opens. Most renders are never read aloud, and on a 3,000-section document building
-// them takes about 30 ms.
+// when the player opens. Most renders are never read aloud, and building them for a large document
+// takes tens of milliseconds.
 let ttsStale = true;
 function buildTtsSections() {
   const inUse = document.getElementById('ttsPlayer').classList.contains('show') || ttsIsPlaying || ttsPausedGen === ttsGen;

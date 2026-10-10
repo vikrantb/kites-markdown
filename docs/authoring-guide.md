@@ -362,7 +362,7 @@ Standard GFM tables:
 | data 4   | data 5   | data 6   |
 ```
 
-Column alignment with `:---`, `:---:` and `---:` is supported. Read-aloud speaks at most the first 300 characters of a table's text unless the table has a narration comment.
+Column alignment with `:---`, `:---:` and `---:` is supported. Read-aloud reads a table row by row, up to about 300 characters, unless the table has a narration comment.
 
 ---
 
@@ -386,10 +386,7 @@ Notes:
 
 ### How it works
 
-`<!-- narrate: ... -->` is a standard HTML comment. Every markdown renderer either strips it or passes it through invisibly. During read-aloud, our viewer speaks the text after the `narrate:` prefix in place of a mermaid diagram or a table that it directly precedes. Diagrams without a narration are skipped; tables without one are read as raw text (first 300 characters).
-
-> [!IMPORTANT]
-> Known limitation: the viewer currently finds a narration comment only when the diagram or table is not under any H1–H4 heading, because heading folding moves the block away from its comment. See [read-aloud.md](read-aloud.md). Write narrations correctly anyway; they will start working when this is fixed.
+`<!-- narrate: ... -->` is a standard HTML comment. Every markdown renderer either strips it or passes it through invisibly. During read-aloud, our viewer speaks the text after the `narrate:` prefix in place of a mermaid diagram or a table that it directly precedes, anywhere in the document, including under headings. Diagrams without a narration are skipped; tables without one are read row by row, cells separated by commas, up to about 300 characters.
 
 ### Syntax
 
@@ -416,8 +413,8 @@ Each service has its own database for data isolation. -->
 |---|---|
 | Mermaid diagrams | Yes — diagrams are unreadable to TTS and are skipped without a narration |
 | Complex tables | Yes — when data needs interpretation |
-| Images | No — the viewer does not use narration for images; put the description in the surrounding text or the alt text |
-| Code blocks | No — viewer says "Code block: python" and moves on |
+| Images | No — the viewer reads an image's alt text ("Image: …"), so put the description in the alt text |
+| Code blocks | No — viewer says "Code block in python." and moves on |
 
 ### Writing good narrations
 

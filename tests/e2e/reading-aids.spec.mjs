@@ -143,7 +143,7 @@ test('a comment thread inside a section is attached to its own paragraph, not th
     author: { name: 'Reviewer', kind: 'human' }, body_md: 'Is this right?', created_at: '2026-10-01T00:00:00Z',
     updated_at: '2026-10-01T00:00:00Z', status: 'open' }] };
   await render(page, `# Plan\n\nFirst paragraph.\n\n## Steps\n\nStep one.\n\n<!-- MDV-ANCHOR id="c_inside" -->\nStep two is the anchored one.\n\n## Next\n\nAfter.\n\n<!-- MDV-COMMENTS:v1\n${JSON.stringify(payload)}\nMDV-COMMENTS:end -->\n`);
-  await page.waitForSelector('#mdBody .mdv-chip');
+  await page.waitForSelector('#mdBody .mdv-chip', { timeout: 10_000 });
   const host = await page.evaluate(() => {
     const chip = document.querySelector('#mdBody .mdv-chip');
     return { tag: chip.parentElement.tagName, text: chip.parentElement.textContent };
@@ -175,7 +175,7 @@ test('re-rendering a 3,000-section document costs about what the first render co
     const t1 = performance.now(); renderMarkdown(src, 'large.md');
     return [t1 - t0, performance.now() - t1];
   }, largeDocument(3000));
-  // Before the folding fix the second render took about 4.8 times as long as the first.
+  // Before the folding fix the second render took about five times as long as the first.
   expect(ms[1], `first ${Math.round(ms[0])} ms, second ${Math.round(ms[1])} ms`).toBeLessThan(ms[0] * 2);
 });
 
@@ -184,11 +184,12 @@ test('the H1 folds even when the section minimap sits between it and its section
   await render(page, '# Title\n\nLead.\n\n## One\n\nA.\n\n## Two\n\nB.\n\n## Three\n\nC.\n');
   expect(await page.locator('#mdBody .section-minimap').count()).toBe(1);
   const toggle = page.locator('#mdBody h1 .section-toggle');
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
   await toggle.click();
+  await expect(page.locator('#mdBody h2', { hasText: 'One' })).toBeHidden();
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  const collapsed = await page.evaluate(() => document.getElementById(document.querySelector('#mdBody h1 .section-toggle').getAttribute('aria-controls')).classList.contains('collapsed'));
-  expect(collapsed).toBe(true);
+  await toggle.click();
+  await expect(page.locator('#mdBody h2', { hasText: 'One' })).toBeVisible();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -214,7 +215,6 @@ test('the outline follows the reader down, back up, and to the end', async ({ pa
   await jump(await page.evaluate(() => document.getElementById('part-6').getBoundingClientRect().top + scrollY - 100));
   await frames(page);
   expect(await active()).toBe('Part 6');
-  await expect(page.locator('#tocList .toc-link.active')).toHaveAttribute('aria-current', 'location');
   expect(await page.textContent('#breadcrumb')).toBe('Part 6');
   // Back up into the middle of Part 5: Part 6's heading is now below the reading line.
   await jump(await page.evaluate(() => scrollY - innerHeight * 0.6));
@@ -223,6 +223,7 @@ test('the outline follows the reader down, back up, and to the end', async ({ pa
   await jump(await page.evaluate(() => document.documentElement.scrollHeight));
   await frames(page);
   expect(await active()).toBe('Part 12');
+  await expect(page.locator('#tocList .toc-link.active')).toHaveAttribute('aria-current', 'location');
 });
 
 test('a "#" the author wrote stays in the outline, the breadcrumb, search and read-aloud', async ({ page }) => {
@@ -349,8 +350,11 @@ test('search finds words deep in a long paragraph, Enter takes the first result,
   await page.evaluate(() => toggleAllSections());
   await page.keyboard.press('Control+KeyK');
   await page.keyboard.type('zanzibar');
-  await expect(page.locator('#mdvSearchStatus')).toHaveText('1 match');
   await expect(page.locator('#searchResults .search-match')).toHaveText('zanzibar');
+  await expect(page.locator('#mdvSearchStatus')).toHaveText('1 match');
+  // An Enter that confirms an input method's text (Japanese, Chinese) is not a jump.
+  await key(page, { key: 'Enter', code: 'Enter', isComposing: true });
+  await expect(page.locator('#searchOverlay')).toHaveClass(/show/);
   await page.keyboard.press('Enter');
   await expect(page.locator('#searchOverlay')).not.toHaveClass(/show/);
   const p = page.locator('#mdBody p', { hasText: 'zanzibar' });
@@ -359,6 +363,18 @@ test('search finds words deep in a long paragraph, Enter takes the first result,
   await page.keyboard.press('Control+KeyK');
   await page.keyboard.type('nothing like this');
   await expect(page.locator('#mdvSearchStatus')).toHaveText('No matches');
+});
+
+test('search shows a heading whose letters change length when lower-cased, without garbling it', async ({ page }) => {
+  await openViewer(page);
+  await render(page, '# Trip\n\n## İstanbul notes\n\nFerries.\n');
+  await page.keyboard.press('Control+KeyK');
+  await page.keyboard.type('notes');
+  const item = page.locator('#searchResults .search-result-item').first();
+  await expect(item).toHaveText('## İstanbul notes');
+  // Either no highlight, or the right one: never part of a word ("otes").
+  const marks = await item.locator('.search-match').allTextContents();
+  expect(marks.every(m => m.toLowerCase() === 'notes'), JSON.stringify(marks)).toBe(true);
 });
 
 test('the shortcuts sheet traps the focus and gives it back on Esc', async ({ page }) => {
@@ -398,8 +414,9 @@ test('an image opens the lightbox from the keyboard; an image inside a link does
   await expect(box).toHaveAttribute('role', 'dialog');
   await expect(box).toHaveAttribute('aria-label', 'Image: A small square');
   await expect(page.locator('#lightboxImg')).toHaveAttribute('alt', 'A small square');
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('lightboxImg');
   await page.keyboard.press('Tab');
-  expect(await box.evaluate(b => b === document.activeElement)).toBe(true);
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('lightboxImg');
   await page.keyboard.press('Escape');
   await expect(box).not.toHaveClass(/show/);
   expect(await img.evaluate(i => i === document.activeElement)).toBe(true);
@@ -429,6 +446,7 @@ Fourth words.
 test('the read-aloud player is operable from the keyboard alone', async ({ page }) => {
   await openViewer(page);
   await render(page, SPOKEN);
+  await page.evaluate(() => { window.__speechDuration = 5000; }); // reading must not finish mid-test
   await page.locator('#ttsToggleBtn').focus();
   await page.keyboard.press('Control+Shift+KeyR');
   await expect(page.locator('#ttsPlayer')).toHaveClass(/show/);
@@ -472,9 +490,10 @@ test('the read-aloud player is operable from the keyboard alone', async ({ page 
 test('Next while speaking reads the next section from its first chunk', async ({ page }) => {
   await openViewer(page);
   await render(page, SPOKEN);
-  await page.evaluate(() => { ttsToggle(); ttsPlay(); });
+  // The first utterance lasts 5 s, so it is still being spoken when Next is pressed.
+  await page.evaluate(() => { window.__speechDuration = 5000; ttsToggle(); ttsPlay(); });
   await page.waitForFunction(() => window.__speech.started.length >= 1);
-  const second = await page.evaluate(() => { ttsNext(); return ttsChunks.slice(); });
+  const second = await page.evaluate(() => { window.__speechDuration = 60; ttsNext(); return ttsChunks.slice(); });
   expect(second.length).toBeGreaterThan(1);
   await page.waitForFunction((n) => window.__speech.ended.includes(n), second[1], { timeout: 5000 });
   const log = await page.evaluate(() => window.__speech);
@@ -485,9 +504,10 @@ test('Next while speaking reads the next section from its first chunk', async ({
 test('Pause, then Next, then Play speaks the next section', async ({ page }) => {
   await openViewer(page);
   await render(page, SPOKEN);
-  await page.evaluate(() => { ttsToggle(); ttsPlay(); });
+  await page.evaluate(() => { window.__speechDuration = 5000; ttsToggle(); ttsPlay(); });
   await page.waitForFunction(() => window.__speech.started.length >= 1);
   const first = await page.evaluate(async () => {
+    window.__speechDuration = 60;
     ttsPause();
     ttsNext();
     const next = ttsChunks[0];
@@ -520,6 +540,15 @@ test('what is read: no minimap, chevrons or chips; tables by row; images by thei
   const one = await page.evaluate(() => ttsSections.find(s => s.heading === 'One').items.join('\n'));
   expect(one).toContain('Step, Owner.');
   expect(one).toContain('Build, Ana.');
+});
+
+test('what is read: the frontmatter dashboard as phrases, and each formula once', async ({ page }) => {
+  await openViewer(page);
+  await render(page, `---\nstatus: In progress\ndate: 2026-10-04\nmetrics:\n  - value: 4\n    label: Open questions\n---\n\nEnergy is $E=mc^2$ here.\n`);
+  const intro = await page.evaluate(() => { ttsToggle(); return ttsSections[0].items.join('\n'); });
+  expect(intro).toContain('In progress.\n2026-10-04.\n4 Open questions.');
+  expect(intro).toContain('Energy is E=mc2 here.');
+  expect(intro.split('E=mc').length - 1).toBe(1);
 });
 
 test('without speech support the player says so instead of throwing', async ({ page }) => {
@@ -557,7 +586,7 @@ for (const theme of ['light', 'dark']) {
     await page.keyboard.press('ArrowRight');
     await page.screenshot({ path: info.outputPath(`player-${theme}.png`) });
     await page.locator('#ttsPlayer .tts-close').click();
-    await page.locator('#mdBody img[role=button]').first().focus();
+    await page.locator('#mdBody img[role=button]').first().focus({ timeout: 10_000 });
     await page.keyboard.press('Enter');
     await expect(page.locator('#lightbox')).toHaveClass(/show/);
     await page.screenshot({ path: info.outputPath(`lightbox-${theme}.png`) });

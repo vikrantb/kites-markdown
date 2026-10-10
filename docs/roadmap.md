@@ -72,6 +72,8 @@ individually today ([architecture.md](architecture.md) shows how).
 | Paste into the settings field and a reply box, before and after the fix | Before: the document was replaced. After: the document is kept, and a page-level paste unlinks the file handle (`null`) | Runtime (Chrome only) |
 | `?file=` fetch finishing after a handle was linked (simulated race) | Handle cleared, document renders, console clean | Runtime (Chrome only) |
 | Known issues 1, 3, 7, 8, 9, 10, 12, 13 | Reproduced as described in [Known issues](#known-issues) | Runtime (Chrome only) |
+| `pnpm exec playwright test --workers=1 tests/e2e/reading-aids.spec.mjs`, on this branch and on an extracted copy of main (2026-10-10) | 26 of 26 pass on the branch; 26 of 26 fail on main, each on the behaviour it names (narration, comment anchors, re-render time, observers, scroll spy, shortcuts, dialogs, read-aloud). Read-aloud runs against a stand-in `speechSynthesis` | Runtime (Chrome only) |
+| `node scripts/measure-large-document.mjs <dir> --sections 3000 --renders 5`, main and this branch alternately, 3 rounds, same machine (2026-10-10) | See [Reading aids](#reading-aids-fixed-2026-10-10) | Runtime (Chrome only) |
 
 **Not yet verified:**
 - saving back to disk, which needs a real user gesture;
@@ -119,7 +121,7 @@ Fixed in the initial import, and kept here as a record:
 | 9 | Dark theme: diagrams keep their light-theme colours, and sequence-diagram labels and arrows are `#333` on `#1C1C24` | Verified: after `setTheme('dark')`, Mermaid's config is still `theme: 'default'` and already-rendered diagrams are skipped | Keep each diagram's source; re-initialize Mermaid with the matching theme and re-render all diagrams on a theme change |
 | 10 | Mermaid sequence-diagram notes overflow their box | Verified: 384px of text in a 295px note, in both themes | Try `sequence: { wrap: true }` |
 | 11 | Section minimap labels overlap and clip when a document has many `h2` sections | Seen in a screenshot of `kitchen-sink.md` (20 sections) | Truncate with an ellipsis or scroll; show the full title on hover |
-| 12 | Narration comments before a diagram or table under a heading are never found | Verified ([read-aloud.md](read-aloud.md)) | Move comment nodes with their block in `addSectionToggles` |
+| 12 | ~~Narration comments before a diagram or table under a heading are never found~~ **Fixed 2026-10-10** | Verified in Chrome before and after: `tests/e2e/reading-aids.spec.mjs` fails on main and passes now ([Reading aids](#reading-aids-fixed-2026-10-10)) | Done: `addSectionToggles` moves comment nodes with their blocks |
 | 13 | The copy button copies the language label and the word "Copy" with the code (e.g. `pythonCopydef hello…`) | Verified | Copy only the inner `code` element's text |
 | 14 | Clicking a diagram node never jumps to its section; the handler never attaches | Read ([features.md](features.md)) | — |
 | 15 | Frontmatter `abbreviations` do nothing | Read ([features.md](features.md)) | — |
@@ -136,6 +138,39 @@ Fixed in the initial import, and kept here as a record:
 
 Every doc has its own limitations section with more detail and lower-severity items.
 
+### Reading aids (fixed 2026-10-10)
+
+One root cause produced three of these. `addSectionToggles` moved only elements into each section
+wrapper, so the HTML comments between blocks, and the whitespace text nodes, stayed behind:
+
+- **Narration under headings was never found** (issue 12). Fixed: comments move with their block.
+- **Comment threads inside sections attached to the next heading**, or became orphans in the last
+  section ([commenting.md](commenting.md), bug 3). Fixed by the same change.
+- **Re-rendering a large document was slow.** The stranded whitespace formed runs of up to 7,292
+  adjacent text nodes in `#mdBody`, and Chrome removes such a run slowly: on the generated
+  3,000-section document, `#mdBody.innerHTML = ''` took 1,976 ms, and 4 ms when the whitespace-only
+  text nodes were removed first (one scratch run in Chrome, same page, same document).
+
+Measured with `node scripts/measure-large-document.mjs <dir> --sections 3000 --renders 5` (3,601
+headings, Chrome, file://), main and this change alternately, three rounds on one machine:
+
+| | main | this change | this change, minimap observer deleted |
+|---|---|---|---|
+| First render (median of 3) | 445 ms | 421 ms | 428 ms |
+| Re-render (median of renders 2–5, then of 3 runs) | 2,327 ms | 412 ms | 432 ms |
+| `IntersectionObserver`s alive after 5 renders | 10 | 5 | 0 |
+| DOM nodes after garbage collection, render 1 and 5 | 104,295 both | 104,295 both | 104,295 both |
+| JS event listeners | 19,296 | 15,704 | 15,704 |
+| JS heap after garbage collection | 7.6–8.7 MB | 6.3 MB | 6.3 MB |
+| Main-thread task time over a 120-step scroll through the document | 219–228 ms | 162–166 ms | 100–113 ms |
+
+The DOM node count shows the old observers did not keep old documents alive; they did keep their
+callbacks and target lists, and added work to every scroll. Also fixed and tested: the scroll spy
+was wrong when scrolling back up, the H1 could not be folded when the minimap followed it, a
+heading-less document hid the outline for the next one, search missed words after the first 200
+characters of a block, and a heading's own `#` was deleted from the outline, search and read-aloud.
+Read-aloud fixes are listed in [read-aloud.md](read-aloud.md#limitations-and-browser-quirks).
+
 ## Not yet documented or tested
 
 The final review across all docs found these gaps:
@@ -148,12 +183,21 @@ The final review across all docs found these gaps:
 - **The extension and GitHub's in-app navigation.** The content script runs on a full page load of a
   `/blob/` URL, so opening an `.html` file through GitHub's in-app (soft) navigation may not render
   it (inferred).
-- **Shortcut edge cases.** The keydown handler compares `e.key` with exact lowercase letters, so
-  Caps Lock probably disables the Mod+K, Mod+B and Mod+O shortcuts (inferred).
-- **The viewer's own accessibility:** focus handling in the overlays, ARIA labels on icon-only
-  toolbar buttons, and keyboard access to every control.
-- **Performance on large documents.** Every render re-parses everything, and the
-  IntersectionObservers created on each render are never disconnected.
+- ~~**Shortcut edge cases.**~~ **Done 2026-10-10.** Caps Lock did disable Mod+K, Mod+B and Mod+O
+  (confirmed by a test against main). Shortcuts now match case-insensitively, by physical key on
+  non-Latin layouts, never with AltGr, and never steal the browser's own Shift shortcuts; a focused
+  task-list checkbox no longer blocks them. Covered by a browser test.
+- **The viewer's own accessibility.** *Partly done 2026-10-10:* search, the shortcuts sheet and the
+  image lightbox are modal dialogs that move focus in, trap Tab, close on Esc and give the focus
+  back; the outline, section chevrons, document images, search results and the read-aloud player
+  have names and work from the keyboard (all covered by browser tests). Still open: names for the
+  icon-only toolbar buttons (they rely on `title`), and keyboard and focus handling in the diagram
+  overlay, the links panel, the settings panel and the comments sidebar.
+- **Performance on large documents.** *Partly done 2026-10-10:* re-rendering a 3,000-section document
+  is about 5.6 times faster, and the reading aids no longer create observers per render (numbers in
+  [Reading aids](#reading-aids-fixed-2026-10-10)). Still open: every render re-parses the whole
+  document, and `buildSectionMinimap` still creates an `IntersectionObserver` per render that is never
+  disconnected (the scroll spy now does its job, so it can be deleted).
 - **Line numbers drift.** `architecture.md` cites line numbers "as of the initial import". Either
   refresh them with each change or replace them with function names.
 
