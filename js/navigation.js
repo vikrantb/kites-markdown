@@ -160,9 +160,9 @@ function handleSearch(q) {
   res.innerHTML = matches.map((m, i) => {
     const ht = highlightMatch(m.text, q);
     if (m.type === 'heading') {
-      return `<div class="search-result-item" data-idx="${i}" onclick="goSearch(${i})"><span class="search-result-heading">${'#'.repeat(m.level)} ${ht}</span></div>`;
+      return `<div class="search-result-item" data-idx="${i}" data-action="go-search" data-arg="${i}"><span class="search-result-heading">${'#'.repeat(m.level)} ${ht}</span></div>`;
     }
-    return `<div class="search-result-item" data-idx="${i}" onclick="goSearch(${i})"><span class="search-result-heading">${escapeHtml(m.headingText||'')}</span><span class="search-result-ctx">${ht}</span></div>`;
+    return `<div class="search-result-item" data-idx="${i}" data-action="go-search" data-arg="${i}"><span class="search-result-heading">${escapeHtml(m.headingText||'')}</span><span class="search-result-ctx">${ht}</span></div>`;
   }).join('');
   res._matches = matches;
 }

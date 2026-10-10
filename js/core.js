@@ -33,7 +33,7 @@ const md = window.markdownit({
       try { hl = hljs.highlight(str, { language: lang }).value; } catch (_) {}
     }
     if (!hl) hl = md.utils.escapeHtml(str);
-    return `<div class="code-header"><span>${md.utils.escapeHtml(label)}</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><code class="hljs language-${md.utils.escapeHtml(lang || '')}">${hl}</code>`;
+    return `<div class="code-header"><span>${md.utils.escapeHtml(label)}</span><button class="copy-btn" data-action="copy-code">Copy</button></div><code class="hljs language-${md.utils.escapeHtml(lang || '')}">${hl}</code>`;
   }
 });
 
@@ -60,17 +60,7 @@ md.renderer.rules.fence = function(tokens, idx, options, env, self) {
   return defaultFence ? defaultFence(tokens, idx, options, env, self) : self.renderToken(tokens, idx, options);
 };
 
-// KaTeX math: $..$ and $$..$$
-function renderMath(src) {
-  if (typeof katex === 'undefined') return src;
-  src = src.replace(/\$\$([^$]+?)\$\$/gs, (_, m) => {
-    try { return katex.renderToString(m.trim(), { displayMode: true, throwOnError: false }); } catch(e) { return `<pre>${m}</pre>`; }
-  });
-  src = src.replace(/\$([^$\n]+?)\$/g, (_, m) => {
-    try { return katex.renderToString(m.trim(), { displayMode: false, throwOnError: false }); } catch(e) { return `<code>${m}</code>`; }
-  });
-  return src;
-}
+// Math ($...$ and $$...$$) is a markdown-it rule: see js/math.js.
 
 // ============================================
 // Narration extraction: <!-- narrate: ... -->
