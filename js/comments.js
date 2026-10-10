@@ -1229,13 +1229,16 @@ async function mdvShowAddPopup(elem, selectionText) {
                   '<div class="mdv-add-actions">' +
                   '<button class="mdv-btn mdv-add-cancel">Cancel</button>' +
                   '<button class="mdv-btn mdv-btn-primary mdv-add-save">Save</button></div>';
-  const left = Math.min(window.innerWidth - 340, Math.max(8, rect.left));
-  const top = Math.min(window.innerHeight - 200, rect.bottom + window.scrollY + 6);
+  // The popup is position:absolute, so it is placed in page coordinates, kept inside the visible part of the
+  // page. (Clamping against the window height alone put it near the top of a long page, and focusing it then
+  // scrolled the reader away from the block they were commenting on.)
+  const left = Math.min(window.scrollX + window.innerWidth - 340, Math.max(window.scrollX + 8, rect.left + window.scrollX));
+  const top = Math.max(window.scrollY + 8, Math.min(window.scrollY + window.innerHeight - 200, rect.bottom + window.scrollY + 6));
   pop.style.left = left + 'px';
   pop.style.top  = top + 'px';
   document.body.appendChild(pop);
   const ta = pop.querySelector('textarea');
-  ta.focus();
+  ta.focus({ preventScroll: true });
   pop.querySelector('.mdv-add-cancel').onclick = () => pop.remove();
   let saving = false;
   pop.querySelector('.mdv-add-save').onclick = async () => {
@@ -1543,6 +1546,10 @@ function mdvBeginDocument(source, title) {
     }, 50);
   };
 })();
+
+// #mdBody survives every render (only its contents are replaced), so the right-click menu is wired once, now,
+// rather than after the first render
+mdvAttachContextMenu();
 
 // A document rendered before this script loaded (the #demo page) is rendered again through the hook
 if (rawMarkdown) {
