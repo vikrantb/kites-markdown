@@ -421,7 +421,9 @@ test('an image alone in a paragraph becomes a captioned figure, and number colum
   await open(page, 'kitchen-sink.md');
   const figure = page.locator('#mdBody p.mdv-figure');
   await expect(figure).toHaveCount(1);
-  await expect(figure.locator('.mdv-figcaption')).toHaveText('Blue gradient banner with a white stripe');
+  const caption = figure.locator('.mdv-figcaption');
+  await expect(caption).toHaveAttribute('data-caption', 'Blue gradient banner with a white stripe');
+  expect(await caption.evaluate((el) => getComputedStyle(el, '::before').content)).toContain('Blue gradient banner with a white stripe');
 
   // A linked image with alt text stays an image (a figure), instead of becoming a text-only link card.
   const pixel = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';

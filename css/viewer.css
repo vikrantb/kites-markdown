@@ -1094,10 +1094,17 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
   transition: box-shadow var(--transition-normal), transform var(--transition-normal);
 }
 .md-body .mdv-figure img:hover { transform: translateY(-1px); box-shadow: 0 2px 4px var(--diagram-shadow), 0 16px 40px -12px rgba(20, 24, 36, 0.32); }
+/* The caption's words are drawn from data-caption, so they are never part of the paragraph's text (see
+   mdvCaptionImages). Screen readers already have them from the image's alt or title, so the drawn copy is silent
+   ("/ ''" is its alternative text; a browser without that syntax keeps the first declaration). */
 .md-body .mdv-figcaption {
   display: block; margin: 0.85em auto 0; max-width: 36em;
   font-family: var(--font-ui); font-size: 0.8em; line-height: 1.5;
   color: var(--text-tertiary);
+}
+.md-body .mdv-figcaption::before {
+  content: attr(data-caption);
+  content: attr(data-caption) / "";
 }
 
 /* Image lightbox */

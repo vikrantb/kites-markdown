@@ -45,7 +45,10 @@ function transformCalloutBlocks() {
 }
 
 // An image alone in its paragraph becomes a figure: centred, rounded and shadowed, with its title (or, without one,
-// its alt text) as a caption underneath. The paragraph stays a <p>, so comment anchors and read-aloud keep working.
+// its alt text) as a caption underneath. The paragraph stays a <p>. The caption is an empty element whose words
+// CSS draws from data-caption: never text, because a comment's anchor is found by the block's text in the source
+// (comments.js) and the caption's words are not on the image's line of markdown. The element also keeps a linked
+// image from being turned into a text-only link card (enhanceLinks only converts a link alone in its paragraph).
 function mdvCaptionImages(body) {
   for (const p of body.querySelectorAll('p')) {
     if (p.classList.contains('mdv-figure')) continue;
@@ -61,8 +64,7 @@ function mdvCaptionImages(body) {
     if (!caption) continue;
     const cap = document.createElement('span');
     cap.className = 'mdv-figcaption';
-    cap.textContent = caption;
-    if (!title) cap.setAttribute('aria-hidden', 'true'); // the same words a screen reader already gets from alt
+    cap.dataset.caption = caption;
     p.appendChild(cap);
   }
 }
