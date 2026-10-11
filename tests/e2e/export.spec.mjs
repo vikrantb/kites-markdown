@@ -1,65 +1,17 @@
-// Export and copy (js/export.js, js/copy.js, css/print.css): Export HTML, Print / Save as PDF, Copy as rich text and
-// Copy link to this section, from the toolbar's Export menu and from each heading's "#".
+// Export and copy (js/export.js, js/copy.js, css/print.css): Export HTML, Print / Save as PDF, Copy as rich text
+// and Copy link to this section, from the toolbar's Export menu and from each heading's "#".
 //
 // In a browser, and in the desktop app through a stand-in for its shell (as desktop.spec.mjs does it: Tauri's
 // injected API, the app's own Content Security Policy). The real shell's part (where a download is saved, the print
-// sheet) is the app's own; see docs/features.md.
+// sheet) is the app's own; see docs/features.md. What a document must not be able to do through these features is in
+// export-safety.spec.mjs; where links and section addresses lead, in export-links.spec.mjs.
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { collectProblems, openDocument, waitForLayoutSettled } from './support/viewer.mjs';
+import { collectProblems, waitForLayoutSettled } from './support/viewer.mjs';
 import { THEMES, renderSource, waitForDiagrams } from './visuals-helpers.mjs';
-
-const repo = (p) => fileURLToPath(new URL(`../../${p}`, import.meta.url));
-const SECTIONS = 'tests/fixtures/export/sections.md';
-const IMAGES = 'tests/fixtures/export/images.md';
-
-async function openDoc(page, file, theme = 'light') {
-  await page.addInitScript((t) => { try { localStorage.setItem('mdv-theme', t); } catch (_) { /* default theme */ } }, theme);
-  await page.route(/example\.invalid/, (route) => route.abort());
-  await openDocument(page, file);
-}
-
-async function menu(page, action) {
-  await page.locator('#mdvExportBtn').click();
-  await expect(page.locator('#mdvExportDD')).toBeVisible();
-  await page.locator(`#mdvExportDD [data-action="${action}"]`).click();
-}
-
-async function exportHtml(page) {
-  const [download] = await Promise.all([page.waitForEvent('download'), menu(page, 'export-html')]);
-  return { download, name: download.suggestedFilename(), html: readFileSync(await download.path(), 'utf8') };
-}
-
-// What an exported file holds, parsed as a browser parses it.
-const inspect = (page, html) => page.evaluate((h) => {
-  const d = new DOMParser().parseFromString(h, 'text/html');
-  const attrs = [...d.querySelectorAll('*')].flatMap((el) => [...el.attributes].map((a) => `${a.name}=${a.value}`));
-  return {
-    scripts: d.querySelectorAll('script').length,
-    handlers: attrs.filter((a) => /^on/i.test(a)),
-    jsUrls: attrs.filter((a) => /^\s*[^=]+=\s*javascript:/i.test(a)),
-    actions: d.querySelectorAll('[data-action]').length,
-    diagrams: d.querySelectorAll('.mermaid > svg').length,
-    controls: d.querySelectorAll('button, .section-toggle, .copy-btn, .diagram-expand-btn, .section-minimap, .mdv-chip').length,
-    stylesheetLinks: d.querySelectorAll('link').length,
-    style: [...d.querySelectorAll('head style')].map((s) => s.textContent).join('\n'),
-    csp: (d.querySelector('meta[http-equiv="Content-Security-Policy"]') || {}).content || '',
-    theme: d.documentElement.getAttribute('data-theme'),
-    title: d.title,
-    images: [...d.querySelectorAll('img')].map((i) => i.getAttribute('src')),
-    notes: [...d.querySelectorAll('.mdv-export-missing')].map((n) => n.textContent),
-    headings: [...d.querySelectorAll('h1, h2')].map((h) => h.id),
-  };
-}, html);
-
-const readClipboard = (page) => page.evaluate(async () => {
-  const [item] = await navigator.clipboard.read();
-  const read = async (type) => (item.types.includes(type) ? (await item.getType(type)).text() : null);
-  return { types: item.types.slice().sort(), html: await read('text/html'), text: await read('text/plain') };
-});
-
-const toast = (page) => page.locator('.mdv-toast').last();
+import {
+  FIXTURE, FIXTURE_DIR, IMAGES, SECTIONS, exportHtml, inspect, menu, openDoc, openInApp, readClipboard, repo, toast,
+} from './export-helpers.mjs';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Export HTML
@@ -91,7 +43,8 @@ test('Export HTML is one self-contained file: no script, every diagram as its SV
 
   const { name, html, download } = await exportHtml(page);
   expect(name).toBe('kitchen-sink.html');
-  await expect(toast(page)).toHaveText('Downloading kitchen-sink.html.');
+  // The sample links to the project README next to its folder: that link now opens it in this viewer, on this computer.
+  await expect(toast(page)).toHaveText('Downloading kitchen-sink.html: 1 link goes to a file on this computer.');
   const x = await inspect(page, html);
   expect(x.scripts).toBe(0);
   expect(html).not.toMatch(/<script/i);
@@ -106,9 +59,13 @@ test('Export HTML is one self-contained file: no script, every diagram as its SV
   expect(x.stylesheetLinks).toBe(0);
   expect(x.style).toContain('.md-body');
   expect(x.style).toMatch(/@font-face \{ font-family: KaTeX_Main; src: url\("data:font\/woff2;base64,/);
-  // No comment thread, anchor or narration, and nothing that points back at the server it came from.
+  // No comment thread, anchor or narration, and nothing the page loads from the server it came from: no image, font or
+  // stylesheet address. (A link is not a load: the README link above is one, by design.)
   expect(html).not.toContain('<!--');
-  expect(html).not.toContain(new URL(baseURL).origin);
+  const origin = new URL(baseURL).origin;
+  expect(x.style).not.toContain(origin);
+  expect(x.images.filter((src) => src.startsWith(origin))).toEqual([]);
+  expect(x.links.find((l) => l.text === 'project README').href).toBe(`${origin}/markdown-viewer.html?file=README.md`);
 
   // Opened on its own, it renders with nothing but itself: no request leaves the file.
   const saved = info.outputPath('kitchen-sink.html');
@@ -186,16 +143,70 @@ test('Export HTML reads an image through the open folder (window.mdvFolder, stub
   ]);
 });
 
-test('Export HTML from a page opened as a file (file://) carries portable styles instead of the stylesheets', async ({ page }) => {
+test('Export HTML keeps the ticks the reader made in task lists', async ({ page }) => {
+  await openDoc(page, 'samples/kitchen-sink.md');
+  const boxes = page.locator('#mdBody input[type="checkbox"]');
+  const before = await boxes.evaluateAll((all) => all.map((b) => b.checked));
+  const i = before.indexOf(false);
+  expect(i).toBeGreaterThanOrEqual(0); // a box to tick
+  await boxes.nth(i).click();
+  const ticked = await boxes.evaluateAll((all) => all.map((b) => b.checked));
+  expect(ticked[i]).toBe(true);
+  const { html } = await exportHtml(page);
+  const exported = await page.evaluate((h) => [...new DOMParser().parseFromString(h, 'text/html').querySelectorAll('input[type="checkbox"]')]
+    .map((b) => b.checked), html);
+  expect(exported).toEqual(ticked);
+});
+
+test('Export HTML names the document it copied, even when another opens while its images are read', async ({ page }) => {
+  await openDoc(page, IMAGES);
+  // The export reads chart.png next to the document: hold that read, and open another document meanwhile, as a
+  // loader does (its name, then its text).
+  let release;
+  const held = new Promise((r) => { release = r; });
+  await page.route('**/tests/fixtures/export/chart.png', async (route) => { await held; await route.continue(); });
+  const downloading = page.waitForEvent('download');
+  await menu(page, 'export-html');
+  await page.waitForTimeout(200);
+  await page.evaluate(() => {
+    const s = '# Other document\n\nSomething else entirely.\n';
+    currentFileName = 'other.md';
+    rawMarkdown = s;
+    renderMarkdown(s, 'other.md');
+  });
+  await expect(page.locator('#mdBody h1')).toContainText('Other document');
+  release();
+  const download = await downloading;
+  const html = readFileSync(await download.path(), 'utf8');
+  expect(download.suggestedFilename()).toBe('images.html');
+  const x = await inspect(page, html);
+  expect(x.title).toBe('Images in an export');
+  expect(html).not.toContain('Something else entirely');
+});
+
+test('Export HTML of pasted text is named after its title, not the file shown before it', async ({ page }) => {
+  await openDoc(page, SECTIONS);
+  await page.evaluate(() => {
+    const data = new DataTransfer();
+    data.setData('text/plain', '# Pasted plan\n\nA paragraph that was pasted into the viewer.\n');
+    document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
+  });
+  await expect(page.locator('#mdBody h1')).toContainText('Pasted plan');
+  const { name } = await exportHtml(page);
+  expect(name).toBe('Pasted plan.html');
+});
+
+test('Export HTML from a page opened as a file (file://) carries portable styles, and draws callouts, the frontmatter card and heading links as the page does', async ({ page, context }, info) => {
   const problems = collectProblems(page);
   await page.goto(new URL('../../markdown-viewer.html', import.meta.url).href);
   await page.locator('#fileInput').setInputFiles(repo('samples/kitchen-sink.md'));
   await page.waitForSelector('#mdBody h1');
   await waitForDiagrams(page);
-  // The instrument: here the page really cannot read its own stylesheet.
+  // The instrument: here the page really cannot read its own stylesheet, and it draws callout icons at 18 px.
   expect(await page.evaluate(() => { try { return document.querySelector('link[href="css/viewer.css"]').sheet.cssRules.length; } catch (e) { return e.name; } })).toBe('SecurityError');
+  expect(await page.evaluate(() => document.querySelectorAll('#mdBody .callout-title svg').length)).toBeGreaterThan(0);
   const diagrams = await page.evaluate(() => document.querySelectorAll('#mdBody .mermaid > svg').length);
-  const { html } = await exportHtml(page);
+  const { html, download } = await exportHtml(page);
   const x = await inspect(page, html);
   expect(x.scripts).toBe(0);
   expect(x.handlers).toEqual([]);
@@ -208,6 +219,39 @@ test('Export HTML from a page opened as a file (file://) carries portable styles
   }, html);
   expect(code).toMatch(/font-family:[^;]*monospace/);
   await expect(toast(page)).toContainText('styled simply');
+
+  // Opened: no callout icon blown up to the column's width (the page draws them at 18 px), the document's own drawing
+  // at its own size, the frontmatter card's status and date apart, and each heading's "#" hidden until the pointer is
+  // on its heading, as on the page.
+  const saved = info.outputPath('portable.html');
+  await download.saveAs(saved);
+  const view = await context.newPage();
+  await view.goto('file://' + saved);
+  const shown = await view.evaluate(() => {
+    const anchors = [...document.querySelectorAll('.header-anchor')];
+    const own = document.querySelector('svg[aria-label="Three queued operations"]');
+    return {
+      callouts: document.querySelectorAll('.callout-title').length,
+      bigIcons: [...document.querySelectorAll('.callout svg')].map((s) => Math.round(s.getBoundingClientRect().width)).filter((w) => w > 32),
+      ownDrawing: own ? Math.round(own.getBoundingClientRect().width) : null,
+      status: (document.querySelector('article p') || {}).textContent,
+      anchors: anchors.length,
+      anchorsShown: anchors.filter((a) => getComputedStyle(a).opacity !== '0').length,
+      anchorsUnderlined: anchors.filter((a) => getComputedStyle(a).textDecorationLine.includes('underline')).length,
+    };
+  });
+  expect(shown.callouts).toBeGreaterThan(0);
+  expect(shown.bigIcons).toEqual([]);
+  expect(shown.ownDrawing).toBe(120);
+  expect(shown.status).toBe('in progress · 2026-10-04'); // as the page's card words it
+  expect(shown.anchors).toBeGreaterThan(0);
+  expect(shown.anchorsShown).toBe(0);
+  expect(shown.anchorsUnderlined).toBe(0);
+  await view.screenshot({ path: info.outputPath('portable.png') });
+
+  // The confirmation is long; it stays long enough to be read (a 3.5 s toast would be gone).
+  await page.waitForTimeout(4500);
+  await expect(toast(page)).toBeVisible();
   expect(problems, problems.join('\n')).toEqual([]);
 });
 
@@ -255,21 +299,52 @@ for (const theme of THEMES) {
         diagram: cs('#mdBody .mermaid-wrapper').breakInside,
         pre: cs('#mdBody pre:not(.mermaid)').breakInside,
         codeWraps: cs('#mdBody pre code.hljs').whiteSpace,
-        introKept: getComputedStyle(document.querySelector('#mdBody pre:not(.mermaid)').previousElementSibling).breakAfter,
+        codeIntro: getComputedStyle(document.querySelector('#mdBody pre:not(.mermaid)').previousElementSibling).breakAfter,
         web: cs('#mdBody a[href="https://example.com/releases/checklist"]', '::after').content,
         mail: cs('#mdBody a[href="mailto:release@example.com"]', '::after').content,
         bare: cs('#mdBody a[href="https://example.com/tracker"]', '::after').content,
       };
     });
     expect(paper).toEqual({
-      header: true, headerTitle: 'Release handoff', headerMeta: expect.stringMatching(/^sections\.md · /),
+      // The header names the document as the toolbar does: by its path, so two STATUS.md files print differently.
+      header: true, headerTitle: 'Release handoff', headerMeta: expect.stringMatching(/^tests\/fixtures\/export\/sections\.md · /),
       page: 'rgb(255, 255, 255)', text: 'rgb(17, 17, 17)', folded: true,
       firstH1: 'auto', secondH1: 'page', h2After: 'avoid',
-      table: 'avoid', diagram: 'avoid', pre: 'avoid', codeWraps: 'pre-wrap', introKept: 'avoid',
+      table: 'avoid', diagram: 'avoid', pre: 'avoid', codeWraps: 'pre-wrap', codeIntro: 'auto',
       web: '" (https://example.com/releases/checklist)"', mail: '" (release@example.com)"', bare: 'none',
     });
   });
 }
+
+test('a paragraph before a tall diagram, code block or table never costs a page; one before a list stays with it', async ({ page }) => {
+  test.setTimeout(150_000);
+  await openDoc(page, SECTIONS);
+  const pagesOf = (pdf) => (pdf.toString('latin1').match(/\/Type\s*\/Page(?!s)/g) || []).length;
+  const tall = {
+    diagram: '```mermaid\nflowchart TD\n' + Array.from({ length: 22 }, (_, i) => `    N${i}[Step ${i} of the release] --> N${i + 1}[Step ${i + 1}]`).join('\n') + '\n```',
+    code: '```bash\n' + Array.from({ length: 52 }, (_, i) => `echo "line ${i} of the long script that does many things"`).join('\n') + '\n```',
+    table: '| Item | Owner | State |\n|---|---|---|\n' + Array.from({ length: 34 }, (_, i) => `| Row ${i} of the release table | someone | in progress |`).join('\n'),
+  };
+  // The same document with every "keep this paragraph with what follows" rule switched off: the rule may move a line,
+  // never add a sheet. (Measured before this change: 1 to 2 more pages in 28 of these 30 layouts.)
+  const without = '@media print { .md-body p { break-after: auto !important; } }';
+  for (const [kind, block] of Object.entries(tall)) {
+    for (const lead of [1, 4]) {
+      const filler = Array.from({ length: lead }, (_, i) => `Paragraph ${i}. ` + 'Words that fill the page before the block. '.repeat(9)).join('\n\n');
+      await renderSource(page, `# Print check\n\n${filler}\n\nThe paragraph that introduces the block below, long enough to take two or three lines on paper, ends with estimates.\n\n${block}\n\nAfter the block.\n`);
+      await waitForLayoutSettled(page);
+      const shipped = pagesOf(await page.pdf({ format: 'A4' }));
+      const style = await page.addStyleTag({ content: without });
+      const counterfactual = pagesOf(await page.pdf({ format: 'A4' }));
+      await style.evaluate((s) => s.remove());
+      expect(shipped, `${kind} after ${lead} paragraphs: ${shipped} pages, ${counterfactual} without the rule`).toBe(counterfactual);
+    }
+  }
+  // The rule still holds a line with a short block that can break: a list.
+  await renderSource(page, '# Steps\n\nThe steps:\n\n1. One\n2. Two\n');
+  await page.emulateMedia({ media: 'print' });
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector('#mdBody ol').previousElementSibling).breakAfter)).toBe('avoid');
+});
 
 test('Print / Save as PDF from the menu draws diagrams in the light palette for the paper, then gives the theme back', async ({ page }) => {
   await openDoc(page, SECTIONS, 'dark');
@@ -296,6 +371,24 @@ test('Print / Save as PDF from the menu draws diagrams in the light palette for 
   expect(await page.evaluate(() => { window.dispatchEvent(new Event('afterprint')); return document.title; })).toBe(before);
 });
 
+test('Ctrl/Cmd+P prints as the menu does: from the dark theme, diagrams in the light palette', async ({ page }) => {
+  await openDoc(page, SECTIONS, 'dark');
+  await page.evaluate(() => {
+    window.print = () => {
+      window.__printed = {
+        theme: document.documentElement.getAttribute('data-theme'),
+        palettes: [...document.querySelectorAll('#mdBody .mermaid')].map((el) => (el.dataset.mdvPalette || '').split('|')[0]),
+      };
+    };
+  });
+  await page.keyboard.press('Control+p');
+  await expect.poll(() => page.evaluate(() => window.__printed || null)).toEqual({ theme: 'light', palettes: ['light', 'light'] });
+  await expect.poll(() => page.evaluate(() => document.documentElement.getAttribute('data-theme'))).toBe('dark');
+  // The ? sheet lists the key with the others.
+  await page.keyboard.press('?');
+  await expect(page.locator('#shortcutsOverlay')).toContainText('Print or save as PDF');
+});
+
 // ---------------------------------------------------------------------------------------------------------------
 // Copy as rich text
 // ---------------------------------------------------------------------------------------------------------------
@@ -308,21 +401,24 @@ test('Copy as rich text puts the whole document on the clipboard as HTML and as 
   const labels = await page.evaluate(() => [...document.querySelectorAll('#mdBody .mermaid-wrapper')].map((w) => w.dataset.diagramLabel));
   expect(labels.length).toBeGreaterThan(0);
   await menu(page, 'copy-rich-text');
-  await expect(toast(page)).toHaveText('Copied the document as rich text.');
+  await expect(toast(page)).toHaveText('Copied the document as rich text: 1 link goes to a file on this computer.');
   const clip = await readClipboard(page);
   expect(clip.types).toEqual(['text/html', 'text/plain']);
 
   const html = await page.evaluate((h) => {
     const d = new DOMParser().parseFromString(h, 'text/html');
+    const tables = [...d.querySelectorAll('table')].map((t) => [...t.querySelectorAll('td')].map((td) => td.style.borderColor));
     return {
       title: (d.querySelector('h1') || {}).textContent,
       diagramImages: [...d.querySelectorAll('img')].filter((i) => /^data:image\/png;base64,/.test(i.src)).map((i) => i.alt),
       preFont: (d.querySelector('pre') || { style: {} }).style.fontFamily,
       inlineCodeFont: (d.querySelector('p code') || { style: {} }).style.fontFamily,
       cellBorder: (d.querySelector('td') || { style: {} }).style.border,
+      // Every body cell of a table draws its border in one colour (the last row's used to be the text colour).
+      cellColours: tables.map((cells) => [...new Set(cells)]),
       math: d.querySelectorAll('math').length,
       tex: d.querySelectorAll('annotation').length,
-      viewerBits: d.querySelectorAll('button, svg.callout-icon, .mermaid svg, .section-toggle, .header-anchor, .code-header, [data-action], [data-tex]').length,
+      viewerBits: d.querySelectorAll('button, svg.callout-icon, .mermaid svg, .section-toggle, .header-anchor, .code-header, [data-action], [data-tex], [data-mdv-caption]').length,
     };
   }, clip.html);
   expect(html.title).toBe('Offline Sync Design Review');
@@ -331,12 +427,14 @@ test('Copy as rich text puts the whole document on the clipboard as HTML and as 
   expect(html.preFont).toMatch(/monospace/);
   expect(html.inlineCodeFont).toMatch(/monospace/);
   expect(html.cellBorder).toMatch(/1px solid/);
+  expect(html.cellColours.length).toBeGreaterThan(0);
+  for (const colours of html.cellColours) expect(colours).toHaveLength(1);
   expect(html.math).toBeGreaterThan(0);
   expect(html.tex).toBe(0);
   expect(html.viewerBits).toBe(0);
   expect(clip.html).not.toMatch(/<script|MDV-ANCHOR|oklab\(|color-mix\(/i);
 
-  expect(clip.text).toContain('Offline Sync Design Review\n\nThis review describes');
+  expect(clip.text).toContain('# Offline Sync Design Review\n\nThis review describes');
   for (const label of labels) expect(clip.text).toContain(`[Diagram: ${label}]`);
   expect(clip.text).toContain('body\ttext\tCRDT\tcharacter-level');
   expect(clip.text).toMatch(/^- \[x\] /m);
@@ -344,6 +442,19 @@ test('Copy as rich text puts the whole document on the clipboard as HTML and as 
   expect(clip.text).toContain('2^10 entries');
   expect(clip.text.split('\n')).not.toContain('Copy');
   expect(problems, problems.join('\n')).toEqual([]);
+});
+
+test('the plain text of a copied document keeps its headings and code fences, as Markdown has them', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await openDoc(page, SECTIONS);
+  await menu(page, 'copy-rich-text');
+  await expect(toast(page)).toHaveText('Copied the document as rich text.');
+  const { text } = await readClipboard(page);
+  expect(text).toMatch(/^# Release handoff$/m);
+  expect(text).toMatch(/^## Next steps$/m);
+  expect(text).toContain('```sh\ngit tag --annotate v2.0.0');
+  expect(text).toMatch(/v2\.0\.0[^\n]*\n```$/m);
+  expect(text).toContain('1. Merge the branch.');
 });
 
 test('Copy as rich text copies a selection, and only it, with its formatting', async ({ page, context }) => {
@@ -367,7 +478,7 @@ test('Copy as rich text copies a selection, and only it, with its formatting', a
   const code = await page.evaluate((h) => new DOMParser().parseFromString(h, 'text/html').querySelector('code').style.fontFamily, clip.html);
   expect(code).toMatch(/monospace/);
 
-  // Part of one line of code: it is still code, in a code block, on the clipboard.
+  // Part of one line of code: it is still code, in a code block, on the clipboard; its text has no fence.
   await page.evaluate(() => {
     const code = [...document.querySelectorAll('#mdBody pre code.hljs')].find((c) => c.textContent.includes('interface Operation'));
     const text = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
@@ -391,11 +502,34 @@ test('Copy as rich text copies a selection, and only it, with its formatting', a
   expect(pre).toMatch(/monospace/);
 });
 
+test('Copy as rich text embeds an image named relative to the document, as Export HTML does, and names a missing one by its path', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await openDoc(page, IMAGES);
+  await menu(page, 'copy-rich-text');
+  await expect(toast(page)).toHaveText('Copied the document as rich text.');
+  const { html, text } = await readClipboard(page);
+  const png = readFileSync(repo('tests/fixtures/export/chart.png')).toString('base64');
+  const pasted = await page.evaluate((h) => {
+    const d = new DOMParser().parseFromString(h, 'text/html');
+    return {
+      images: Object.fromEntries([...d.querySelectorAll('img')].map((i) => [i.alt, i.getAttribute('src')])),
+      notes: [...d.querySelectorAll('.mdv-export-missing')].map((n) => n.textContent),
+    };
+  }, html);
+  expect(pasted.images['A chart next to the document']).toBe(`data:image/png;base64,${png}`);
+  expect(pasted.images['The same chart, by its path from the viewer']).toBe(`data:image/png;base64,${png}`);
+  expect(pasted.notes).toHaveLength(1);
+  expect(pasted.notes[0]).toContain('(no-such-image.png)'); // the path as written, not a server address
+  // A figure's caption that only repeats its alt text is not read twice.
+  expect(text).toContain('[A chart next to the document]\n');
+  expect(text).not.toContain('[A chart next to the document]A chart next to the document');
+});
+
 test('Copy as rich text from the dark theme pastes in the light palette, and leaves the page dark', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await openDoc(page, 'samples/kitchen-sink.md', 'dark');
   await menu(page, 'copy-rich-text');
-  await expect(toast(page)).toHaveText('Copied the document as rich text.');
+  await expect(toast(page)).toContainText('Copied the document as rich text');
   const { html } = await readClipboard(page);
   const colours = await page.evaluate((h) => {
     const d = new DOMParser().parseFromString(h, 'text/html');
@@ -433,91 +567,6 @@ test('Copy as rich text from the dark theme pastes in the light palette, and lea
 });
 
 // ---------------------------------------------------------------------------------------------------------------
-// Links to sections
-// ---------------------------------------------------------------------------------------------------------------
-
-test('a heading\'s "#" copies the address of its section, and the address opens the document there', async ({ page, context, baseURL }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await openDoc(page, SECTIONS);
-  await page.evaluate(() => document.getElementById('timeline').scrollIntoView({ block: 'center', behavior: 'instant' }));
-  await waitForLayoutSettled(page);
-  const before = await page.evaluate(() => scrollY);
-  await page.locator('#timeline').hover();
-  await page.locator('#timeline .header-anchor').click();
-  const link = `${baseURL}markdown-viewer.html?file=${SECTIONS}#timeline`;
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(link);
-  await expect(toast(page)).toHaveText('Link to “Timeline” copied.');
-  expect(await page.evaluate(() => location.hash)).toBe('#timeline');
-  expect(Math.abs((await page.evaluate(() => scrollY)) - before)).toBeLessThanOrEqual(1); // copied, not jumped
-
-  // Opened: the section is at the top once the document and its diagrams (drawn after the first paint, above the
-  // section) have settled.
-  const other = await context.newPage();
-  await other.goto(link);
-  await other.waitForSelector('#mdBody h1');
-  await waitForDiagrams(other);
-  await waitForLayoutSettled(other);
-  const place = await other.evaluate(() => ({
-    top: document.getElementById('timeline').getBoundingClientRect().top,
-    padding: parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop),
-    scrolled: scrollY,
-  }));
-  expect(place.scrolled).toBeGreaterThan(0);
-  expect(Math.abs(place.top - place.padding)).toBeLessThanOrEqual(4);
-
-  // The layout above the section keeps changing after it opens (a late diagram, an image). Chrome's scroll anchoring
-  // would hide a drift; WebKit (Safari, the desktop app on a Mac) has none, so turn it off: the section must stay put.
-  await other.evaluate(() => {
-    document.documentElement.style.overflowAnchor = 'none';
-    const late = document.createElement('div');
-    late.style.height = '600px';
-    document.querySelector('#mdBody .section-content').prepend(late);
-  });
-  await other.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-  const after = await other.evaluate(() => document.getElementById('timeline').getBoundingClientRect().top);
-  expect(Math.abs(after - place.padding)).toBeLessThanOrEqual(4);
-});
-
-test('a link to a section inside a closed <details> opens it there', async ({ page }) => {
-  await page.goto(`markdown-viewer.html?file=${SECTIONS}#inside-the-details`);
-  await page.waitForSelector('#mdBody h1');
-  await waitForDiagrams(page);
-  await waitForLayoutSettled(page);
-  const r = await page.evaluate(() => {
-    const h = document.getElementById('inside-the-details');
-    return { open: h.closest('details').open, top: h.getBoundingClientRect().top, padding: parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) };
-  });
-  expect(r.open).toBe(true);
-  expect(Math.abs(r.top - r.padding)).toBeLessThanOrEqual(4);
-});
-
-test('the Export menu copies a link to the section being read', async ({ page, context }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await openDoc(page, SECTIONS);
-  await page.evaluate(() => document.getElementById('risks').scrollIntoView({ block: 'start', behavior: 'instant' }));
-  await expect.poll(() => page.evaluate(() => mdvSpy.active && mdvSpy.active.id)).toBe('risks');
-  await menu(page, 'copy-section-link');
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toMatch(/\?file=tests\/fixtures\/export\/sections\.md#risks$/);
-  await expect(toast(page)).toHaveText('Link to “Risks” copied.');
-});
-
-test('a "#" that a document writes itself copies nothing; the viewer\'s own does', async ({ page, context }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await openDoc(page, SECTIONS);
-  // The forged one even guesses at the mark the viewer gives its own permalinks.
-  await renderSource(page, '# Two kinds of permalink\n\n<h2 id="forged">Forged <a class="header-anchor" href="#forged" data-mdv-permalink="0123456789abcdef0123456789abcdef">#</a></h2>\n\nText.\n\n## Genuine\n\nText.\n');
-  await page.evaluate(() => navigator.clipboard.writeText('clipboard before'));
-  await page.locator('#forged').hover();
-  await page.locator('#forged .header-anchor').click({ force: true });
-  await page.waitForTimeout(300);
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('clipboard before');
-  // Positive control: the permalink markdown-it made for a heading of the same document.
-  await page.locator('#genuine').hover();
-  await page.locator('#genuine .header-anchor').click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toMatch(/#genuine$/);
-});
-
-// ---------------------------------------------------------------------------------------------------------------
 // The menu
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -538,69 +587,55 @@ test('the Export menu appears with a document, and works from the keyboard', asy
   await page.keyboard.press('Enter');
   await expect(toast(page)).toHaveText('Copied the document as rich text.');
   await expect(page.locator('#mdvExportDD')).toBeHidden();
+  await expect(page.locator('#mdvExportBtn')).toBeFocused(); // not a hidden item, from which Tab would restart the page
+});
+
+test('the toolbar menus close on Escape and when the focus leaves them, move with the arrow keys, and say whether they are open', async ({ page }) => {
+  await openDoc(page, SECTIONS);
+  const button = page.locator('#mdvExportBtn');
+  const dd = page.locator('#mdvExportDD');
+  const item = (action) => page.locator(`#mdvExportDD [data-action="${action}"]`);
+  await expect(button).toHaveAttribute('aria-expanded', 'false');
+  await button.focus();
+  await page.keyboard.press('Enter');
+  await expect(dd).toBeVisible();
+  await expect(button).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('ArrowDown');
+  await expect(item('export-html')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(item('print-document')).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(item('copy-section-link')).toBeFocused();
+  await page.keyboard.press('ArrowDown');
+  await expect(item('export-html')).toBeFocused(); // round to the first
+  await page.keyboard.press('ArrowUp');
+  await expect(item('copy-section-link')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dd).toBeHidden();
+  await expect(button).toBeFocused();
+  await expect(button).toHaveAttribute('aria-expanded', 'false');
+  // ArrowDown on the closed button opens the menu at its first item; Tab past the last item closes it.
+  await page.keyboard.press('ArrowDown');
+  await expect(dd).toBeVisible();
+  await expect(item('export-html')).toBeFocused();
+  await page.keyboard.press('End');
+  await page.keyboard.press('Tab');
+  await expect(dd).toBeHidden();
+  await expect(button).toHaveAttribute('aria-expanded', 'false');
+  // The theme menu is the same kind of menu.
+  const theme = page.locator('[data-action="toggle-dropdown"][data-arg="themeDD"]');
+  await theme.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#themeDD')).toBeVisible();
+  await expect(theme).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#themeDD')).toBeHidden();
+  await expect(theme).toBeFocused();
 });
 
 // ---------------------------------------------------------------------------------------------------------------
 // The desktop app (stand-in shell, the app's CSP)
 // ---------------------------------------------------------------------------------------------------------------
-
-const FIXTURE_DIR = '/desktop/tests/fixtures/linked';
-const FIXTURE = readFileSync(repo('desktop/tests/fixtures/linked/doc.md'), 'utf8');
-const APP_CSP = Object.entries(JSON.parse(readFileSync(repo('desktop/src-tauri/tauri.conf.json'), 'utf8')).app.security.csp)
-  .map(([directive, value]) => `${directive} ${value}`).join('; ');
-
-// Just enough of the shell for these tests: the window's document, the commands the page sends (recorded), and the
-// asset protocol (convertFileSrc), served with the app's Content Security Policy.
-async function openInApp(page, text) {
-  await page.route('**/markdown-viewer.html', async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({ response, headers: Object.assign({}, response.headers(), { 'content-security-policy': APP_CSP }) });
-  });
-  const doc = { path: `${FIXTURE_DIR}/doc.md`, name: 'doc.md', text, mtimeMs: 1000, version: 'v-1000', readOnly: null, reason: 'initial' };
-  await page.addInitScript((doc) => {
-    try { localStorage.setItem('mdv-theme', 'light'); } catch (_) { /* default theme */ }
-    window.__calls = [];
-    window.__csp = [];
-    document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(`${e.effectiveDirective} ${e.blockedURI}`));
-    window.__TAURI_INTERNALS__ = { metadata: { currentWindow: { label: 'doc-1' }, currentWebview: { label: 'doc-1' } } };
-    window.__TAURI__ = {
-      core: {
-        convertFileSrc: (path) => location.origin + path.split('/').map(encodeURIComponent).join('/'),
-        async invoke(cmd, args) {
-          window.__calls.push({ cmd, args: args || {} });
-          if (cmd === 'mdv_initial_document') return doc;
-          return null;
-        },
-      },
-      event: { async listen() { return () => {}; } },
-    };
-  }, doc);
-  await page.goto('markdown-viewer.html');
-  await page.waitForSelector('#mdBody h1');
-  await page.waitForFunction(() => [...document.querySelectorAll('#mdBody img')].every((i) => i.complete));
-  await waitForLayoutSettled(page);
-}
-
-test('in the desktop app a section link is the document\'s path, and following it there goes to the section', async ({ page, context }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  // The path form: a link in any document can take it (a file: link is dropped by markdown-it and the sanitizer).
-  const own = `${FIXTURE_DIR}/doc.md#section-two`;
-  await openInApp(page, `${FIXTURE}\n\n## Further down\n\n${'A paragraph of words to read. '.repeat(60)}\n\n${'Another paragraph of words. '.repeat(60)}\n\n[Back to section two](${own})\n`);
-  const start = page.url();
-  await page.locator('#section-two').hover();
-  await page.locator('#section-two .header-anchor').click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(own);
-  expect(page.url()).toBe(start); // the app has no address bar to update
-
-  // The app's own way of following a link (js/host.js) takes it to the section, in this window.
-  await page.evaluate(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' }));
-  await page.locator('#mdBody a', { hasText: 'Back to section two' }).click();
-  await expect.poll(() => page.evaluate(() => {
-    const top = document.getElementById('section-two').getBoundingClientRect().top;
-    return top >= 0 && top < innerHeight / 2;
-  })).toBe(true);
-  expect(await page.evaluate(() => window.__calls.filter((c) => c.cmd === 'mdv_open_path'))).toEqual([]);
-});
 
 test('in the desktop app Export HTML embeds the images the window shows and notes the one it cannot read', async ({ page }) => {
   await openInApp(page, FIXTURE);
@@ -608,13 +643,18 @@ test('in the desktop app Export HTML embeds the images the window shows and note
   expect(shown).toEqual([true, true, true, false]); // the fourth is outside the document's folder: never loaded
   const { name, html } = await exportHtml(page);
   expect(name).toBe('doc.html');
-  await expect(toast(page)).toHaveText('Choose where to save doc.html: 1 image could not be read; a note marks each.');
+  // other.md and notes.txt stay as written: no absolute path of the reader's folders goes into the file.
+  await expect(toast(page)).toHaveText('Choose where to save doc.html: 1 image could not be read; a note marks each; 2 links point at files next to the document.');
   const x = await inspect(page, html);
   expect(x.scripts).toBe(0);
   expect(x.images).toHaveLength(3);
   for (const src of x.images) expect(src).toMatch(/^data:image\/png;base64,/);
   expect(x.notes).toHaveLength(1);
   expect(x.notes[0]).toContain('../outside.png');
+  const href = (text) => (x.links.find((l) => l.text === text) || {}).href;
+  expect(href('Another Markdown file')).toBe('other.md');
+  expect(href('The same file, at a heading')).toBe('#section-two'); // the document itself: a link within the page
+  expect(html).not.toContain(FIXTURE_DIR);
   // Read through the asset protocol as images, never fetched: the app's CSP refuses nothing the export did. (The page
   // served here still links the web-font stylesheet, which the app's own build leaves out: stage-frontend.mjs.)
   const refused = await page.evaluate(() => window.__csp.filter((v) => !/fonts\.googleapis\.com/.test(v)));

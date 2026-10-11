@@ -86,13 +86,27 @@ pub fn inform(app: &AppHandle, parent_label: Option<String>, title: &str, messag
 /// with the page's name for it in Downloads. Any other download is refused: a document cannot start one (js/host.js
 /// takes over its links), and nothing but the viewer's own export should write a file. Windows' WebView2 has its own
 /// download flow and keeps it. Returns whether the download goes on.
+///
+/// A download the app stops (refused, or the person cancelled the Save panel) is cancelled by the web view, which
+/// then reports it as a failed download (wry: `download_did_fail`, `Finished { success: false }`). That is not a
+/// failure to tell the person about, so `stopped` remembers it and its `Finished` stays silent.
 #[cfg(target_os = "macos")]
-pub fn save_download(webview: &tauri::Webview, event: tauri::webview::DownloadEvent<'_>) -> bool {
+pub fn save_download(
+  webview: &tauri::Webview,
+  event: tauri::webview::DownloadEvent<'_>,
+  stopped: &std::sync::Mutex<StoppedDownloads>,
+) -> bool {
   use tauri::webview::DownloadEvent;
+  let stop = |url: &tauri::Url| {
+    if let Ok(mut s) = stopped.lock() {
+      s.stop(url.as_str());
+    }
+    false
+  };
   match event {
     DownloadEvent::Requested { url, destination } => {
       if url.scheme() != "blob" {
-        return false;
+        return stop(&url);
       }
       let mut dialog = rfd::FileDialog::new().set_title("Export").set_can_create_directories(true);
       if let Some(name) = destination.file_name().map(|n| suggested_name(&n.to_string_lossy())) {
@@ -108,16 +122,45 @@ pub fn save_download(webview: &tauri::Webview, event: tauri::webview::DownloadEv
           *destination = path;
           true
         }
-        None => false,
+        None => stop(&url),
       }
     }
-    DownloadEvent::Finished { success, .. } => {
-      if !success {
+    DownloadEvent::Finished { url, success, .. } => {
+      let failed = stopped.lock().map(|mut s| s.failed(url.as_str(), success)).unwrap_or(!success);
+      if failed {
         crate::doc_windows::notify_page(webview.app_handle(), webview.label(), "The export could not be saved.");
       }
       true
     }
     _ => true,
+  }
+}
+
+/// The downloads of one window that the app stopped on purpose, until the web view reports how each ended.
+#[cfg(target_os = "macos")]
+#[derive(Default)]
+pub struct StoppedDownloads(Vec<String>);
+
+#[cfg(target_os = "macos")]
+impl StoppedDownloads {
+  /// At most this many are remembered: a web view that never reports a stopped download leaves no growing list.
+  const KEPT: usize = 16;
+
+  pub fn stop(&mut self, url: &str) {
+    if self.0.len() >= Self::KEPT {
+      self.0.remove(0);
+    }
+    self.0.push(url.to_string());
+  }
+
+  /// Whether a finished download failed in a way the person should hear about: it did not succeed, and the app had
+  /// not stopped it itself.
+  pub fn failed(&mut self, url: &str, success: bool) -> bool {
+    if let Some(i) = self.0.iter().position(|u| u == url) {
+      self.0.remove(i);
+      return false;
+    }
+    !success
   }
 }
 
@@ -141,7 +184,30 @@ fn suggested_name(name: &str) -> String {
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-  use super::suggested_name;
+  use super::{suggested_name, StoppedDownloads};
+
+  #[test]
+  fn a_download_the_app_stopped_is_not_reported_as_a_failed_export() {
+    let mut s = StoppedDownloads::default();
+    s.stop("blob:tauri://localhost/a");
+    // The Save panel was cancelled: the web view's failure report for it is silent, once.
+    assert!(!s.failed("blob:tauri://localhost/a", false));
+    // A real failure of another export is reported; so is a later failure of the same URL, now forgotten.
+    assert!(s.failed("blob:tauri://localhost/b", false));
+    assert!(s.failed("blob:tauri://localhost/a", false));
+    // A finished export is never a failure.
+    assert!(!s.failed("blob:tauri://localhost/c", true));
+  }
+
+  #[test]
+  fn stopped_downloads_are_bounded() {
+    let mut s = StoppedDownloads::default();
+    for i in 0..40 {
+      s.stop(&format!("blob:x/{i}"));
+    }
+    assert!(s.failed("blob:x/0", false), "the oldest were let go");
+    assert!(!s.failed("blob:x/39", false));
+  }
 
   #[test]
   fn the_suggested_name_drops_the_number_the_web_view_adds() {

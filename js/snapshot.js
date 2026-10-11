@@ -3,9 +3,11 @@
 // ============================================
 // What Export HTML (js/export.js), Copy as rich text (js/copy.js) and links to sections (js/section-links.js) share:
 // - mdvOnRender: callbacks after every render, however it was started;
+// - mdvDocumentAddress: the page's address and the document's file, while the address names the document on screen;
 // - mdvSnapshot / mdvCleanSnapshot: a copy of the document as the reader sees it (#mdBody after every render pass:
 //   diagrams drawn, math typeset), or of the part a selection covers, without the viewer's own controls and data;
-// - mdvInlineImages: local images in such a copy as data: URIs, and a visible note for any that cannot be read.
+// - mdvInlineImages: local images in such a copy as data: URIs, and a visible note for any that cannot be read;
+// - mdvResolveLinks: the copy's links, made to work where the copy goes.
 // Nothing here renders anything again: a copy is made of what is on screen.
 
 const MDV_SVG_NS = 'http://www.w3.org/2000/svg';
@@ -50,12 +52,22 @@ function mdvExportTitle() {
   return name.trim() || 'Document';
 }
 
-// The file the document came from, as a name: the desktop window's file, or the file the browser opened.
-function mdvExportSourceName() {
+// The document as the toolbar names it: the title it was rendered with (js/comments.js keeps it for each document),
+// which is its ?file= path when the address loaded it; '' for text with no file (pasted, the demo). In the desktop
+// app, the window's file name. (currentFileName is not this: a paste leaves the previous file's name in it.)
+function mdvDocumentLabel() {
   const host = window.mdvHost;
   if (host && host.kind === 'desktop' && host.currentPath) return String(host.currentPath).split(/[\\/]/).pop();
-  if (typeof currentFileName === 'string' && currentFileName) return currentFileName;
-  return '';
+  if (typeof mdvDocTitle === 'string') {
+    const hasFile = typeof mdvDocHasFile === 'function' ? mdvDocHasFile() : true;
+    return hasFile ? mdvDocTitle : '';
+  }
+  return typeof currentFileName === 'string' ? currentFileName : '';
+}
+
+// The file the document came from, as a name ('' for text with no file).
+function mdvExportSourceName() {
+  return mdvDocumentLabel().split('/').pop();
 }
 
 // A file name for the export: the source's name with a new extension, else the title.
@@ -64,6 +76,69 @@ function mdvExportFileName(ext) {
   const base = (source ? source.replace(/\.[^.]+$/, '') : mdvExportTitle())
     .replace(/[\\/:*?"<>|\u0000-\u001f]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 120);
   return (base || 'document') + ext;
+}
+
+// ---------- The document's address ----------
+// A browser page's address names a document (?file=<path>) only when the page loaded that document from it, over
+// http: loadFromUrl (js/files.js) fetched it. Opened any other way (the Open button, a drop, a file handle, a paste,
+// a page opened as a file), the address still says ?file=, but of another file or of none. So the page remembers
+// which document loadFromUrl showed, by the comment code's count of loaded documents (mdvLoadSeq, js/comments.js):
+// drawing the same document again (a comment change) keeps the count; any other document moves it on.
+// The load seam of wave 2 (mdvOpenDocument, stream L) keeps a record of the document on screen and how it was
+// fetched; once it is merged, mdvDocumentAddress should read that record, so documents it fetches count too.
+let mdvAddressLoad = null; // { seq, file, doc }: the document loadFromUrl showed, and where its file is
+
+if (typeof loadFromUrl === 'function') {
+  const mdvLoadFromAddress = loadFromUrl;
+  // app.js starts the page with loadFromUrl(), after this script has run.
+  loadFromUrl = async function () {
+    const file = mdvAddressFile();
+    const result = await mdvLoadFromAddress.apply(this, arguments);
+    if (file && typeof mdvLoadSeq === 'number' && typeof mdvDocTitle === 'string' && mdvDocTitle === file) {
+      const seq = mdvLoadSeq;
+      const doc = await mdvFetchedFrom(file);
+      if (mdvLoadSeq === seq) mdvAddressLoad = { seq, file, doc };
+    }
+    return result;
+  };
+}
+
+function mdvAddressFile() {
+  try { return new URL(location.href).searchParams.get('file') || ''; } catch (e) { return ''; }
+}
+
+// Where loadFromUrl found the file: next to the page, else under the workspace root path set in Settings.
+async function mdvFetchedFrom(file) {
+  const near = new URL(file, location.href);
+  let root = '';
+  try { root = localStorage.getItem('mdv-basepath') || ''; } catch (e) { root = ''; }
+  if (!root) return near;
+  try { if ((await fetch(near.href, { method: 'HEAD', cache: 'no-store' })).ok) return near; } catch (e) { /* not there */ }
+  return new URL(root + file, location.href);
+}
+
+// { page, doc, file }: the page's address (without a fragment) and the document's file, as URLs, and the ?file=
+// value, while the page shows the document its address names; else null.
+function mdvDocumentAddress() {
+  const a = mdvAddressLoad;
+  if (!a || !/^https?:$/.test(location.protocol)) return null;
+  if (typeof mdvLoadSeq !== 'number' || mdvLoadSeq !== a.seq || mdvAddressFile() !== a.file) return null;
+  const page = new URL(location.href);
+  page.hash = '';
+  return { page, doc: a.doc, file: a.file };
+}
+
+// A file: URL for a path: POSIX (/home/a b/x.md), Windows (C:\x\y.md) or UNC (\\host\share\y.md).
+function mdvFileUrl(path) {
+  const p = String(path).replace(/\\/g, '/');
+  const enc = (parts) => parts.map(encodeURIComponent).join('/');
+  if (p.startsWith('//')) {
+    const [host, ...rest] = p.slice(2).split('/');
+    return `file://${host}/${enc(rest)}`;
+  }
+  const parts = p.split('/');
+  if (/^[a-zA-Z]:$/.test(parts[0])) return `file:///${parts[0]}/${enc(parts.slice(1))}`;
+  return 'file://' + enc(parts);
 }
 
 // ---------- A copy of the document ----------
@@ -169,10 +244,101 @@ function mdvStaticDiagramLinks(root) {
   }
 }
 
+// ---------- Links ----------
+// A link written in a document points at another file relative to the document, which means nothing in a downloaded
+// file or a pasted message. So each link of a copy is made to work where the copy goes:
+// - a web or mail link stays as it is;
+// - a link to a place in the document (#…, or the document's own path with a fragment) goes to that place: in an
+//   exported page it is an in-page link; on the clipboard it becomes its words, since a paste has no such place;
+// - a link to another file, when the page's address names the document (mdvDocumentAddress), is resolved against
+//   the document's own address: a Markdown file opens in this viewer (?file=), any other file at its own address.
+//   It then opens on this computer (`local`);
+// - with no address to resolve it from (a document opened from disk, pasted text, the desktop app), an exported page
+//   keeps it as written, which works next to the document (`kept`), and the clipboard keeps its words (`text`).
+// Absolute file paths are never written into a copy: they would carry the reader's folders to whoever receives it.
+// The counts let the confirmation say what will not open elsewhere; `resolved` holds the links resolved here.
+const MDV_MARKDOWN_FILE = /\.(?:md|markdown|mdown|mkd|mkdn|mdwn|mdtxt|mdtext)$/i;
+
+function mdvResolveLinks(root, { address = null, clipboard = false } = {}) {
+  const counts = { local: 0, kept: 0, text: 0, resolved: [] };
+  if (clipboard) root.querySelectorAll('a.footnote-backref').forEach((a) => a.remove()); // "back to the text": no place in a paste
+  for (const a of Array.from(root.querySelectorAll('a[href]'))) {
+    const href = (a.getAttribute('href') || '').trim();
+    if (!href) continue;
+    const fragment = href.startsWith('#') ? href : mdvSameDocumentFragment(href, address);
+    if (fragment !== null) {
+      if (clipboard) mdvUnwrapLink(a);
+      else if (fragment !== href) a.setAttribute('href', fragment);
+      continue;
+    }
+    if (/^(?:https?:|mailto:)/i.test(href) || href.startsWith('//')) continue;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href)) { mdvUnwrapLink(a); continue; } // a scheme with nothing to open elsewhere
+    const resolved = address ? mdvAddressLink(href, address) : null;
+    if (resolved) {
+      a.setAttribute('href', resolved);
+      counts.local++;
+      counts.resolved.push(a);
+    } else if (clipboard) {
+      mdvUnwrapLink(a);
+      counts.text++;
+    } else {
+      counts.kept++;
+    }
+  }
+  return counts;
+}
+
+function mdvUnwrapLink(a) {
+  a.replaceWith(...a.childNodes);
+}
+
+// "#id" when `href` is the document's own path with a fragment (doc.md#risks, or the desktop's path form); else null.
+function mdvSameDocumentFragment(href, address) {
+  const hash = href.indexOf('#');
+  if (hash < 0) return null;
+  const fragment = href.slice(hash);
+  const host = window.mdvHost;
+  if (host && host.kind === 'desktop' && host.currentPath && typeof host.resolvePath === 'function') {
+    let path = href.slice(0, hash).replace(/\?.*$/, '');
+    if (/^[a-z][a-z0-9+.-]*:/i.test(path) && !/^[a-zA-Z]:[\\/]/.test(path)) return null;
+    try { path = decodeURIComponent(path); } catch (e) { /* as written */ }
+    const abs = path ? host.resolvePath(path) : null;
+    const fold = /Mac|Win/i.test(navigator.platform || navigator.userAgent || '') ? (s) => s.toLowerCase() : (s) => s;
+    return abs && fold(abs) === fold(String(host.currentPath)) ? fragment : null;
+  }
+  if (!address || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(href)) return null;
+  try {
+    const url = new URL(href, address.doc);
+    return url.origin === address.doc.origin && url.pathname === address.doc.pathname ? fragment : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// A link to another file, resolved against the document's address: a Markdown file as this viewer's address for it
+// (markdown-viewer.html?file=<path>#…), any other file as its own address. Null when it cannot be resolved.
+function mdvAddressLink(href, address) {
+  let url;
+  try { url = new URL(href, address.doc); } catch (e) { return null; }
+  if (url.origin !== address.page.origin) return null;
+  let path = url.pathname;
+  try { path = decodeURIComponent(path); } catch (e) { /* as written */ }
+  if (!MDV_MARKDOWN_FILE.test(path)) return url.href;
+  const view = new URL(address.page);
+  const folder = view.pathname.replace(/[^/]*$/, '');
+  const decodedFolder = (() => { try { return decodeURIComponent(folder); } catch (e) { return folder; } })();
+  const file = path.startsWith(decodedFolder) ? path.slice(decodedFolder.length) : path;
+  // ?file=notes/plan.md, as an address is typed: the slashes stay, anything else a query cannot hold is encoded.
+  view.search = '?file=' + file.split('/').map(encodeURIComponent).join('/');
+  view.hash = url.hash;
+  return view.href;
+}
+
 // ---------- Images ----------
 // A local image becomes a data: URI; a web image keeps its web address. Returns the images that could not be read,
-// each replaced by a visible note.
-async function mdvInlineImages(root, liveOf, { noteStyle = null } = {}) {
+// each replaced by a visible note. `address` (mdvDocumentAddress, taken when the copy was made) is where a path
+// written in the document is read from.
+async function mdvInlineImages(root, liveOf, { noteStyle = null, address = null } = {}) {
   const missing = [];
   await Promise.all(Array.from(root.querySelectorAll('img')).map(async (img) => {
     const live = liveOf.get(img) || null;
@@ -182,7 +348,7 @@ async function mdvInlineImages(root, liveOf, { noteStyle = null } = {}) {
     const web = mdvWebAddress(written);
     if (web) { img.setAttribute('src', web); return; }
     let data = null;
-    try { data = await mdvReadImage(live, written); } catch (e) { data = null; }
+    try { data = await mdvReadImage(live, written, address); } catch (e) { data = null; }
     if (data) {
       img.setAttribute('src', data);
       img.removeAttribute('srcset');
@@ -215,22 +381,15 @@ function mdvMissingImageNote(path, alt, style) {
   return note;
 }
 
-// The document's own address, for resolving its relative paths: the ?file= it was loaded from, over http.
-function mdvDocumentUrl() {
-  try {
-    const file = new URL(location.href).searchParams.get('file');
-    if (!file || !location.protocol.startsWith('http')) return null;
-    return new URL(file, location.href);
-  } catch (e) { return null; }
-}
-
-// The bytes of a local image, as a data: URI, or null.
+// The bytes of a local image, as a data: URI, or null. Only an image is ever read: a file whose type is not an
+// image, or whose bytes do not decode as one, is not embedded (mdvImageBlob), however the document names it.
 // - Desktop: the asset-protocol image the window shows, drawn on a canvas (the app's CSP lets the page fetch only its
 //   own files, and the asset protocol answers with CORS, so the canvas stays readable). An image the window does not
 //   load (outside the document's folder) is not read.
-// - Browser: through the open folder when there is one (window.mdvFolder), else fetched next to the document (its
-//   ?file= address) or where the page loaded it, else drawn from the page's own image when that image is readable.
-async function mdvReadImage(live, written) {
+// - Browser: through the open folder when there is one (window.mdvFolder), else fetched next to the document (when
+//   the page's address names it), else where the page loaded it, else drawn from the page's own image when that
+//   image is readable.
+async function mdvReadImage(live, written, address) {
   const host = window.mdvHost;
   const ext = (written.split(/[?#]/)[0].match(/\.([a-z0-9]+)$/i) || [])[1] || '';
   if (host && host.kind === 'desktop') {
@@ -239,12 +398,11 @@ async function mdvReadImage(live, written) {
     const url = live && live.dataset.mdvSrc ? live.currentSrc || live.getAttribute('src') : null;
     return url ? mdvImageViaCanvas(url, ext, live) : null;
   }
-  const fromFolder = await mdvImageFromFolder(written);
+  const fromFolder = await mdvImageFromFolder(written, address);
   if (fromFolder) return fromFolder;
   const tried = new Set();
-  const doc = mdvDocumentUrl();
   const candidates = [];
-  try { if (doc) candidates.push(new URL(written, doc).href); } catch (e) { /* not a path */ }
+  try { if (address) candidates.push(new URL(written, address.doc).href); } catch (e) { /* not a path */ }
   if (live && (live.currentSrc || live.src)) candidates.push(live.currentSrc || live.src);
   for (const url of candidates) {
     if (tried.has(url) || /^file:/i.test(url)) continue;
@@ -260,9 +418,10 @@ async function mdvFetchAsDataUrl(url) {
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
-    const blob = await res.blob();
-    if (!/^image\//.test(blob.type) && !/\.(png|jpe?g|gif|svg|webp|avif|bmp|ico)(?:[?#]|$)/i.test(url)) return null;
-    return mdvBlobToDataUrl(blob);
+    let path = '';
+    try { path = new URL(url, location.href).pathname; } catch (e) { path = ''; }
+    const image = await mdvImageBlob(await res.blob(), path);
+    return image ? mdvBlobToDataUrl(image) : null;
   } catch (e) {
     return null;
   }
@@ -277,20 +436,55 @@ function mdvBlobToDataUrl(blob) {
   });
 }
 
+const MDV_IMAGE_TYPES = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp',
+  avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon',
+};
+
+// The image type of a file: the type it carries when that is an image; for a file with no type, or with the
+// application/octet-stream a server gives a type it does not know, the type its name's extension stands for. The
+// name is a path, never a whole URL: in secret.txt#.png or secret.txt?.png the extension is .txt.
+function mdvImageType(type, path) {
+  const t = String(type || '').split(';')[0].trim().toLowerCase();
+  if (t.startsWith('image/')) return t;
+  if (t && t !== 'application/octet-stream') return null;
+  const ext = (String(path || '').match(/\.([a-z0-9]+)$/i) || [])[1];
+  return (ext && MDV_IMAGE_TYPES[ext.toLowerCase()]) || null;
+}
+
+// The blob when it is an image, labelled with its image type, else null: its type must say image (mdvImageType) and
+// its bytes must decode as one. A document names files by path, so this is what keeps a copy to the images it shows.
+async function mdvImageBlob(blob, path) {
+  const type = mdvImageType(blob && blob.type, path);
+  if (!type) return null;
+  const image = blob.type === type ? blob : new Blob([blob], { type });
+  const url = URL.createObjectURL(image);
+  try {
+    const probe = new Image();
+    probe.src = url;
+    await probe.decode();
+    return image;
+  } catch (e) {
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 // N's folder (window.mdvFolder, wave 2): a relative image of a document in the open folder, read through its handle.
-async function mdvImageFromFolder(written) {
+// The document's path in the folder is its ?file= path, while the page's address names it.
+async function mdvImageFromFolder(written, address) {
   const folder = window.mdvFolder;
   if (!folder || folder.kind !== 'browser' || typeof folder.resolve !== 'function' || typeof folder.read !== 'function') return null;
-  let from = null;
-  try { from = new URL(location.href).searchParams.get('file'); } catch (e) { from = null; }
-  if (!from) return null;
+  if (!address || !address.file) return null;
   try {
-    const path = folder.resolve(from, written);
+    const path = folder.resolve(address.file, written);
     if (!path) return null;
     const entry = await folder.read(path);
     const handle = entry && entry.handle;
     if (!handle || typeof handle.getFile !== 'function') return null;
-    return mdvBlobToDataUrl(await handle.getFile());
+    const image = await mdvImageBlob(await handle.getFile(), path);
+    return image ? mdvBlobToDataUrl(image) : null;
   } catch (e) {
     return null;
   }
@@ -328,4 +522,3 @@ function mdvCanvasDataUrl(img, ext, live) {
     return null; // a tainted canvas (an image from another origin, or a file:// page)
   }
 }
-

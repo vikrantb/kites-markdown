@@ -259,7 +259,8 @@ fn create_window(app: &AppHandle, label: &str, title: &str) -> tauri::Result<Web
   // Export HTML hands the page's file over as a download, which macOS's web view would cancel: ask where to save it.
   #[cfg(target_os = "macos")]
   {
-    builder = builder.on_download(|webview, event| crate::dialogs::save_download(&webview, event));
+    let stopped = std::sync::Mutex::new(crate::dialogs::StoppedDownloads::default());
+    builder = builder.on_download(move |webview, event| crate::dialogs::save_download(&webview, event, &stopped));
   }
   let window = builder.build()?;
   #[cfg(target_os = "macos")]

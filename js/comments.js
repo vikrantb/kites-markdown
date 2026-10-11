@@ -1312,13 +1312,16 @@ window.addEventListener('load', async () => {
 });
 
 // ------- UI -------
+// A toast stays long enough to be read: 3.5 s, and a quarter of a second more for each word past ten (at most 12 s).
 function mdvShowToast(msg, kind) {
   const t = document.createElement('div');
   t.className = 'mdv-toast' + (kind === 'error' ? ' mdv-toast-error' : '');
   t.textContent = msg;
   document.body.appendChild(t);
   requestAnimationFrame(() => t.classList.add('show'));
-  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, 3500);
+  const words = String(msg).split(/\s+/).filter(Boolean).length;
+  const ms = Math.min(12000, 3500 + Math.max(0, words - 10) * 250);
+  setTimeout(() => { t.classList.remove('show'); setTimeout(() => t.remove(), 300); }, ms);
 }
 
 function mdvEscape(s) {

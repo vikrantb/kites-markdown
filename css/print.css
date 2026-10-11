@@ -46,8 +46,11 @@
   .md-body h1 ~ h1 { break-before: page; }
   .md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6 { break-after: avoid; break-inside: avoid; }
   .md-body p, .md-body li { orphans: 3; widows: 3; }
-  /* A line that introduces a block ("A diff:") stays on the page of the block. */
-  .md-body p:has(+ pre, + .mermaid-wrapper, + table, + .callout, + .katex-display, + ul, + ol) { break-after: avoid; }
+  /* A line that introduces a block ("Steps:") stays on the page of the block, for blocks that are short or can break.
+     Not before a diagram, a code block or a table: those are kept whole and can be as tall as a page, and the
+     paragraph held with one was pushed after it or split around a near-blank page (a handoff printed 13 pages, not
+     12; tests/e2e/export.spec.mjs). */
+  .md-body p:has(+ .callout, + .katex-display, + ul, + ol) { break-after: avoid; }
 
   /* Whole when they fit on a page. */
   .md-body table, .md-body pre, .mermaid-wrapper, .md-body .callout, .md-body blockquote, .mdv-figure,

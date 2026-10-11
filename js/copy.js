@@ -7,9 +7,11 @@
 //   white): code keeps a monospace font and its colours, tables keep their borders, callouts their colour.
 // - A diagram becomes a PNG image, drawn in the light palette (an SVG image of the page's drawing in a browser that
 //   will not let a page draw it on a canvas), a formula its MathML, a local image a data: URI; the viewer's controls
-//   and HTML comments are left out (mdvCleanSnapshot, js/snapshot.js).
-// - The plain text keeps the shape: list markers, tab-separated table cells, "> " quotes, $TeX$, 2^10, the address
-//   of a web link after its words, and "[Diagram: Flowchart]" where a diagram was.
+//   and HTML comments are left out (mdvCleanSnapshot, js/snapshot.js). Links are made to work where the paste goes
+//   (mdvResolveLinks).
+// - The plain text keeps the shape: headings and code fences as Markdown has them, list markers, tab-separated table
+//   cells, "> " quotes, $TeX$, 2^10, the address of a web link after its words, and "[Diagram: Flowchart]" where a
+//   diagram was.
 // The same portable styles stand in for the stylesheets in an export from a file:// page (js/export.js).
 
 // ---------- Portable styles ----------
@@ -26,6 +28,15 @@ const mdvSeen = (color) => !!color && color !== 'transparent' && !/^rgba\([^)]*,
 function mdvPortableColor(color) {
   if (!mdvSeen(color)) return '';
   return (typeof mdvColorHex === 'function' && mdvColorHex(color)) || color;
+}
+
+// The colour of the border a table cell draws: the first side that has one. A side with none reports the text
+// colour (the last row has no bottom border), which pasted every table with a near-black last line.
+function mdvCellBorderColor(cs) {
+  for (const side of ['Bottom', 'Top', 'Left', 'Right']) {
+    if (cs[`border${side}Style`] !== 'none' && parseFloat(cs[`border${side}Width`]) > 0) return mdvPortableColor(cs[`border${side}Color`]);
+  }
+  return '';
 }
 
 // Runs fn with the page in the light theme, for computed styles only: the theme comes back before the browser draws
@@ -54,7 +65,9 @@ function mdvWithLightTheme(fn) {
 function mdvPortableStyles(root, liveOf, { page = false } = {}) {
   const mono = mdvMonoStack();
   const c = mdvPortableColor;
-  const rule = c(getComputedStyle(document.documentElement).getPropertyValue('--border-primary')) || '#d0d7de';
+  const tokens = getComputedStyle(document.documentElement);
+  const rule = c(tokens.getPropertyValue('--border-primary')) || '#d0d7de';
+  const cellRule = c(tokens.getPropertyValue('--border-secondary')) || rule;
   for (const el of root.querySelectorAll('*')) {
     if (el.namespaceURI !== MDV_XHTML_NS) continue;
     const live = liveOf.get(el);
@@ -83,7 +96,7 @@ function mdvPortableStyles(root, liveOf, { page = false } = {}) {
     } else if (tag === 'table') {
       Object.assign(s, { 'border-collapse': 'collapse', margin: '0 0 1em' });
     } else if (tag === 'th' || tag === 'td') {
-      Object.assign(s, { border: `1px solid ${c(cs.borderBottomColor) || rule}`, padding: '6px 10px',
+      Object.assign(s, { border: `1px solid ${mdvCellBorderColor(cs) || cellRule}`, padding: '6px 10px',
         'text-align': cs.textAlign === 'start' ? 'left' : cs.textAlign, 'vertical-align': 'top' });
       if (tag === 'th') Object.assign(s, { 'background-color': c(cs.backgroundColor), 'font-weight': '600' });
     } else if (tag === 'blockquote') {
@@ -101,7 +114,7 @@ function mdvPortableStyles(root, liveOf, { page = false } = {}) {
       Object.assign(s, { 'font-family': cs.fontFamily, 'font-size': cs.fontSize, 'font-weight': cs.fontWeight, color: c(cs.color),
         'letter-spacing': cs.letterSpacing, 'border-bottom': cs.borderBottomStyle !== 'none' ? `${cs.borderBottomWidth} solid ${c(cs.borderBottomColor) || rule}` : '',
         'padding-bottom': cs.paddingBottom });
-    } else if (page && tag === 'a') {
+    } else if (page && tag === 'a' && !el.classList.contains('header-anchor')) {
       s.color = c(cs.color);
     }
     for (const [k, v] of Object.entries(s)) if (v) el.style.setProperty(k, v);
@@ -109,7 +122,8 @@ function mdvPortableStyles(root, liveOf, { page = false } = {}) {
 }
 
 // The page around an export made from a file:// page: the reading column, fonts and colours of the theme on screen,
-// diagrams on their card, math as MathML (KaTeX's stylesheet is one of the sheets the page could not read).
+// diagrams on their card, math as MathML (KaTeX's stylesheet is one of the sheets the page could not read), and a
+// heading's "#" as the viewer shows it: only while the pointer is on the heading.
 function mdvPortablePageCss() {
   const body = document.getElementById('mdBody');
   const cs = getComputedStyle(body);
@@ -122,10 +136,12 @@ body { margin: 0; background: ${page.backgroundColor}; color: ${cs.color}; }
 .md-body { font-family: ${cs.fontFamily}; font-size: ${cs.fontSize}; line-height: ${cs.lineHeight}; overflow-wrap: break-word; }
 .md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6 { line-height: 1.25; margin: 1.8em 0 0.6em; }
 .md-body h1 { margin-top: 0; }
+.md-body .header-anchor { margin-left: 0.3em; color: inherit; text-decoration: none; opacity: 0; }
+.md-body :is(h1, h2, h3, h4, h5, h6):hover .header-anchor, .md-body .header-anchor:focus-visible { opacity: 0.5; }
 .md-body p, .md-body ul, .md-body ol, .md-body dl { margin: 0 0 1.1em; }
 .md-body ul, .md-body ol { padding-left: 1.55em; }
 .md-body li.task-list-item { list-style: none; }
-.md-body img { max-width: 100%; height: auto; }
+.md-body img, .md-body svg { max-width: 100%; height: auto; }
 .mermaid-wrapper { margin: 1.8em 0; padding: 24px; text-align: center; overflow-x: auto; border-radius: 14px;
   background: ${token('--diagram-bg', '#ffffff')}; border: 1px solid ${token('--border-primary', '#d0d7de')}; }
 .mermaid-wrapper svg { max-width: 100%; height: auto; }
@@ -136,8 +152,9 @@ body { margin: 0; background: ${page.backgroundColor}; color: ${cs.color}; }
 }
 
 // Shapes a pasted copy or a file:// export cannot style become plain HTML: a link card a link, a checkbox a ballot
-// box, a formula its MathML (its TeX kept for the plain text), a figure caption text, a callout without its icon.
-// For the clipboard (`clipboard`), a <details> also becomes its summary in bold and its content.
+// box, a formula its MathML, a figure caption text, a callout without its icon, the frontmatter card a line and a
+// list. For the clipboard (`clipboard`), a formula also keeps its TeX and a caption marks whether it repeats the
+// image's alt text, for the plain text, and a <details> becomes its summary in bold and its content.
 function mdvPortableBlocks(root, liveOf, { clipboard = false } = {}) {
   for (const chip of root.querySelectorAll('a.link-chip')) {
     const a = document.createElement('a');
@@ -151,12 +168,12 @@ function mdvPortableBlocks(root, liveOf, { clipboard = false } = {}) {
   for (const box of root.querySelectorAll('input[type="checkbox"]')) {
     const live = liveOf.get(box);
     const checked = live ? live.checked : box.hasAttribute('checked');
-    box.replaceWith(document.createTextNode(checked ? '\u2611 ' : '\u2610 '));
+    box.replaceWith(document.createTextNode(checked ? '☑ ' : '☐ '));
   }
   for (const k of root.querySelectorAll('.katex')) {
     const annotation = k.querySelector('annotation[encoding="application/x-tex"]');
     const math = k.querySelector('.katex-mathml math') || k.querySelector('math');
-    if (annotation) k.setAttribute('data-tex', annotation.textContent.trim());
+    if (clipboard && annotation) k.setAttribute('data-tex', annotation.textContent.trim());
     if (!math) continue;
     math.querySelectorAll('annotation, annotation-xml').forEach((a) => a.remove());
     const sem = math.querySelector(':scope > semantics');
@@ -165,8 +182,13 @@ function mdvPortableBlocks(root, liveOf, { clipboard = false } = {}) {
   }
   for (const cap of root.querySelectorAll('.mdv-figcaption[data-caption]')) {
     const text = document.createElement('span');
-    text.textContent = cap.getAttribute('data-caption');
+    const caption = cap.getAttribute('data-caption');
+    text.textContent = caption;
     text.setAttribute('style', 'display:block;font-size:0.9em;opacity:0.75;margin-top:4px');
+    if (clipboard) {
+      const img = cap.parentElement && cap.parentElement.querySelector('img');
+      text.setAttribute('data-mdv-caption', img && (img.getAttribute('alt') || '').trim() === caption.trim() ? 'alt' : 'own');
+    }
     cap.replaceWith(text);
   }
   root.querySelectorAll('.callout-title svg, .code-header').forEach((el) => el.remove());
@@ -175,8 +197,8 @@ function mdvPortableBlocks(root, liveOf, { clipboard = false } = {}) {
     const status = dash.querySelector('.fm-status-badge');
     const date = dash.querySelector('.fm-date');
     const line = document.createElement('p');
-    if (status) { const b = document.createElement('strong'); b.textContent = status.textContent.replace(/^[\u25cf\u25cb\s]+/, '').trim(); line.appendChild(b); }
-    if (date) line.append((status ? ' \u00b7 ' : '') + date.textContent.trim());
+    if (status) { const b = document.createElement('strong'); b.textContent = status.textContent.replace(/^[●○\s]+/, '').trim(); line.appendChild(b); }
+    if (date) line.append((status ? ' · ' : '') + date.textContent.trim());
     if (line.childNodes.length) parts.push(line);
     const metrics = dash.querySelectorAll('.fm-metric');
     if (metrics.length) {
@@ -194,8 +216,8 @@ function mdvPortableBlocks(root, liveOf, { clipboard = false } = {}) {
     if (repos.length) {
       const p = document.createElement('p');
       repos.forEach((r, i) => {
-        if (i) p.append(' \u00b7 ');
-        const name = r.textContent.replace(/^\s*\u2605\s*/, '').trim();
+        if (i) p.append(' · ');
+        const name = r.textContent.replace(/^\s*★\s*/, '').trim();
         if (r.getAttribute('href')) { const a = document.createElement('a'); a.setAttribute('href', r.getAttribute('href')); a.textContent = name; p.appendChild(a); }
         else p.append(name);
       });
@@ -274,7 +296,9 @@ function mdvDiagramImages(root, liveOf) {
 // Diagrams drawn again in the light palette, off screen, for a paste (mail and documents are white) when the page
 // shows another theme. Each goes through the page's own Mermaid setup (js/mermaid.js), queued behind the page's
 // own drawing so the two never share Mermaid's global configuration at once; the page's next pass sets its own
-// again. A diagram that cannot be drawn so keeps the page's drawing and its card.
+// again. A diagram that cannot be drawn so keeps the page's drawing and its card. The stage holds markup made from
+// the document (its labels keep data-* attributes), so it is a document container: nothing in it can run one of the
+// viewer's actions (js/actions.js).
 async function mdvLightDiagrams(diagrams) {
   const theme = document.documentElement.getAttribute('data-theme');
   const ready = typeof mermaid !== 'undefined' && typeof mdvMermaidConfig === 'function' && typeof mdvDiagramPalette === 'function' &&
@@ -285,6 +309,7 @@ async function mdvLightDiagrams(diagrams) {
   const job = async () => {
     const stage = document.createElement('div');
     stage.setAttribute('aria-hidden', 'true');
+    stage.setAttribute('data-mdv-document', '');
     stage.style.cssText = 'position:absolute;left:-100000px;top:0;width:1200px;visibility:hidden;pointer-events:none';
     document.body.appendChild(stage);
     try {
@@ -344,15 +369,21 @@ async function mdvDiagramToPng({ img, xml, width, height, background }) {
 
 // ---------- Plain text ----------
 const MDV_TEXT_BLOCK = /^(address|article|aside|blockquote|dd|details|div|dl|dt|figcaption|figure|footer|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|summary|table|ul)$/;
+const MDV_TEXT_LEAVES = 'p, li, dt, dd, h1, h2, h3, h4, h5, h6, pre, table, hr, .mermaid-wrapper, .katex-display';
 
-function mdvPlainText(root) {
-  return mdvTextBlocks(root).join('\n\n')
-    .replace(/\u2610 ?/g, '[ ] ').replace(/\u2611 ?/g, '[x] ')
+// A copy of more than one block reads as Markdown does: "## " before a heading and a ``` fence (with the code's
+// language) around a code block, so it pastes into an agent's prompt, a terminal, an issue or a chat as written.
+// A copy inside one block (a word, part of a line of code) is only its text. `local`: links resolved to this
+// computer (mdvResolveLinks), whose address the text leaves out, as it does a relative link's.
+function mdvPlainText(root, { local = null } = {}) {
+  const ctx = { markdown: root.querySelectorAll(MDV_TEXT_LEAVES).length > 1, local };
+  return mdvTextBlocks(root, ctx).join('\n\n')
+    .replace(/☐ ?/g, '[ ] ').replace(/☑ ?/g, '[x] ')
     .replace(/\n{3,}/g, '\n\n').trim() + '\n';
 }
 
 // The block-level pieces of a container, each a string of one or more lines.
-function mdvTextBlocks(container) {
+function mdvTextBlocks(container, ctx) {
   const blocks = [];
   let inline = '';
   const flush = () => {
@@ -363,10 +394,10 @@ function mdvTextBlocks(container) {
   for (const node of container.childNodes) {
     if (node.nodeType === 1 && mdvIsTextBlock(node)) {
       flush();
-      const b = mdvBlockText(node);
+      const b = mdvBlockText(node, ctx);
       if (b) blocks.push(b);
     } else {
-      inline += mdvInlineText(node);
+      inline += mdvInlineText(node, ctx);
     }
   }
   flush();
@@ -377,7 +408,7 @@ function mdvIsTextBlock(el) {
   return MDV_TEXT_BLOCK.test(el.localName) || el.classList.contains('mermaid-wrapper') || el.classList.contains('katex-display');
 }
 
-function mdvBlockText(el) {
+function mdvBlockText(el, ctx) {
   const tag = el.localName;
   if (el.classList.contains('mermaid-wrapper')) {
     const img = el.querySelector('img[alt]');
@@ -385,33 +416,43 @@ function mdvBlockText(el) {
   }
   if (el.classList.contains('katex-display')) {
     const k = el.querySelector('[data-tex]');
-    return k ? `$$${k.getAttribute('data-tex')}$$` : mdvInlineText(el).trim();
+    return k ? `$$${k.getAttribute('data-tex')}$$` : mdvInlineText(el, ctx).trim();
   }
   if (tag === 'hr') return '---';
-  if (tag === 'pre') return el.textContent.replace(/\n$/, '');
-  if (tag === 'ul' || tag === 'ol') return mdvListText(el);
+  if (tag === 'pre') {
+    const code = el.textContent.replace(/\n$/, '');
+    if (!ctx.markdown) return code;
+    const lang = (el.querySelector('code[class*="language-"]') || { className: '' }).className.match(/(?:^|\s)language-([^\s]+)/);
+    const fence = /```/.test(code) ? '````' : '```';
+    return `${fence}${lang ? lang[1] : ''}\n${code}\n${fence}`;
+  }
+  if (/^h[1-6]$/.test(tag)) {
+    const words = mdvTextBlocks(el, ctx).join(' ');
+    return ctx.markdown && words ? `${'#'.repeat(Number(tag[1]))} ${words}` : words;
+  }
+  if (tag === 'ul' || tag === 'ol') return mdvListText(el, ctx);
   if (tag === 'table') {
     return Array.from(el.rows).map((row) => Array.from(row.cells)
-      .map((cell) => mdvInlineText(cell).replace(/\s+/g, ' ').trim()).join('\t')).join('\n');
+      .map((cell) => mdvInlineText(cell, ctx).replace(/\s+/g, ' ').trim()).join('\t')).join('\n');
   }
-  if (tag === 'blockquote') return mdvTextBlocks(el).join('\n\n').split('\n').map((l) => (l ? '> ' + l : '>')).join('\n');
-  return mdvTextBlocks(el).join('\n\n');
+  if (tag === 'blockquote') return mdvTextBlocks(el, ctx).join('\n\n').split('\n').map((l) => (l ? '> ' + l : '>')).join('\n');
+  return mdvTextBlocks(el, ctx).join('\n\n');
 }
 
-function mdvListText(list) {
+function mdvListText(list, ctx) {
   let n = Number(list.getAttribute('start')) || 1;
   const lines = [];
   for (const li of list.children) {
     if (li.localName !== 'li') continue;
     const marker = list.localName === 'ol' ? `${n++}. ` : '- ';
-    const [first, ...rest] = mdvTextBlocks(li).join('\n').split('\n');
+    const [first, ...rest] = mdvTextBlocks(li, ctx).join('\n').split('\n');
     lines.push(marker + (first || ''));
     for (const line of rest) lines.push(' '.repeat(marker.length) + line);
   }
   return lines.join('\n');
 }
 
-function mdvInlineText(node) {
+function mdvInlineText(node, ctx) {
   if (node.nodeType === 3) return node.nodeValue.replace(/\s+/g, ' ');
   if (node.nodeType !== 1) return '';
   const el = node;
@@ -423,14 +464,18 @@ function mdvInlineText(node) {
     return alt ? `[${alt}]` : '[image]';
   }
   if (tag === 'style' || tag === 'script') return '';
+  // A figure's caption: on its own line, unless it only repeats the image's alt text.
+  const caption = el.getAttribute('data-mdv-caption');
+  if (caption === 'alt') return '';
   let s = '';
-  for (const c of el.childNodes) s += mdvInlineText(c);
+  for (const c of el.childNodes) s += mdvInlineText(c, ctx);
+  if (caption === 'own') return '\n' + s.trim();
   // 2^10, not 210; a footnote mark (a link alone in its <sup>) stays [1].
   if (tag === 'sup' && !(el.children.length === 1 && el.firstElementChild.localName === 'a')) return '^' + s;
   if (tag === 'a') {
     const href = el.getAttribute('href') || '';
     const bare = (x) => x.replace(/^(https?:)?\/\//i, '').replace(/\/+$/, '').trim().toLowerCase();
-    if (/^https?:\/\//i.test(href) && bare(s) !== bare(href)) s += ` <${href}>`;
+    if (/^https?:\/\//i.test(href) && !(ctx.local && ctx.local.has(el)) && bare(s) !== bare(href)) s += ` <${href}>`;
   }
   return s;
 }
@@ -451,39 +496,46 @@ async function mdvCopyRichText() {
   closeDropdowns();
   if (!mdvHasDocument()) { mdvToast('Open a document first.'); return; }
   const range = mdvSelectionInDocument();
-  // Everything that reads the page happens now, inside the click: the selection, the styles, each diagram's size.
+  // Everything that reads the page happens now, inside the click: the selection, the styles, each diagram's size,
+  // the address the document's paths are read from.
+  const address = mdvDocumentAddress();
   const snap = mdvSnapshot(range);
   mdvCleanSnapshot(snap.root, { clipboard: true });
   mdvWithLightTheme(() => mdvPortableStyles(snap.root, snap.liveOf));
   mdvPortableBlocks(snap.root, snap.liveOf, { clipboard: true });
-  for (const note of snap.root.querySelectorAll('.mdv-export-missing')) note.setAttribute('style', 'font-style:italic');
   const diagrams = mdvDiagramImages(snap.root, snap.liveOf);
-  const text = mdvPlainText(snap.root);
-  for (const el of snap.root.querySelectorAll('[data-tex], [data-mdv-print-url], [data-mdv-section]')) {
-    el.removeAttribute('data-tex');
-    el.removeAttribute('data-mdv-print-url');
-    el.removeAttribute('data-mdv-section');
+  const links = mdvResolveLinks(snap.root, { address, clipboard: true });
+  const text = mdvPlainText(snap.root, { local: new Set(links.resolved) });
+  for (const el of snap.root.querySelectorAll('[data-tex], [data-mdv-print-url], [data-mdv-section], [data-mdv-caption]')) {
+    for (const name of ['data-tex', 'data-mdv-print-url', 'data-mdv-section', 'data-mdv-caption']) el.removeAttribute(name);
   }
   // Right away: diagrams as SVG images, images where the page loaded them. Then, when ready: diagrams as PNG, local
-  // images embedded. The clipboard API takes the second; the copy command (no clipboard API) the first.
+  // images embedded, each read by the path the document wrote (next to the document), as Export HTML reads it. The
+  // clipboard API takes the second; the copy command (no clipboard API) the first.
+  const written = new Map();
   for (const img of snap.root.querySelectorAll('img')) {
     const live = snap.liveOf.get(img);
-    if (live && live.currentSrc && !/^data:/i.test(img.getAttribute('src') || '')) img.setAttribute('src', live.currentSrc);
+    const src = img.getAttribute('src') || '';
+    if (!live || !live.currentSrc || /^data:/i.test(src)) continue;
+    written.set(img, src);
+    img.setAttribute('src', live.currentSrc);
   }
   const now = mdvClipboardHtml(snap.root);
+  for (const [img, src] of written) img.setAttribute('src', src);
   const later = (async () => {
     try {
       await mdvLightDiagrams(diagrams);
       await Promise.all(diagrams.map(mdvDiagramToPng));
-      await mdvInlineImages(snap.root, snap.liveOf, { noteStyle: 'font-style:italic' });
+      await mdvInlineImages(snap.root, snap.liveOf, { noteStyle: 'font-style:italic', address });
       return mdvClipboardHtml(snap.root);
     } catch (e) {
       return now;
     }
   })();
   const copied = await mdvWriteRichClipboard(later, now, text);
-  if (copied) mdvToast(range ? 'Copied the selection as rich text.' : 'Copied the document as rich text.');
-  else mdvToast('The browser did not allow copying.', 'error');
+  if (!copied) { mdvToast('The browser did not allow copying.', 'error'); return; }
+  const notes = typeof mdvLinkNotes === 'function' ? mdvLinkNotes(links) : [];
+  mdvToast(`Copied the ${range ? 'selection' : 'document'} as rich text${notes.length ? ': ' + notes.join('; ') : ''}.`);
 }
 
 async function mdvWriteRichClipboard(later, now, text) {

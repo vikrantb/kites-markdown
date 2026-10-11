@@ -247,7 +247,8 @@ to run script, and the page must not be able to reach beyond its own document.
    Tauri routes `window.print()` through that command to the native print panel), and on a Mac a download
    the page starts goes through a Save panel, where the person chooses the file. Only a `blob:` download
    (Export HTML, a file the page made) is offered; any other download is refused, and a document cannot
-   start one, since `js/host.js` takes over its links.
+   start one, since `js/host.js` takes over its links. A download the app stops (refused, or the panel
+   cancelled) is not reported to the page as a failed export (`StoppedDownloads` in `dialogs.rs`).
 3. **The window never leaves the app.** Navigation to anything but the app's own page is refused, and
    requests for new windows are refused (a web link opens in the browser instead).
 4. **Images load only from the folders of the documents opened in this session, and below them** (the

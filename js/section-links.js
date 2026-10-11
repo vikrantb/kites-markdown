@@ -2,29 +2,19 @@
 // Links to sections
 // ============================================
 // Copy link to this section: each heading's "#" (shown on hover) copies the address of its section instead of jumping
-// to it, and the Export menu copies the address of the section being read.
-// - In a browser the address is the page's own, with the section as its fragment.
+// to it, and the Export menu copies the address of the section it names (the section being read when it opened).
+// - In a browser the address is the page's own, with the section as its fragment, and only while the page's address
+//   opens the document on screen (mdvDocumentAddress, js/snapshot.js). A document opened another way (the Open
+//   button, a drop, a file handle, a paste, a page opened as a file) has no such address, and nothing is copied: a
+//   link that opened another file, or none, would be worse than no link.
 // - In the desktop app it is the document's path with the fragment, which the app follows from a link in any
 //   document (js/host.js): see mdvSectionUrl.
-// An address with a fragment opens at that section: once the document has rendered, the section is unfolded,
+// An address with a fragment opens at that section: once the document it names has rendered, the section is unfolded,
 // scrolled to the top and kept there while diagrams and images settle, until the reader scrolls
 // (mdvGoToFragmentAfterRender, which a script that opens a document for a link with a fragment can call too).
 
 // ---------- Addresses ----------
-// A file: URL for a Windows path (C:\x\y.md) or a UNC one (\\host\share\y.md).
-function mdvFileUrl(path) {
-  const p = String(path).replace(/\\/g, '/');
-  const enc = (parts) => parts.map(encodeURIComponent).join('/');
-  if (p.startsWith('//')) {
-    const [host, ...rest] = p.slice(2).split('/');
-    return `file://${host}/${enc(rest)}`;
-  }
-  const parts = p.split('/');
-  if (/^[a-zA-Z]:$/.test(parts[0])) return `file:///${parts[0]}/${enc(parts.slice(1))}`;
-  return 'file://' + enc(parts);
-}
-
-// The address of a section (or of the document, with no id).
+// The address of a section (or of the document, with no id), or null when no address opens this document.
 // - Browser: the page's own address with the section as its fragment.
 // - Desktop app: the document's absolute path with the fragment, percent-encoded (/home/a%20b/plan.md#risks): the
 //   form a link in any document can take and the app follows (js/host.js), to the section when it is this document.
@@ -38,7 +28,9 @@ function mdvSectionUrl(id) {
     if (path.startsWith('/') && !path.startsWith('//')) return path.split('/').map(encodeURIComponent).join('/') + fragment;
     return mdvFileUrl(path) + fragment;
   }
-  const url = new URL(location.href);
+  const address = mdvDocumentAddress();
+  if (!address) return null;
+  const url = new URL(address.page);
   url.hash = id || '';
   return url.href;
 }
@@ -46,8 +38,13 @@ function mdvSectionUrl(id) {
 function mdvCopySectionLink(heading) {
   const id = heading && heading.id ? heading.id : '';
   const name = heading ? mdvHeadingText(heading) : '';
-  mdvCopyText(mdvSectionUrl(id)).then(
-    () => mdvToast(name ? `Link to \u201c${name}\u201d copied.` : 'Link to this document copied.'),
+  const url = mdvSectionUrl(id);
+  if (!url) {
+    mdvToast('No link copied: this page’s address does not open this document. Open it by its ?file= address (over http) to link to its sections.', 'error');
+    return;
+  }
+  mdvCopyText(url).then(
+    () => mdvToast(name ? `Link to “${name}” copied.` : 'Link to this document copied.'),
     () => mdvToast('The browser did not allow copying.', 'error'),
   );
 }
@@ -98,8 +95,33 @@ mdvOnRender((body) => {
   }
 });
 
+// ---------- The menu's item ----------
+// "Copy link to this section" names its section when the menu opens ("Copy link to “Risks”"): in a short document
+// several sections are on screen at once, and the reader sees which one the link will name before choosing it. The
+// item then copies that section, even if the page scrolls while the menu is open.
+let mdvMenuHeading = null;
+
+function mdvNameSectionItem() {
+  const item = document.querySelector('#mdvExportDD [data-action="copy-section-link"]');
+  if (!item) return;
+  mdvMenuHeading = mdvHasDocument() ? mdvCurrentHeading() : null;
+  const name = mdvMenuHeading ? mdvHeadingText(mdvMenuHeading) : '';
+  const shown = name.length > 48 ? name.slice(0, 47).trimEnd() + '…' : name;
+  let text = Array.from(item.childNodes).reverse().find((n) => n.nodeType === 3);
+  if (!text) { text = document.createTextNode(''); item.appendChild(text); }
+  text.nodeValue = shown ? `Copy link to “${shown}”` : 'Copy link to this document';
+  if (shown !== name) item.title = `Copy link to “${name}”`;
+  else item.removeAttribute('title');
+}
+
+// The menu opens on a click of its button (the keyboard's Enter and Space click it too); actions.js has opened it by
+// the time this capture listener runs, which it registered first.
+document.addEventListener('click', (e) => {
+  if (e.target && e.target.closest && e.target.closest('#mdvExportBtn')) mdvNameSectionItem();
+}, true);
+
 // A heading's "#" copies its section's address. In a browser the address bar shows it too (Back returns), without
-// the jump: the heading is already in view, under the pointer. From the Export menu: the section being read.
+// the jump: the heading is already in view, under the pointer. From the Export menu: the section the item names.
 function mdvSectionLinkAction(el, event) {
   const heading = el.classList.contains('header-anchor') ? mdvPermalinkHeading(el) : null;
   if (heading) {
@@ -113,7 +135,9 @@ function mdvSectionLinkAction(el, event) {
     return;
   }
   closeDropdowns();
-  if (mdvHasDocument()) mdvCopySectionLink(mdvCurrentHeading());
+  if (!mdvHasDocument()) return;
+  const named = mdvMenuHeading && mdvMenuHeading.isConnected ? mdvMenuHeading : mdvCurrentHeading();
+  mdvCopySectionLink(named);
 }
 
 // ---------- Opening at a section ----------
@@ -144,21 +168,29 @@ function mdvHoldAt(target) {
 }
 
 // Goes to `fragment` ("#id") once the next document has rendered: a page opened at a section, or a document opened
-// for a link with a fragment. renderMarkdown scrolls to the top as it returns; this runs just after it.
-let mdvPendingFragment = '';
-function mdvGoToFragmentAfterRender(fragment) {
-  mdvPendingFragment = fragment && fragment !== '#' ? fragment : '';
+// for a link with a fragment. renderMarkdown scrolls to the top as it returns; this runs just after it. With `name`,
+// only a document of that file name goes there: the next document to render may be another one (a page whose
+// address could not be loaded, where the reader opens something else).
+let mdvPendingFragment = null;
+function mdvGoToFragmentAfterRender(fragment, name) {
+  mdvPendingFragment = fragment && fragment !== '#' ? { fragment, name: name || '' } : null;
 }
 
 mdvOnRender(() => {
-  if (!mdvPendingFragment) return;
-  const target = mdvLinkTarget(mdvPendingFragment);
-  mdvPendingFragment = '';
+  const pending = mdvPendingFragment;
+  if (!pending) return;
+  mdvPendingFragment = null;
+  if (pending.name && pending.name !== mdvExportSourceName()) return;
+  const target = mdvLinkTarget(pending.fragment);
   if (target) mdvHoldAt(target);
 });
 
-// The page opened at a section (#demo names the demo, not a section).
-if (location.hash !== '#demo') mdvGoToFragmentAfterRender(location.hash);
+// The page opened at a section of the document its address names (?file=…#id). A fragment with no document named
+// (markdown-viewer.html#timeline, or #demo, which names the demo) is no section of whatever opens later.
+(function () {
+  const file = mdvAddressFile();
+  if (file && location.hash && location.hash !== '#') mdvGoToFragmentAfterRender(location.hash, file.split('/').pop());
+})();
 
 mdvRegisterActions({
   'copy-section-link': { click: (el, arg, event) => mdvSectionLinkAction(el, event) },
