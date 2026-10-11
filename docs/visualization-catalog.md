@@ -114,13 +114,19 @@ math: rendered in Chrome, a shell fence with two variables on one line and a Mer
 amounts both reach their renderer unchanged. The prerequisite this section named for CSV tables is met.
 See section 8.1.
 
-### 3.4 Theme changes do not re-render diagrams
+### 3.4 Theme changes redraw every diagram (fixed 2026-10-10)
 
-`setTheme` calls `renderMermaidDiagrams` again, but that function only selects
-`.mermaid:not(.rendered)`, and each rendered element's source text has already been replaced by its
-SVG. Diagrams on screen keep the old theme. Any new renderer should keep its source (for example in
-a `Map` keyed by element id) so a theme change can re-render it. The sepia theme is passed to
-Mermaid as `default`.
+`setTheme` calls `renderMermaidDiagrams` 100 ms after a theme change. Before anything is drawn, that
+function keeps each diagram's source in `data-mdv-source`, because a drawn element holds an SVG instead.
+Each diagram records the palette it was drawn in (`data-mdv-palette`), and a pass redraws every diagram
+whose palette differs from the current one, which `mdvDiagramPalette` reads from the theme's
+`--diagram-*` tokens. Every theme, sepia included, is drawn through Mermaid's `base` theme with those
+colours as `themeVariables` (`mdvMermaidConfig`), and an open expanded view of a redrawn diagram shows
+the new drawing (`mdvRefreshDiagramOverlay`) (read from `js/mermaid.js`). Tested in `visuals.spec.mjs`:
+"a theme change redraws every diagram in the dark palette, and back (issue 9)". Until then the function
+selected only `.mermaid:not(.rendered)`, whose source had already been replaced by its SVG, so diagrams
+kept the old theme, and sepia was drawn as Mermaid's `default`. A new renderer should follow the same
+pattern: keep its source and record what it was drawn with, so a theme change can draw it again.
 
 ### 3.5 Opening from disk limits which builds can be used
 
