@@ -269,7 +269,9 @@ Everything below runs in this order on page load.
 | `mdvView` | `js/diagram-overlay.js` | The expanded view's state: the diagram shown, scale, translation, natural size, active pointers and gesture, animation frame, the element to give focus back to |
 | `mdvMermaidQueue`, `mdvMermaidGeneration`, `mdvMermaidSeq` | `js/mermaid.js` | Render passes run one after another; a newer request stops an older pass; render ids are never reused |
 | `MDV_DIAGRAM_TITLES`, `MDV_DIAGRAM_TOKENS` | `js/mermaid.js` | Mermaid's `diagramType` → title; palette name → `--diagram-*` custom property |
-| `mdvMinimapObserver` | `js/enhancements.js` | The minimap's `IntersectionObserver`, disconnected before the next render builds a new one |
+| `mdvMinimap` | `js/enhancements.js` | The section rail of the current document (its element, segments, `h2`s, title) and its `ResizeObserver`, disconnected before the next render builds a new one. One `scroll` and one `resize` listener, for the page's lifetime, update it at most once per frame (`mdvScheduleMinimap`) |
+| `mdvTableResize` | `js/enhancements.js` | One `ResizeObserver` over the document's tables (scroll cues), disconnected on the next render |
+| `mdvDiagramFontLate` | `js/mermaid.js` | A wait for the Inter web font has timed out and the redraw on its arrival is pending, so later passes do not wait again |
 | `LINK_TYPES` | 2573 | `enhanceLinks`, `showLinkTooltip`, `buildLinksPanel` |
 | `tooltipHideTimer` | 2675 | `showLinkTooltip`, `hideLinkTooltip`, tooltip `mouseenter` |
 | `CALLOUT_TYPES` | 2817 | `transformCalloutBlocks` (NOTE, TIP, IMPORTANT, WARNING, CAUTION, TLDR, DECISION, COST) |
@@ -398,7 +400,7 @@ passes, and the code-block markup.
 | `addSectionToggles` | chevron `onclick` | `toggleSection` |
 | `buildToc` | TOC link `onclick` | Smooth-scrolls to the heading and closes the mobile TOC |
 | `setupScrollSpy` | `IntersectionObserver` on headings | Active TOC link and breadcrumb text |
-| `buildSectionMinimap` | segment `click`, `IntersectionObserver` on `h2` (the previous render's observer is disconnected) | Scroll to section; current and already-read segments |
+| `buildSectionMinimap` | segment `click`; a `ResizeObserver` on the rail (the previous render's is disconnected); window `scroll` and `resize` (registered once, in `js/enhancements.js`) | Scroll to section; label or track mode; current and already-read segments, the current section's name and position |
 | `setupImageLightbox` | each `img` `click` | Opens the lightbox |
 | `enhanceLinks` | each link `mouseenter`/`mouseleave` | `showLinkTooltip` / `hideLinkTooltip` |
 | `buildLinksPanel` | anchor-type items `click` | Scrolls to the target and closes the panel |
@@ -411,8 +413,8 @@ passes, and the code-block markup.
 | `mdvRenderSidebar` | reply/resolve/delete `onclick`, reply textarea `keydown` | Thread actions |
 | `mdvRenderChips` | chip `onclick` | `mdvFocusThread` |
 
-The `IntersectionObserver`s created by `setupScrollSpy` and `buildSectionMinimap` are never
-disconnected, so each re-render adds new observers (inferred).
+The `IntersectionObserver` created by `setupScrollSpy` is never disconnected, so each re-render adds a
+new one (inferred). `buildSectionMinimap` creates none.
 
 ### 6.3 Inline handlers in markup and generated HTML
 
@@ -702,18 +704,24 @@ template string and is not code. Anonymous handlers follow the table.
 |---|---|---|
 | `renderMermaidDiagrams()` | `js/mermaid.js` | Saves new sources, queues a pass that draws every diagram not drawn in the current palette; returns a promise |
 | `mdvRenderMermaidPass(generation)` | `js/mermaid.js` | One pass: palette, web font, `mermaid.initialize`, then each diagram in order |
-| `mdvRenderDiagram(el, palette)` | `js/mermaid.js` | Draws one diagram; on success records its type, makes it expandable, links its nodes, refreshes an open view |
+| `mdvRenderDiagram(el, palette)` | `js/mermaid.js` | Draws one diagram; on success namespaces its ids, finishes it, records its type, makes it expandable, links its nodes, refreshes an open view |
+| `mdvIsolateSvgIds(svg, prefix, keepRoot)` | `js/mermaid.js` | Prefixes every id in an SVG (numbering repeats) and rewrites `url(#…)`, `href`, ARIA references and `#id` selectors; used for every drawn diagram and for the expanded view's copy |
+| `mdvFinishDiagram(svg, type, palette)` | `js/mermaid.js` | What needs the drawn geometry: `mdvMatchLabelChips` (label chips take their container's colour), `mdvTrimCompositeStates` (one bottom border), `mdvRoundClassBoxes` and `mdvRoundEntities` (8 px corners), `mdvCentreTitle` and `mdvCentreTimelineText`, `mdvTodayBehindTasks`, `mdvPieLabelColours` |
+| `mdvReadableOn(bg, a, b)`, `mdvContrast(x, y)` | `js/mermaid.js` | The text colour that reads better on a fill (pie labels, git branch labels); WCAG contrast of two hex colours |
+| `mdvDiagramFontsReady()` | `js/mermaid.js` | Waits for the Inter web font at most 1.5 s, once; a late font redraws every diagram |
 | `mdvShowDiagramError(el, err, source)` | `js/mermaid.js` | The "could not be drawn" box with the reason and the source |
 | `mdvMakeDiagramExpandable(wrapper)` | `js/mermaid.js` | Expand button and wrapper click, once per wrapper |
 | `mdvDiagramPalette()` | `js/mermaid.js` | The current theme's `--diagram-*` tokens as hex, with a key that changes with the palette |
-| `mdvColorHex(value)` | `js/mermaid.js` | Any CSS colour → `#rrggbb` (hex directly, anything else through a probe element and a one-pixel canvas) |
+| `mdvColorHex(value, under)` | `js/mermaid.js` | Any CSS colour → `#rrggbb` (hex directly, anything else through a probe element and a one-pixel canvas, a translucent colour composited over `under`) |
 | `mdvMermaidConfig(palette, width)` | `js/mermaid.js` | The `mermaid.initialize` options: `base` theme variables, per-diagram settings, `themeCSS` |
 | `mdvMermaidThemeCss(palette)` | `js/mermaid.js` | The CSS Mermaid embeds in each SVG (shapes, labels, section colours) |
 | `mdvDiagramContentWidth()` | `js/mermaid.js` | The column width a diagram gets, for Gantt charts |
 | `mdvDiagramTypeTitle(type)` | `js/mermaid.js` | `diagramType` → readable title |
 | `openDiagramOverlay(wrapper)` | `js/diagram-overlay.js` | Clones the SVG into the expanded view, titles it, fits it, moves focus into the dialog |
 | `mdvRefreshDiagramOverlay(wrapper)` | `js/diagram-overlay.js` | After a redraw: swaps the new drawing into an open view, keeping zoom and position |
-| `mdvZoomAt(factor, x, y, animate)` | `js/diagram-overlay.js` | Zooms keeping the point under (x, y) still |
+| `mdvZoomAt(factor, x, y, animate)`, `mdvPanBy(dx, dy)` | `js/diagram-overlay.js` | Zooms keeping the point under (x, y) still; pans. Both start from where a running animation is heading (`mdvViewGoal`), so quick steps compound |
+| `mdvFollowNodeLink(link)`, `mdvRevealInView(el)` | `js/diagram-overlay.js` | A linked node chosen by click, Enter or Space closes the view and jumps; a node reached by Tab is panned into view |
+| `mdvCloseDetachedDiagramOverlay()` | `js/diagram-overlay.js` | Closes a view whose diagram is no longer on the page (called at the start of every render pass) |
 | `mdvDiagramFit(animate)`, `mdvDiagramActualSize(animate)` | `js/diagram-overlay.js` | Fit to the screen; 100% |
 | `mdvApplyView()` | `js/diagram-overlay.js` | Draws the view: the SVG at its scaled size, the container translated, the label |
 | `closeDiagramOverlay()` | `js/diagram-overlay.js` | Hides the view and gives focus back to what opened it |
@@ -733,7 +741,8 @@ template string and is not code. Anonymous handlers follow the table.
 | `buildToc()` | 2321 | Fills `#tocList` from `h1`–`h6` and hides the TOC if there are no headings |
 | `toggleToc()` | 2353 | Mobile slide-in at 900px or less, otherwise hide/show plus full width |
 | `setupScrollSpy()` | 2368 | `IntersectionObserver` → active TOC link and breadcrumb |
-| `buildSectionMinimap()` | `js/enhancements.js` | A bar of `h2` segments (only when there are 3 or more), after the dashboard or at the top of the first `h1`'s section; labels drawn by CSS from `data-label` |
+| `buildSectionMinimap()` | `js/enhancements.js` | A rail of `h2` segments (only when there are 3 or more), the first element of `#mdBody`, sticky under the toolbar; labels drawn by CSS from `data-label` |
+| `mdvFitMinimap()`, `mdvUpdateMinimap()` | `js/enhancements.js` | Label mode or track mode by segment width (72 px); the current section (last `h2` above the reading line), read segments, `data-current` and `data-position` |
 
 ### 11.6 Search
 
@@ -762,10 +771,12 @@ template string and is not code. Anonymous handlers follow the table.
 | `buildLinksPanel(links)` | 2735 | Groups links by type, de-duplicates by href |
 | `copyCode(...args)` | `js/links.js` | Copies the inner `code.hljs` element's text (only the code), finding the button in whatever it is passed (the button, or an event) |
 | `mdvCopyText(text)`, `mdvFlashCopyButton(btn, text, cls)` | `js/links.js` | Clipboard with a legacy fallback; the button's "Copied" / "Copy failed" state |
-| `transformCalloutBlocks()` | `js/enhancements.js` | `> [!TYPE]` blockquote → `.callout.callout-type` with an icon and a title. The first post-processing pass, so it also runs `mdvCaptionImages` and `mdvAlignNumericColumns` |
-| `mdvCaptionImages(body)` | `js/enhancements.js` | An image alone in its paragraph becomes a captioned figure (`p.mdv-figure`) |
-| `mdvAlignNumericColumns(body)` | `js/enhancements.js` | Right-aligns table columns whose cells are all numbers (`.mdv-num`) |
-| `mdvHeadingText(h)` | `js/enhancements.js` | A heading's own words, without the fold toggle and the `#` permalink |
+| `transformCalloutBlocks()` | `js/enhancements.js` | `> [!TYPE]` blockquote → `.callout.callout-type` with an icon and a title. The first post-processing pass, so it also runs `mdvCaptionImages`, `mdvAlignNumericColumns`, `mdvTableScrollCues` and `mdvPolishDashboard` |
+| `mdvCaptionImages(body)` | `js/enhancements.js` | An image alone in its paragraph becomes a captioned figure (`p.mdv-figure`); the caption is an empty `span.mdv-figcaption` whose words CSS draws from `data-caption`, so they are not the paragraph's text |
+| `mdvAlignNumericColumns(body)` | `js/enhancements.js` | Right-aligns table columns whose cells are all numbers (`.mdv-num`, with tabular figures) |
+| `mdvTableScrollCues(body)` | `js/enhancements.js` | Marks the sides a table scrolls to (`mdv-more-left`, `mdv-more-right`), which CSS fades |
+| `mdvPolishDashboard(body)` | `js/enhancements.js` | The status pill reads a slug as words; a repository link drops its star glyph (CSS draws a link icon) |
+| `mdvHeadingLabel(h)` | `js/enhancements.js` | A heading's own words, without the fold toggle, the `#` permalink and a comment chip. Named apart from `navigation.js`'s helpers: classic scripts share one scope |
 | `applyAbbreviationTooltips(meta)` | `js/enhancements.js` | Wraps frontmatter `abbreviations` keys in `<abbr class="abbr-tooltip" title>`, outside code, math, diagrams and existing `<abbr>` |
 | `mdvFrontmatterAbbreviations(meta)` | `js/enhancements.js` | The abbreviation map from either YAML shape; the indented map is read from `rawMarkdown`'s frontmatter, only when it parses to the same meta |
 

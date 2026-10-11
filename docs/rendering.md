@@ -178,8 +178,8 @@ where `N` is the token index. ` ```Mermaid ` or ` ```mermaid title ` are not mat
 
 **Initialisation.** When `js/mermaid.js` loads it calls `mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' })`. By default Mermaid draws every `.mermaid` element itself on the window `load` event, in its own theme; the viewer draws them instead. Each render pass then initialises Mermaid with:
 
-- `theme: 'base'` and `themeVariables` read from the current theme's `--diagram-*` custom properties in `css/viewer.css` (node, border, text, line, cluster, note, label background, accent, and an eight-colour series for pie slices, mind-map branches, timelines, journeys, git branches and charts). Mermaid's colour maths only accepts hex, so each token is resolved to hex first (`mdvColorHex`);
-- `themeCSS`, Mermaid's own per-SVG stylesheet, for what the variables cannot reach: rounded nodes, line caps, label backgrounds, section colours, title sizes. Anything that changes the size of text is set there, because Mermaid measures labels before the SVG reaches the page, with only its own styles applied;
+- `theme: 'base'` and `themeVariables` read from the current theme's `--diagram-*` custom properties in `css/viewer.css` (node, border, text, line, cluster, note, label background, accent, and an eight-colour series for pie slices, mind-map branches, timelines, journey actors, git branches and charts). Mermaid's colour maths only accepts hex, so each token is resolved to hex first (`mdvColorHex`; a translucent token is resolved over the diagram card). Journey actors go through the `actor0`-`actor5` variables and faces through `faceColor`: Mermaid's config merge appends arrays, so `journey.actorColours` cannot replace its six defaults. The series were chosen per theme with a colour-vision-deficiency check (Machado 2009 deuteranopia and protanopia) so neighbouring slices and a pie's legend stay apart; node borders are at least 3:1 against the card;
+- `themeCSS`, Mermaid's own per-SVG stylesheet, for what the variables cannot reach: rounded nodes (8 px for every type), line caps, arrowheads in the line colour, label chips, section colours, title sizes, a stick-figure actor's name below its legs, a dashed Gantt today line. Anything that changes the size of text is set there, because Mermaid measures labels before the SVG reaches the page, with only its own styles applied;
 - `fontFamily` Inter, also for the sequence diagram's actor, message and note fonts, so text is measured in the font it is drawn in;
 - `flowchart: { curve: 'basis', padding: 18, nodeSpacing: 44, rankSpacing: 56 }`, `sequence: { wrap: true, mirrorActors: false, … }`, and a Gantt width equal to the page column (`gantt.useWidth`), because Mermaid otherwise sizes a Gantt chart to its hidden render container (the whole window) and the result is shrunk to the column with unreadably small text;
 - `securityLevel: 'strict'`: labels are sanitised and click directives are ignored;
@@ -188,9 +188,9 @@ where `N` is the token index. ` ```Mermaid ` or ` ```mermaid title ` are not mat
 **Lifecycle.**
 
 1. When the pass is requested, every new `.mermaid` element's text is saved in `data-mdv-source`, synchronously, before anything else can draw it.
-2. Passes run one after another. A pass reads the palette, waits for the Inter web font when it is still loading (at most 1.5 s; if it arrives later, every diagram is drawn again in it; offline there is nothing to wait for), and draws every diagram whose `data-mdv-palette` differs from the current palette, in document order. A newer request (a theme change, a new document) stops an older pass at its next diagram.
+2. Passes run one after another. A pass first closes an expanded view whose diagram is no longer on the page (another document was opened), then reads the palette, waits for the Inter web font when it is still loading (at most 1.5 s, and only once: after a wait has timed out, later passes draw straight away, and every diagram is drawn again when the font arrives; offline there is nothing to wait for), and draws every diagram whose `data-mdv-palette` differs from the current palette, in document order. A newer request (a theme change, a new document) stops an older pass at its next diagram.
 3. Each diagram is drawn with `mermaid.render` under a fresh id (`mdv-mermaid-N`). Mermaid removes any element that already has the id it is given, so reusing the old id would make the diagram on screen disappear while its replacement is drawn.
-4. On success the SVG replaces the element's content and gets the class `mdv-diagram`; the element gets `rendered`, and the wrapper gets `data-diagram-type` (the `diagramType` Mermaid returns) and `data-diagram-label` (its readable name, shown on the card). The first time, the wrapper also gets the expand button and its click handler (`mdvMakeDiagramExpandable`). Then nodes are linked to sections (`mdvLinkDiagramNodes`, in `js/enhancements.js`), and an open expanded view of the same diagram is redrawn (`mdvRefreshDiagramOverlay`).
+4. On success the SVG replaces the element's content and gets the class `mdv-diagram`. Its ids are namespaced with its own id (`mdvIsolateSvgIds`, which also rewrites `url(#…)`, `href`, ARIA references and `#id` selectors in its style): Mermaid reuses plain ids such as `arrowhead` in every diagram, and a reference resolves to the first match in the page. Then `mdvFinishDiagram` applies what needs the drawn geometry: an edge label inside a subgraph or composite state gets its container's colour (`--mdv-chip`), a composite state draws one bottom border, class boxes and ER entities are rounded, journey and timeline titles and timeline box text are centred, the Gantt today line goes behind the bars, and each pie label takes whichever text colour reads better on its slice. The element gets `rendered`, and the wrapper gets `data-diagram-type` (the `diagramType` Mermaid returns) and `data-diagram-label` (its readable name, shown on the card). The first time, the wrapper also gets the expand button and its click handler (`mdvMakeDiagramExpandable`). Then nodes are linked to sections (`mdvLinkDiagramNodes`, in `js/enhancements.js`), and an open expanded view of the same diagram is redrawn (`mdvRefreshDiagramOverlay`).
 5. On failure the element gets the class `mermaid-error` and shows "This diagram could not be drawn", Mermaid's reason and the source, built with `textContent` only.
 
 **Theme changes.** `setTheme` calls `renderMermaidDiagrams` 100 ms later. Every diagram's palette key now differs, so every diagram, including any that failed, is drawn again from its saved source in the new palette. The SVG on screen stays until its replacement is ready, so nothing jumps.
@@ -287,14 +287,16 @@ Accepted forms (checked offline):
 
 | Marker | Label | Icon | Colour |
 |---|---|---|---|
-| `[!NOTE]` | Note | information sign | blue |
+| `[!NOTE]` | Note | circled "i" | blue |
 | `[!TIP]` | Tip | light bulb | green |
-| `[!IMPORTANT]` | Important | exclamation mark | violet (`#8B5CF6`) |
-| `[!WARNING]` | Warning | warning sign | amber |
-| `[!CAUTION]` | Caution | red circle | red |
-| `[!TLDR]` | TL;DR | pushpin | cyan |
-| `[!DECISION]` | Decision | classical building | deeper violet (`#7C3AED`) |
-| `[!COST]` | Cost | money bag | orange |
+| `[!IMPORTANT]` | Important | speech bubble with "!" | violet |
+| `[!WARNING]` | Warning | triangle with "!" | ochre (amber in dark) |
+| `[!CAUTION]` | Caution | octagon with "!" | red |
+| `[!TLDR]` | TL;DR | lightning bolt | teal |
+| `[!DECISION]` | Decision | circled check mark | magenta |
+| `[!COST]` | Cost | price tag | rust (coral in dark) |
+
+The icons are inline SVG and the colours are the theme's `--callout-*` tokens; see [features.md](features.md#callouts).
 
 There is no custom title syntax and no aliases. There is no fold syntax either: `> [!NOTE]- Title` is still turned into a Note callout (the regex stops at `]`), but the `-` and the title stay as the first line of the body (inferred from the regex; the markdown-it output was checked offline).
 

@@ -685,16 +685,20 @@ Value Medium, effort M.
 
 **Today.** Only the `@media print` rules in section 2. The browser's "Save as PDF" is the PDF route.
 
-**Gaps** *(inferred from the CSS; not test-printed)*:
+**What prints today** (`tests/e2e/visuals-print.spec.mjs`, under print media and in a real PDF): the
+light palette from any theme, all of it (the sepia and dark page tokens are screen-only); every row of a
+long table, across pages, with the header repeated; code blocks, diagrams, callouts and figures kept whole.
+
+**Gaps**:
 
 - `.section-content.collapsed { display: none; }` has no print override, so folded sections are left
-  out of the printout.
+  out of the printout *(inferred from the CSS)*.
 - Canvas-based renderers print as bitmaps; SVG prints sharply.
-- Text and surfaces print in the light palette from any theme; diagrams keep the colours they were
-  drawn in, so a diagram drawn in the dark theme prints dark.
+- A diagram keeps the palette it was drawn in and prints on its own card (`print-color-adjust:
+  exact`), so a diagram drawn in the dark theme prints as a dark card: readable, but heavy on ink.
 
-**Improvements.** On `beforeprint`, expand all sections and force light colours; restore on
-`afterprint`. Add `break-inside: avoid` for diagrams, tables, code blocks and callouts. Optionally
+**Improvements.** On `beforeprint`, expand all sections; redraw diagrams in the light palette before
+printing (a redraw is asynchronous, so it needs its own print command). Optionally
 print link URLs after link text and a running header with the document title using `@page`. Paged.js
 (0.4.3, last published 2023-07-06) adds page numbers and running heads but is stale; plain CSS is
 enough. Value Medium, effort S.

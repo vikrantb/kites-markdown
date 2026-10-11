@@ -143,13 +143,13 @@ The commenting layer wraps `renderMarkdown`. It reads the `MDV-COMMENTS` block f
 
 ### Section minimap
 
-`buildSectionMinimap` adds a row of buttons, one per H2, but **only when the document has three or more H2 headings**.
+`buildSectionMinimap` adds a rail of buttons, one per H2, but **only when the document has three or more H2 headings**.
 
-- It sits directly after the frontmatter dashboard if there is one. Otherwise it sits under the first H1, at the top of that heading's section (so the H1's fold toggle still works), or at the top of the document.
-- Each segment shows its section's title, cut with an ellipsis when it does not fit. Hovering a segment, or reaching it with Tab, shows the full title in a tooltip. The labels are drawn by CSS from `data-label` and named for screen readers with `aria-label`, so they are not document text: search, read-aloud and copy never pick them up.
-- When a segment is too narrow for a readable label (about 60 px, for example 17 sections in the reading column), the row becomes a section track: sections already read, the current one (larger, in the accent colour) and the ones ahead. The tooltip still names each segment.
+- The rail is the first element of the document, outside every section, so the blocks inside sections keep their positions among their siblings (comment anchors record them). It is drawn in the space above the document, so it takes no room from it, and it stays under the toolbar while you read (`position: sticky`), so it always shows where you are. Jumps (outline, search, links, diagram nodes) land below it.
+- With room, each segment shows its section's title, cut with an ellipsis when it does not fit. Hovering a segment, or reaching it with Tab, shows the full title in a tooltip. The labels are drawn by CSS from `data-label` and named for screen readers with `aria-label`, so they are not document text: search, read-aloud and copy never pick them up.
+- When segments are narrower than 72 px (for example 17 sections in the reading column), they become a track: sections already read, the current one (larger, in the accent colour) and the ones ahead. The rail then names the current section and its position, "Architecture 3 / 17" (from `data-current` and `data-position`), and the title of the document above the first H2. The tooltip still names each segment. A `ResizeObserver` switches between the two modes when the column changes width.
 - Clicking a segment scrolls to that H2.
-- The segment for the H2 currently in view is highlighted, using the same observer band as the scroll spy, and the observer of the previous render is disconnected first.
+- The current section is the last H2 above the reading line (the line the outline uses), recomputed on scroll at most once per frame, so it is right when scrolling up as well as down. Folded H2s are skipped. One scroll listener serves the page's lifetime.
 
 ### Collapsing and expanding sections
 
@@ -198,7 +198,7 @@ The choice is stored in `localStorage` under `mdv-fontsize`.
 ### Reading progress and scroll buttons
 
 - A thin bar under the toolbar fills as you scroll (`scroll` listener).
-- Two floating buttons scroll to the top and the bottom. The up button is hidden in the first 200 px of the page. The down button is hidden within 200 px of the bottom.
+- Two floating buttons scroll to the top and the bottom. The up button is hidden in the first 200 px of the page. The down button is hidden within 200 px of the bottom. At 600 px or less they are not shown: on a phone they covered the ends of the last lines of text.
 
 ### Search
 
@@ -298,13 +298,13 @@ Each code block has a header with a coloured dot for common languages, the langu
 | `[!NOTE]` | Note | blue | circled "i" |
 | `[!TIP]` | Tip | green | light bulb |
 | `[!IMPORTANT]` | Important | violet | speech bubble with "!" |
-| `[!WARNING]` | Warning | amber | triangle with "!" |
+| `[!WARNING]` | Warning | ochre (amber in dark) | triangle with "!" |
 | `[!CAUTION]` | Caution | red | octagon with "!" |
 | `[!TLDR]` | TL;DR | teal | lightning bolt |
-| `[!DECISION]` | Decision | deep violet | circled check mark |
-| `[!COST]` | Cost | orange | price tag |
+| `[!DECISION]` | Decision | magenta | circled check mark |
+| `[!COST]` | Cost | rust (coral in dark) | price tag |
 
-A callout has a tinted background, a strong left bar in its accent colour, and a title in that colour with its icon. Each theme sets the eight accent colours (`--callout-*` in `css/viewer.css`), and each title meets 4.5:1 on its own tint. The icons are drawn as inline SVG in the accent colour, so they look the same on every operating system. An unknown type leaves the blockquote unchanged. Text after the marker on the same line stays in the body; there is no custom-title syntax.
+A callout has a tinted background, a strong left bar in its accent colour, and a title in that colour with its icon. Each theme sets the eight accent colours (`--callout-*` in `css/viewer.css`): the closest two are at least CIELAB dE76 20 apart in every theme, and each title meets 4.5:1 on its own tint. The tint is the accent mixed in oklab into a grey at the page's lightness (`--callout-base`), not into the page itself, so a cool callout on the warm sepia page keeps its own hue instead of turning khaki (`tests/e2e/visuals-content.spec.mjs`). The icons are drawn as inline SVG in the accent colour, so they look the same on every operating system. An unknown type leaves the blockquote unchanged. Text after the marker on the same line stays in the body; there is no custom-title syntax.
 
 ### Frontmatter dashboard
 
@@ -327,30 +327,36 @@ repos:
 
 | Field | Shape | How it renders |
 |---|---|---|
-| `status` | string | A pill that shows the original text. Its colour depends on the text: anything containing `ship` is green (shipped), `progress` is amber (in progress), `block` is red (blocked), and everything else is grey (draft). |
+| `status` | string | A pill that shows the text, with hyphens and underscores read as spaces (`in-progress` shows as IN PROGRESS). Its colour depends on the text: anything containing `ship` is green (shipped), `progress` is amber (in progress), `block` is red (blocked), and everything else is grey (draft). |
 | `date` | string | Shown with a calendar icon next to the status pill. Shown only when the dashboard itself is shown. |
-| `metrics` | list of `{label, value}` | A grid of cards, each with a small label over a large value. |
-| `repos` | list of `{name, github}` | A rounded badge per entry. With `github` set, the badge is a link that opens in a new tab and shows a star before the name. Without it, the badge is plain text. `name` defaults to `repo`. |
+| `metrics` | list of `{label, value}` | A row of cards that share its width, each with a small label over a large value. They wrap on narrow screens; a card alone on its row takes the whole row. |
+| `repos` | list of `{name, github}` | A rounded badge per entry. With `github` set, the badge is a link that opens in a new tab and shows a link icon before the name. Without it, the badge is plain text. `name` defaults to `repo`. |
 | `abbreviations` | map, or list of `KEY: value` | Every whole-word occurrence of a key gets a tooltip with its expansion. See [Abbreviation tooltips](#abbreviation-tooltips). |
 
-The section minimap, if present, goes directly below the dashboard.
+The section rail, if present, sits above the dashboard.
 
 ### Other rendered elements
 
 The viewer also renders task lists, footnotes, definition lists, `==highlight==`, `~sub~`, `^sup^`, KaTeX math and HTML `<details>` blocks. These are covered in [rendering.md](rendering.md). Task-list checkboxes can be ticked, but the change is not written back to the file *(inferred: no handler exists)*.
 
-- **Figures.** An image alone in its paragraph (or a linked image alone in its paragraph) is centred, rounded and shadowed, with its title, or otherwise its alt text, as a caption underneath (`mdvCaptionImages`). Alt text that is only a file name is not shown. The paragraph stays a `<p>`, so comment anchors keep working, and a captioned linked image is no longer turned into a text-only link card (one with neither alt text nor a title still is).
-- **Numbers in tables.** A column whose every filled cell is a number (`1,234.5`, `-3`, `12%`, `$5`, `4.2k`) is right-aligned (`mdvAlignNumericColumns`), unless the markdown already set an alignment for it. Every table uses tabular figures, scrolls inside its own rounded box when it is wider or taller than the page allows, and keeps its header row in view while it scrolls.
+- **Figures.** An image alone in its paragraph (or a linked image alone in its paragraph) is centred, rounded and shadowed, with its title, or otherwise its alt text, as a caption underneath (`mdvCaptionImages`). Alt text that is only a file name is not shown. The caption is an empty `span.mdv-figcaption` whose words CSS draws from `data-caption`: it is never text, because a new comment's anchor is found by the block's text in the source, and the caption's words are not on the image's line (a comment on a figure is orphan-tracked, never written before another block with the same words). Read-aloud and search do not see it, and screen readers already have the words from the image's alt or title. The paragraph stays a `<p>`, and a captioned linked image is not turned into a text-only link card (one with neither alt text nor a title still is).
+- **Numbers in tables.** A column whose every filled cell is a number (`1,234.5`, `-3`, `12%`, `$5`, `4.2k`) is right-aligned with tabular figures (`mdvAlignNumericColumns`), unless the markdown already set an alignment for it. Other cells keep proportional figures, so a hyphen keeps its width. A table scrolls inside its own rounded box when it is wider or taller than the page allows, keeps its header row in view while it scrolls, and fades at the side it continues to (`mdvTableScrollCues`).
 
 ### Printing
 
-The print stylesheet (`@media print`) hides the toolbar, table of contents, minimap, scroll buttons, progress bar, search and shortcuts overlays, read-aloud player, settings panel, comments sidebar, lightbox, copy buttons and fold toggles, and sets the body text to 11pt. It always prints the light palette, even from Sepia or Dark, and keeps code blocks, diagrams, tables, callouts and figures whole across pages. Diagrams keep the colours they were drawn in.
+The print stylesheet (`@media print`) hides the toolbar, table of contents, minimap, scroll buttons, progress bar, search and shortcuts overlays, read-aloud player, settings panel, comments sidebar, lightbox, copy buttons and fold toggles, and sets the body text to 11pt.
+
+- Paper always gets the light palette, all of it (text, code, callouts, links), even from Sepia or Dark: the sepia and dark page tokens apply on screen only. Text prints in #111.
+- A table that scrolls inside its own box on screen is a plain table on paper: every row prints, across as many pages as it needs, with its header repeated and no row split.
+- Code blocks, diagrams, callouts and figures are kept whole across pages.
+- A diagram keeps the palette it was drawn in, and its card is printed with it (`print-color-adjust: exact`) even when the browser's "background graphics" option is off, so a diagram drawn in the dark theme prints as a dark card, readable. To print it light, switch to the light theme first.
+- `tests/e2e/visuals-print.spec.mjs` checks each theme under print media and a 60-row table in a real PDF.
 
 ### Narrow screens
 
 - At 900 px or less, the table of contents becomes an off-canvas overlay, toolbar button labels are hidden, and the breadcrumb and reading meta are hidden.
-- At 760 px or less, the fold toggles sit before the heading text instead of in the left margin.
-- At 600 px or less, padding and heading sizes shrink, and the toolbar keeps its essentials: page width, focus mode, fold-all and the two save-location buttons (which need the File System Access API that phone browsers lack) are hidden. At 390 px nothing scrolls sideways (`tests/e2e/visuals.spec.mjs`).
+- At 760 px or less, the fold toggles sit at the end of the heading's first line instead of in the left margin, so a wrapped heading's lines keep the text's left edge.
+- At 600 px or less, padding and heading sizes shrink, and the toolbar keeps its essentials: page width, focus mode, fold-all and the two save-location buttons (which need the File System Access API that phone browsers lack) are hidden, and so is the file name (the title heading names the document). The text-size control stays, without its size label. The floating scroll buttons are not shown. At 390 px nothing scrolls sideways (`tests/e2e/visuals.spec.mjs`, `tests/e2e/visuals-layout.spec.mjs`).
 - When the comments sidebar is open on a screen 1100 px wide or less, it overlays the content instead of pushing it aside.
 
 ---

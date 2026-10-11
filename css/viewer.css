@@ -1321,11 +1321,12 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
   position: sticky; top: calc(var(--toolbar-height) + 6px); z-index: 40;
   display: flex; align-items: center; gap: 3px;
   height: 34px; margin: -52px 0 18px; padding: 0 3px;
-  background: color-mix(in srgb, var(--bg-primary) 94%, transparent);
-  -webkit-backdrop-filter: saturate(1.4) blur(12px); backdrop-filter: saturate(1.4) blur(12px);
+  background: var(--bg-primary);
   border: 1px solid var(--border-secondary);
   border-radius: 12px;
-  box-shadow: var(--shadow-xs);
+  /* The first shadow is a band of page colour that fills the gap above the rail, so text scrolling under the
+     translucent toolbar does not show between the two. */
+  box-shadow: 0 -7px 0 0 var(--bg-primary), var(--shadow-xs);
   font-family: var(--font-ui);
 }
 .md-body > .section-minimap + * { margin-top: 0; }

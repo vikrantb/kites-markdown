@@ -85,8 +85,8 @@ Because `renderMarkdown` runs again whenever a document is loaded, pasted, or a 
 Notes on the generic `text` branch, all following from `textContent`:
 
 - Lists, blockquotes, callouts, definition lists, footnote sections and HTML blocks are read as their plain text.
-- An image inside other text contributes nothing; `alt` text is not part of `textContent`. An image alone in its paragraph gets a visible caption (its title, or its alt text) from `mdvCaptionImages`, and that caption is read.
-- Every other element sitting directly in `#mdBody` or a `section-content` is read too, including the front-matter dashboard (`.fm-dashboard`) (inferred; see [Limitations](#limitations-and-browser-quirks)). The section minimap is not read: its labels are drawn by CSS, so its `textContent` is empty.
+- An image contributes nothing; `alt` text is not part of `textContent`. An image alone in its paragraph shows a caption (its title, or its alt text) from `mdvCaptionImages`, but the caption is drawn by CSS from `data-caption`, so it is not read either (it is kept out of the text so a comment on the figure cannot be anchored to other words; see [features.md](features.md#other-rendered-elements)).
+- Every other element sitting directly in `#mdBody` or a `section-content` is read too, including the front-matter dashboard (`.fm-dashboard`) (inferred; see [Limitations](#limitations-and-browser-quirks)). The section rail (minimap) is not read: its labels, current section and position are drawn by CSS, so its `textContent` is empty.
 
 ```mermaid
 flowchart TD
