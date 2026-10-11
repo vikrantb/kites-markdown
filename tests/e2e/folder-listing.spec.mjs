@@ -44,6 +44,26 @@ test.describe('in a browser', () => {
     expect(problems).toEqual([]);
   });
 
+  test('listing again finds the same files: the tree on screen is kept, not drawn again', async ({ page }) => {
+    const problems = await start(page);
+    await openFolder(page);
+    await openInTree(page, 'status.md', 'Status');
+    await page.evaluate(() => { window.__row = document.querySelector('#mdvFolderTree [data-path="status.md"]'); });
+    const listedAt = await page.evaluate(() => mdvFolderState.listedAt);
+    await ageListing(page);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect.poll(() => page.evaluate(() => mdvFolderState.listedAt)).toBeGreaterThan(listedAt);
+    expect(await page.evaluate(() => window.__row.isConnected && window.__row === document.querySelector('#mdvFolderTree [data-path="status.md"]'))).toBe(true);
+    await expect(page.locator('#mdvFolderTree .is-current')).toHaveAttribute('data-path', 'status.md');
+    // The control: a listing that finds a new file draws the tree again.
+    await seed(page, { 'zz-new.md': '# New\n' });
+    await ageListing(page);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect.poll(() => listedPaths(page)).toContain('zz-new.md');
+    expect(await page.evaluate(() => window.__row.isConnected)).toBe(false);
+    expect(problems).toEqual([]);
+  });
+
   test('quick open finds a file an agent has just written, without the window losing focus', async ({ page }) => {
     const problems = await start(page);
     await openFolder(page);
@@ -57,15 +77,16 @@ test.describe('in a browser', () => {
     await page.keyboard.press('Enter');
     await expectTitle(page, 'Handoff: the hotfix');
     await expect(page.locator('#mdvFolderStatus')).toHaveText('8 Markdown files');
-    // A listing that arrives while the reader moves through the list keeps them on their row.
+    // A new listing that arrives while the reader moves through the list keeps them on their row.
     await page.keyboard.press('Control+p');
     await page.keyboard.type('hand');
     await expect(rows).toHaveCount(3);
     await page.keyboard.press('ArrowDown');
     const chosen = await rows.nth(1).locator('.mdv-palette-name').textContent();
+    await seed(page, { 'handoffs/2026-10-12-handover.md': '# Handoff: the handover\n' });
     await page.evaluate(() => mdvFolderRefresh());
-    await expect(rows.nth(1)).toHaveAttribute('aria-selected', 'true');
-    await expect(rows.nth(1).locator('.mdv-palette-name')).toHaveText(chosen);
+    await expect(rows).toHaveCount(4);
+    await expect(page.locator('#mdvQuickOpenList [aria-selected="true"] .mdv-palette-name')).toHaveText(chosen);
     expect(problems).toEqual([]);
   });
 
@@ -125,6 +146,31 @@ test.describe('in a browser', () => {
 });
 
 test.describe('in the desktop app', () => {
+  test('a file the shell lists with a new time is searched again, though the folder holds the same files', async ({ page }) => {
+    const problems = collectProblems(page);
+    await desktopSetup(page);
+    await page.goto('markdown-viewer.html');
+    await expectTitle(page, 'Project notes');
+    await openFolder(page);
+    await page.keyboard.press('Control+Shift+F');
+    await page.keyboard.type('zebrafinch');
+    await expect(page.locator('#mdvFolderSearchStatus')).toHaveText('No matches in “notes”');
+    await page.keyboard.press('Escape');
+    // An agent rewrites status.md: the shell now reads the new text and lists a new size and time.
+    await page.evaluate((path) => {
+      const doc = window.__shell.disk[path];
+      doc.text += '\nA zebrafinch was seen.\n';
+      const entry = window.__shell.listing.entries.find((e) => e.path === path);
+      entry.size = doc.text.length;
+      entry.mtimeMs = 2000;
+    }, abs('status.md'));
+    await ageListing(page);
+    await page.keyboard.press('Control+Shift+F');
+    await expect(page.locator('#mdvFolderSearchStatus')).toHaveText('1 match in 1 file');
+    expect(problems).toEqual([]);
+  });
+
+
   test('mdvFolder.resolve: a leading / is the folder\'s top unless it names a path inside the folder', async ({ page }) => {
     const problems = collectProblems(page);
     await desktopSetup(page);

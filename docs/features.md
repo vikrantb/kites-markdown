@@ -152,7 +152,9 @@ Every way the folder opens a document (the sidebar, quick open, search in files,
   The desktop app keeps the folder's path (`mdv-folder`) and whether the sidebar was open (`mdv-folder-panel`), and a new
   window opens with it.
 - **Kept current:** the folder is listed again when the window comes back into focus, when quick open or search in
-  files opens (each at most every 5 s), and by the sidebar's refresh button.
+  files opens (each at most every 5 s), and by the sidebar's refresh button. A listing that finds the same files keeps
+  the tree on screen as it is, with no sorting or drawing again (in the desktop app it still takes each file's new size
+  and time, so search in files reads a rewritten file again).
 
 ### Folder sidebar
 

@@ -111,7 +111,8 @@ async function mdvFolderWalk(dir, generation) {
       }
     }
     if (truncated) break;
-    if (entries.length - mdvFolderState.progress >= 50) {
+    // "Listing… N files so far", for a first listing only: listing again keeps the tree on screen as it is.
+    if (!mdvFolderState.entries.length && entries.length - mdvFolderState.progress >= 50) {
       mdvFolderState.progress = entries.length;
       mdvFolderEmit('change');
     }
@@ -132,14 +133,17 @@ async function mdvFolderList(generation) {
   return walked && Object.assign({ root: s.root, name: s.root.name }, walked);
 }
 
-// Lists the open folder again. The reader's place in it (the current document) is kept.
+// Lists the open folder again. The reader's place in it (the current document) is kept. Listing again happens often
+// (the window coming back, quick open and search in files after a few seconds), and usually finds the same files:
+// then the entries, the tree on screen and their order stay as they are (only the desktop listing's sizes and times
+// are taken), so a large folder is not sorted and drawn again for nothing.
 async function mdvFolderRefresh() {
   const s = mdvFolderState;
   if (!s.kind) return false;
   const generation = ++s.generation;
   s.loading = true;
   s.progress = 0;
-  mdvFolderEmit('change');
+  if (!s.entries.length) mdvFolderEmit('change'); // "Listing the folder…"; with a tree on screen, nothing changes yet
   let listing = null;
   try {
     listing = await mdvFolderList(generation);
@@ -151,6 +155,10 @@ async function mdvFolderRefresh() {
     return false;
   }
   if (generation !== s.generation || !listing) return false;
+  const hadError = !!s.error;
+  const same = s.entries.length > 0 && listing.name === s.rootName && listing.truncated === s.truncated
+    && listing.unreadable === s.unreadable && listing.entries.length === s.entries.length
+    && listing.entries.every((e) => s.byPath.has(e.path));
   s.loading = false;
   s.error = null;
   s.root = listing.root;
@@ -158,6 +166,20 @@ async function mdvFolderRefresh() {
   s.truncated = listing.truncated;
   s.unreadable = listing.unreadable;
   s.listedAt = Date.now();
+  if (same) {
+    // The desktop listing carries each file's size and time: search in files reads again what changed by them.
+    let changedTimes = false;
+    if (s.kind === 'desktop') {
+      for (const e of listing.entries) {
+        const kept = s.byPath.get(e.path);
+        if (kept.size !== e.size || kept.mtimeMs !== e.mtimeMs) { kept.size = e.size; kept.mtimeMs = e.mtimeMs; changedTimes = true; }
+      }
+    }
+    await mdvFolderNoteShown();
+    if (hadError) mdvFolderEmit('change');
+    if (changedTimes) mdvFolderEmit('times');
+    return true;
+  }
   // A browser walk does not ask each file its size and time; what an earlier look found (search in files, quick
   // open's newest-first order) stays with the file until a later look finds it changed.
   if (s.kind === 'browser') {
@@ -166,6 +188,9 @@ async function mdvFolderRefresh() {
       if (before && before.mtimeMs != null) { e.size = before.size; e.mtimeMs = before.mtimeMs; e.statAt = before.statAt; }
     }
   }
+  // The walk's own work and the sorting and drawing below go in separate tasks, so neither holds the page long.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  if (generation !== s.generation) return false;
   mdvFolderAccept(listing.entries);
   await mdvFolderNoteShown();
   mdvFolderEmit('change');
