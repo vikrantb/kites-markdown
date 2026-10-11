@@ -460,7 +460,9 @@ test('an in-document link goes to its target as the outline does: unfolded, focu
   await expect(setup).toHaveAttribute('aria-expanded', 'true');
   expect(await page.evaluate(() => document.activeElement.id)).toBe('install');
   await expect.poll(() => activeEntry(page)).toBe('Install');
-  expect(await page.evaluate(() => location.hash)).toBe('#install'); // as the browser's own jump left it, so Back returns
+  expect(await page.evaluate(() => location.hash)).toBe('#install'); // as the browser's own jump left it...
+  await page.goBack(); // ...so Back returns to where the reader was, in the same document
+  expect(await page.evaluate(() => [location.hash, !!document.getElementById('install')])).toEqual(['', true]);
 
   // A footnote at the end of the document, in a folded last section.
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
