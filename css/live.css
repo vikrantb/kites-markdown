@@ -7,9 +7,10 @@
 /* Back and forward, at the start of the toolbar, shown once there is somewhere to go */
 .mdv-history-nav { margin-right: 6px; flex-shrink: 0; }
 /* Where the toolbar has no room for both, they take the room of the reading time (words and minutes), so the
-   document's name and the Open button keep theirs */
+   document's name and the Open button keep theirs. js/history.js marks the toolbar while they show: a :has() rule here
+   made every diagram drawing restyle the page (a 1.4 s long task on kitchen-sink.md in headless Chromium). */
 @media (max-width: 1440px) {
-  .toolbar:has(> .mdv-history-nav:not([hidden])) .toolbar-meta { display: none; }
+  .toolbar.mdv-history-shown .toolbar-meta { display: none; }
 }
 .mdv-history-nav[hidden] { display: none; }
 .mdv-history-nav .btn:disabled,
@@ -60,7 +61,7 @@ body.mdv-sidebar-open .mdv-live-toast { right: calc(min(360px, 92vw) + 16px); } 
   box-shadow: var(--shadow-sm);
 }
 .mdv-live-chip[hidden] { display: none; }
-.mdv-live-chip:not(:has(button)) { padding-right: 12px; }
+.mdv-live-chip-plain { padding-right: 12px; }
 .mdv-live-chip[data-state="copy"] { border-left-color: var(--border-primary); color: var(--text-secondary); }
 .mdv-live-chip[data-state="copy"] > svg { stroke: var(--text-tertiary); }
 .mdv-live-chip > svg {

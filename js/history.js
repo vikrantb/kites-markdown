@@ -415,6 +415,9 @@ function mdvHistoryButtons() {
   const after = mdvHistoryTarget(1);
   const keys = mdvHistoryKeyNames();
   nav.hidden = !before && !after;
+  // The toolbar gives Back and Forward the room of the reading time on narrower screens (css/live.css)
+  const toolbar = nav.closest('.toolbar');
+  if (toolbar) toolbar.classList.toggle('mdv-history-shown', !nav.hidden);
   back.disabled = !before;
   forward.disabled = !after;
   const name = (t) => (t && t.record && t.record.doc && t.record.doc.name) || '';

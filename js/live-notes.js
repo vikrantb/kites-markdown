@@ -215,6 +215,7 @@ function mdvLiveUpdateChip() {
   }
   if (canFollow) parts.push(button('live-follow', 'Follow…', 'Open the file itself, so the page follows it'));
   el.title = words[1];
+  el.classList.toggle('mdv-live-chip-plain', !parts.some((p) => p.localName === 'button'));
   el.replaceChildren(...parts);
   el.dataset.state = state;
   el.hidden = false;
