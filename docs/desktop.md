@@ -216,8 +216,11 @@ showing anything in this mode, and must have), optionally saves, edits the file 
 a stale version (expecting live reload and a conflict), lists the document's folder through `mdv_list_directory` and
 opens the folder sidebar on it (`--expect folder` checks the listing of `tests/fixtures/folder` against its
 `expected.json`, with a `.git` and a `node_modules` folder added), and finally renders a document with an `onerror`
-handler to prove it does not run. It puts back what the viewer remembers between launches (recent documents, the
-folder) before it reports, so a run leaves nothing behind in the installed app. The shell adds the window title and the asset scope, writes the JSON
+handler to prove it does not run. What the viewer remembers between launches (recent documents, the folder and its
+sidebar) is never written to the installed app's storage during a run: from before the page's scripts start, those
+`localStorage` keys live in memory (`self-test.js` wraps `Storage.prototype` for them alone), and the report says
+whether the real store still holds what it held before (`remembered.untouched`, required by `--expect render`).
+The shell adds the window title and the asset scope, writes the JSON
 and exits 0 or 1 (1 after 60 s without a report, and 1 if the report cannot be written).
 
 **CI** (`.github/workflows/desktop.yml`) builds a universal macOS app and a Windows x64 installer with a

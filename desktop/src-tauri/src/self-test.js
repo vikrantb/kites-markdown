@@ -10,18 +10,37 @@
   if (window.__mdvSelfTestStarted) return;
   window.__mdvSelfTestStarted = true;
 
-  // What the viewer remembers between launches lives in the app's localStorage, which the installed app on this
-  // machine shares. It is read now, before the page's scripts run, and put back before the report, so a self-test
-  // leaves no recent documents or folder state behind.
-  const REMEMBERED = ['mdv-recents', 'mdv-folder', 'mdv-folder-panel'];
-  const remembered = {};
-  try { for (const key of REMEMBERED) remembered[key] = localStorage.getItem(key); } catch (_) { /* storage off */ }
-  function restoreRemembered() {
+  // What the viewer remembers between launches (recent documents, the folder and its sidebar) lives in the app's
+  // localStorage, which the installed app on this machine shares. A self-test starts from none of it and writes none
+  // of it: from before the page's scripts run, these keys live in memory for the run (Storage.prototype is wrapped
+  // for them alone). Putting the keys back at the end was not enough: a review measured one more recent document in
+  // the installed app after each run (a write after the put-back, or a put-back the store never flushed; with
+  // nothing written, neither can happen). The report says whether the real store still holds what it held before the
+  // run (rememberedUntouched), and the run fails when it does not.
+  const REMEMBERED = new Set(['mdv-recents', 'mdv-folder', 'mdv-folder-panel']);
+  const sandbox = new Map();
+  const realStorage = { get: Storage.prototype.getItem, set: Storage.prototype.setItem, remove: Storage.prototype.removeItem };
+  const sandboxed = (store, key) => {
+    try { return store === window.localStorage && REMEMBERED.has(String(key)); } catch (_) { return false; }
+  };
+  const rememberedBefore = {};
+  try { for (const key of REMEMBERED) rememberedBefore[key] = realStorage.get.call(window.localStorage, key); } catch (_) { /* storage off */ }
+  Storage.prototype.getItem = function (key) {
+    if (sandboxed(this, key)) return sandbox.has(String(key)) ? sandbox.get(String(key)) : null;
+    return realStorage.get.apply(this, arguments);
+  };
+  Storage.prototype.setItem = function (key, value) {
+    if (sandboxed(this, key)) { sandbox.set(String(key), String(value)); return; }
+    return realStorage.set.apply(this, arguments);
+  };
+  Storage.prototype.removeItem = function (key) {
+    if (sandboxed(this, key)) { sandbox.delete(String(key)); return; }
+    return realStorage.remove.apply(this, arguments);
+  };
+  function rememberedUntouched() {
     try {
-      for (const key of REMEMBERED) {
-        if (remembered[key] == null) localStorage.removeItem(key); else localStorage.setItem(key, remembered[key]);
-      }
-    } catch (_) { /* storage off */ }
+      return [...REMEMBERED].every((key) => realStorage.get.call(window.localStorage, key) === rememberedBefore[key]);
+    } catch (_) { return null; }
   }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -303,16 +322,17 @@
       if (report.sanitization.executed) f.push('script in a document ran');
       if (!report.sanitization.rawErrorFired || !report.sanitization.probeRendered) f.push('the script probe did not run, so it proves nothing');
     }
+    // The keys the page wrote during the run (kept in memory) show the sandbox had something to keep out.
+    report.remembered = { untouched: rememberedUntouched(), keptInMemory: [...sandbox.keys()].sort() };
+    if (report.remembered.untouched === false) f.push('the run changed what the installed app remembers (recent documents, folder)');
     report.ok = f.length === 0;
     report.totalMs = Math.round(performance.now() - started);
-    restoreRemembered();
     await host.reportSelfTest(report);
   }
 
   const begin = () => run().catch((e) => {
     const host = window.mdvHost;
     const failure = { ok: false, failures: ['self-test crashed: ' + clip(e && e.stack ? e.stack : e, 600)] };
-    restoreRemembered();
     if (host && host.reportSelfTest) host.reportSelfTest(failure);
   });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin);
