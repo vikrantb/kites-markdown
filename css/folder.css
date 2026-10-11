@@ -11,6 +11,11 @@
   margin-right: 8px; padding-right: 8px;
   border-right: 1px solid var(--border-primary);
 }
+/* Mid widths: the group takes the room the word count and reading time had, so the document's name keeps its
+   place in the toolbar (at 1,024 px it was squeezed to nothing). viewer.css hides them below 901 px anyway. */
+@media screen and (min-width: 901px) and (max-width: 1180px) {
+  .toolbar-meta { display: none; }
+}
 /* The menu looks like the theme menu (viewer.css .dropdown), and opens from the left edge. */
 .mdv-recent-wrap { position: relative; }
 .mdv-recent-menu {

@@ -1,103 +1,13 @@
 // A folder of documents: the sidebar, quick open, search in files, recent documents and link previews.
-//
-// Browser: the folder is tests/fixtures/folder, written into the origin-private file system (OPFS), whose
-// handles are real FileSystemDirectoryHandles (listing, reading, resolve(), isSameEntry(), IndexedDB), and the
-// folder picker is replaced by one that returns it. Desktop: a stand-in for the shell answers the bridge's
-// commands (as desktop.spec.mjs does) and records them; the shell's own walk is tested by its unit tests
-// (desktop/src-tauri/src/folders.rs) and by the app's self-test (--expect folder).
-//
-// mdvOpenDocument belongs to js/files.js (stream L). Until it is merged, the init script below provides a minimal
-// one (render the document, link its handle); a real one defined by js/files.js replaces it, and the recorder
-// wraps whichever is there. The tests assert on the page, not on the stand-in.
+// The fixture folder, the browser's origin-private folder, the stand-in shell and the stand-in for stream L's load
+// seam are in folder-helpers.mjs. More of the folder's behaviour: folder-open.spec.mjs (opening documents: the last
+// request wins, the reader's place, the last document after a reload, the keyboard), folder-listing.spec.mjs (the
+// contract's resolve, listing again, quick open), folder-search.spec.mjs and folder-preview.spec.mjs.
 import { test, expect } from '@playwright/test';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { join, relative, sep } from 'node:path';
-import { collectProblems } from './support/viewer.mjs';
-
-const repo = (p) => fileURLToPath(new URL(`../../${p}`, import.meta.url));
-const FIXTURE = repo('tests/fixtures/folder');
-const EXPECTED = JSON.parse(readFileSync(join(FIXTURE, 'expected.json'), 'utf8'));
-const APP_CSP = Object.entries(JSON.parse(readFileSync(repo('desktop/src-tauri/tauri.conf.json'), 'utf8')).app.security.csp)
-  .map(([directive, value]) => `${directive} ${value}`).join('; ');
-
-function readTree(dir) {
-  const out = {};
-  for (const name of readdirSync(dir)) {
-    const full = join(dir, name);
-    if (statSync(full).isDirectory()) Object.assign(out, readTree(full));
-    else out[relative(FIXTURE, full).split(sep).join('/')] = readFileSync(full, 'utf8');
-  }
-  return out;
-}
-const FILES = Object.assign(readTree(FIXTURE), EXPECTED.addedAtRunTime);
-
-// ------- The browser: an OPFS folder, the picker, and mdvOpenDocument -------
-async function browserSetup(page, { permission = 'granted' } = {}) {
-  await page.addInitScript(({ permission }) => {
-    window.__opened = [];
-    window.__pickerCalls = 0;
-    window.__permissionRequests = 0;
-    window.showDirectoryPicker = async () => {
-      window.__pickerCalls++;
-      return (await navigator.storage.getDirectory()).getDirectoryHandle('notes');
-    };
-    // A remembered folder whose permission the browser dropped: it must be asked for again, from a click.
-    if (permission !== 'granted') {
-      const proto = FileSystemHandle.prototype;
-      let granted = false;
-      proto.queryPermission = async function () { return granted ? 'granted' : permission; };
-      proto.requestPermission = async function () { window.__permissionRequests++; granted = true; return 'granted'; };
-    }
-    // Stream L's mdvOpenDocument stands in until it is merged (a function in js/files.js replaces this one).
-    window.mdvOpenDocument = async (doc) => {
-      mdvFileHandle = doc.handle || null;
-      rawMarkdown = doc.text;
-      currentFileName = doc.name;
-      renderMarkdown(doc.text, doc.name);
-    };
-    document.addEventListener('DOMContentLoaded', () => {
-      const open = window.mdvOpenDocument;
-      window.mdvOpenDocument = (doc, opts) => {
-        window.__opened.push({ path: doc.path, name: doc.name, push: !!(opts && opts.push), handle: !!doc.handle, text: typeof doc.text === 'string' });
-        return open(doc, opts);
-      };
-    });
-  }, { permission });
-}
-
-async function seed(page, files = FILES, folder = 'notes') {
-  await page.evaluate(async ({ files, folder }) => {
-    const root = await (await navigator.storage.getDirectory()).getDirectoryHandle(folder, { create: true });
-    for (const [rel, text] of Object.entries(files)) {
-      const parts = rel.split('/');
-      let dir = root;
-      for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
-      const file = await dir.getFileHandle(parts[parts.length - 1], { create: true });
-      const w = await file.createWritable();
-      await w.write(text);
-      await w.close();
-    }
-  }, { files, folder });
-}
-
-async function openFolder(page) {
-  await page.click('#mdvFolderBtn');
-  await expect(page.locator('#mdvFolderTree [data-path]').first()).toBeVisible();
-}
-
-const listedPaths = (page) => page.locator('#mdvFolderTree [data-path]').evaluateAll((els) => els.map((e) => e.dataset.path));
-// A heading's own words (its aria-label), without the fold toggle and the '#' permalink the viewer adds.
-const heading = (page) => page.locator('#mdBody h1').first();
-const expectTitle = (page, text) => expect(heading(page)).toHaveAttribute('aria-label', text);
-
-async function start(page, options) {
-  const problems = collectProblems(page);
-  await browserSetup(page, options);
-  await page.goto('markdown-viewer.html');
-  await seed(page);
-  return problems;
-}
+import {
+  EXPECTED, FILES, start, seed, openFolder, listedPaths, expectTitle, openInTree,
+  ROOT, abs, desktopSetup, shellCalls, settled, collectProblems,
+} from './folder-helpers.mjs';
 
 test.describe('in a browser', () => {
   test('the sidebar lists exactly the Markdown files, skipping .git, node_modules, dot-folders and anything over 8 folders deep', async ({ page }) => {
@@ -130,7 +40,7 @@ test.describe('in a browser', () => {
     await page.locator('#mdvFolderTree [data-path="status.md"]').click();
     await expectTitle(page, 'Status');
     const opened = await page.evaluate(() => window.__opened);
-    expect(opened).toEqual([{ path: 'status.md', name: 'status.md', push: true, handle: true, text: true }]);
+    expect(opened).toEqual([{ path: 'status.md', name: 'status.md', push: true, handle: true, text: true, position: false }]);
     const current = page.locator('#mdvFolderTree .is-current');
     await expect(current).toHaveCount(1);
     await expect(current).toHaveAttribute('data-path', 'status.md');
@@ -235,7 +145,7 @@ test.describe('in a browser', () => {
     // Letters out of order match nothing.
     await page.fill('#mdvQuickOpenInput', 'zzq');
     await expect(rows).toHaveCount(0);
-    await expect(page.locator('#mdvQuickOpen .mdv-palette-status')).toHaveText('No file matches');
+    await expect(page.locator('#mdvQuickOpen .mdv-palette-status')).toHaveText('No file in “notes” matches');
     await page.fill('#mdvQuickOpenInput', 'oldid');
     await expect(rows.first().locator('.mdv-palette-name')).toHaveText('old-idea.markdown');
     await page.fill('#mdvQuickOpenInput', 'hnd ui');
@@ -305,30 +215,94 @@ test.describe('in a browser', () => {
     expect(problems).toEqual([]);
   });
 
-  test('Ctrl/Cmd+Shift+F still folds every section while the folder is not shown', async ({ page }) => {
+  test('Ctrl/Cmd+Shift+F searches in files whenever a folder is open, with its sidebar hidden too, and folds every section only with no folder', async ({ page }) => {
     const problems = await start(page);
-    await openFolder(page);
-    await page.locator('#mdvFolderTree [data-path="status.md"]').click();
+    // No folder open: the key folds every section, as it always did (the positive control for the fold).
+    await page.evaluate((text) => { rawMarkdown = text; renderMarkdown(text, 'status.md'); }, FILES['status.md']);
     await expectTitle(page, 'Status');
+    await page.locator('#mdBody').click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press('Control+Shift+F');
+    await expect(page.locator('#mdBody .section-content.collapsed').first()).toBeAttached();
+    await expect(page.locator('#mdvFolderSearch')).toHaveCount(0);
+    await page.keyboard.press('Control+Shift+F'); // and unfolds them
+    await expect(page.locator('#mdBody .section-content.collapsed')).toHaveCount(0);
+    // A folder open, its sidebar hidden by the reader: the key searches, and folds nothing.
+    await openFolder(page);
+    await openInTree(page, 'status.md', 'Status');
     await page.click('#mdvFolderBtn');
     await expect(page.locator('#mdvFolderPanel')).toBeHidden();
     await page.locator('#mdBody').click({ position: { x: 5, y: 5 } });
     await page.keyboard.press('Control+Shift+F');
-    await expect(page.locator('#mdvFolderSearch')).toHaveCount(0);
-    await expect(page.locator('#mdBody .section-content.collapsed').first()).toBeAttached();
+    await expect(page.locator('#mdvFolderSearch')).toBeVisible();
+    await expect(page.locator('#mdvFolderSearchInput')).toBeFocused();
+    await expect(page.locator('#mdBody .section-content.collapsed')).toHaveCount(0);
+    await page.keyboard.type('rate limiter');
+    await expect(page.locator('#mdvFolderSearchStatus')).toHaveText('2 matches in 2 files');
+    await page.keyboard.press('Escape');
+    // A narrow window hides the sidebar by itself: still search.
+    await page.setViewportSize({ width: 880, height: 800 });
+    await page.locator('#mdBody').click({ position: { x: 5, y: 5 } });
+    await page.keyboard.press('Control+Shift+F');
+    await expect(page.locator('#mdvFolderSearch')).toBeVisible();
+    await expect(page.locator('#mdBody .section-content.collapsed')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    // The ? sheet says when each applies, one line each.
+    await page.keyboard.press('?');
+    const rows = page.locator('#shortcutsOverlay .shortcut-row');
+    await expect(rows.filter({ hasText: 'Search in the folder’s files' })).toHaveCount(1);
+    await expect(rows.filter({ hasText: 'Fold or unfold all sections (no folder open)' })).toHaveCount(1);
+    for (const label of ['Search in the folder’s files', 'Fold or unfold all sections (no folder open)', 'Go to the folder’s files']) {
+      const row = rows.filter({ hasText: label });
+      const keys = await row.locator('kbd').evaluateAll((els) => els.map((k) => Math.round(k.getBoundingClientRect().top)));
+      expect(new Set(keys).size, `the keys of "${label}" sit on one line`).toBe(1);
+    }
     expect(problems).toEqual([]);
   });
 
-  test('recent documents survive a reload, open again from the welcome screen and the menu, and can be cleared', async ({ page }) => {
+  test('at mid widths the toolbar still names the document: the folder group takes the word count\'s room, not the name\'s', async ({ page }) => {
     const problems = await start(page);
     await openFolder(page);
-    await page.locator('#mdvFolderTree [data-path="status.md"]').click();
-    await expectTitle(page, 'Status');
-    await page.locator('#mdvFolderTree [data-path="handoffs/2026-10-08-ui.md"]').click();
-    await expectTitle(page, 'Handoff: the reading UI');
-    await page.locator('#mdvFolderTree [data-path="status.md"]').click();
-    await expectTitle(page, 'Status');
+    await openInTree(page, 'status.md', 'Status');
+    for (const width of [1024, 1180]) {
+      await page.setViewportSize({ width, height: 800 });
+      const title = await page.locator('#titleText').evaluate((el) => ({ width: el.getBoundingClientRect().width, clipped: el.scrollWidth > el.clientWidth + 1, text: el.textContent }));
+      expect(title.text, `${width} px`).toBe('status.md');
+      expect(title.clipped, `${width} px: the name is cut`).toBe(false);
+      await expect(page.locator('#readingMeta')).toBeHidden();
+      expect(await page.evaluate(() => document.querySelector('.toolbar').scrollWidth - document.querySelector('.toolbar').clientWidth), `${width} px: nothing pushed off the toolbar`).toBeLessThanOrEqual(0);
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(page.locator('#readingMeta')).toBeVisible();
+    expect(problems).toEqual([]);
+  });
+
+  test('a reload shows the document the reader was reading, and the recent list keeps its order', async ({ page }) => {
+    const problems = await start(page);
+    await openFolder(page);
+    await openInTree(page, 'status.md', 'Status');
+    await openInTree(page, 'handoffs/2026-10-08-ui.md', 'Handoff: the reading UI');
+    await openInTree(page, 'status.md', 'Status');
     // What is stored (IndexedDB), not only what the page holds: the reload reads it back.
+    const stored = () => page.evaluate(() => mdvGetHandle('mdv-recents').then((l) => (l || []).map((r) => r.path)));
+    await expect.poll(stored).toEqual(['status.md', 'handoffs/2026-10-08-ui.md']);
+    // The file the viewer reopens at startup (js/comments.js) is the one on screen, however it was opened.
+    await expect.poll(() => page.evaluate(() => mdvGetHandle('current').then((h) => h && h.name))).toBe('status.md');
+    await page.reload();
+    await expectTitle(page, 'Status');
+    await expect(page.locator('#mdvFolderTree .is-current')).toHaveAttribute('data-path', 'status.md');
+    // Nothing reordered: the reopened document was already the newest.
+    await page.waitForTimeout(300);
+    expect(await stored()).toEqual(['status.md', 'handoffs/2026-10-08-ui.md']);
+    expect(problems).toEqual([]);
+  });
+
+  test('recent documents are listed on the welcome screen and in the menu, newest first, open again, and can be cleared', async ({ page }) => {
+    // A browser that asks again for permission after a reload: nothing reopens by itself, so the welcome screen shows.
+    const problems = await start(page, { permission: 'prompt' });
+    await openFolder(page);
+    await openInTree(page, 'status.md', 'Status');
+    await openInTree(page, 'handoffs/2026-10-08-ui.md', 'Handoff: the reading UI');
+    await openInTree(page, 'status.md', 'Status');
     const stored = () => page.evaluate(() => mdvGetHandle('mdv-recents').then((l) => (l || []).map((r) => r.path)));
     await expect.poll(stored).toEqual(['status.md', 'handoffs/2026-10-08-ui.md']);
     await page.reload();
@@ -338,6 +312,7 @@ test.describe('in a browser', () => {
     await expect(welcome.locator('.mdv-recent-where').nth(1)).toHaveText('notes/handoffs');
     await welcome.locator('.mdv-recent-item').nth(1).click();
     await expectTitle(page, 'Handoff: the reading UI');
+    expect(await page.evaluate(() => window.__permissionRequests)).toBe(1);
     // The toolbar menu, from the keyboard: the newest first, then Clear.
     await page.click('#mdvRecentBtn');
     const menu = page.locator('#mdvRecentMenu');
@@ -472,60 +447,7 @@ test.describe('in a browser', () => {
   });
 });
 
-// ------- The desktop app: a stand-in shell -------
-const ROOT = '/work/notes';
-const abs = (rel) => `${ROOT}/${rel}`;
-const desktopDoc = (rel) => ({ path: abs(rel), name: rel.split('/').pop(), text: FILES[rel], mtimeMs: 1000, version: `v-${rel}`, readOnly: null, reason: 'initial' });
-const LISTING = {
-  root: ROOT, name: 'notes', truncated: false, unreadable: 0,
-  entries: EXPECTED.listed.map((rel) => ({ path: abs(rel), rel, name: rel.split('/').pop(), depth: rel.split('/').length - 1, size: FILES[rel].length, mtimeMs: 1000 })),
-};
-
-async function desktopSetup(page, { doc = desktopDoc('README.md'), storage = {} } = {}) {
-  await page.route('**/markdown-viewer.html', async (route) => {
-    const response = await route.fetch();
-    await route.fulfill({ response, headers: Object.assign({}, response.headers(), { 'content-security-policy': APP_CSP }) });
-  });
-  const disk = {};
-  for (const rel of Object.keys(FILES)) disk[abs(rel)] = desktopDoc(rel);
-  await page.addInitScript(({ doc, disk, listing, storage }) => {
-    for (const [k, v] of Object.entries(storage)) localStorage.setItem(k, v);
-    const calls = [];
-    window.__shell = { calls };
-    window.__TAURI_INTERNALS__ = { metadata: { currentWindow: { label: 'doc-1' }, currentWebview: { label: 'doc-1' } } };
-    window.__TAURI__ = {
-      core: {
-        convertFileSrc: (path) => location.origin + path,
-        async invoke(cmd, args) {
-          calls.push({ cmd, args: args || {} });
-          switch (cmd) {
-            case 'mdv_initial_document': return doc;
-            case 'mdv_read_document':
-              if (disk[args.path]) return Object.assign({}, disk[args.path], { reason: 'reload' });
-              return Promise.reject({ code: 'not-found', message: `${args.path} does not exist.` });
-            case 'mdv_list_directory':
-              if (args.root === listing.root) return listing;
-              return Promise.reject({ code: 'not-found', message: `${args.root} does not exist.` });
-            case 'mdv_choose_folder': return listing.root;
-            case 'mdv_open_path': return null;
-            case 'mdv_self_test_requested': return false;
-            default: return null;
-          }
-        },
-      },
-      event: { async listen() { return () => {}; } },
-    };
-    window.__opened = [];
-    window.mdvOpenDocument = async (doc) => { rawMarkdown = doc.text; currentFileName = doc.name; renderMarkdown(doc.text, doc.name); };
-    document.addEventListener('DOMContentLoaded', () => {
-      const open = window.mdvOpenDocument;
-      window.mdvOpenDocument = (d, opts) => { window.__opened.push({ path: d.path, push: !!(opts && opts.push), handle: d.handle }); return open(d, opts); };
-    });
-  }, { doc, disk, listing: LISTING, storage });
-}
-
-const shellCalls = (page, cmd) => page.evaluate((c) => window.__shell.calls.filter((x) => x.cmd === c).map((x) => x.args), cmd);
-
+// ------- The desktop app: a stand-in shell (folder-helpers.mjs) -------
 test.describe('in the desktop app', () => {
   test('the folder is the document\'s own folder, listed by mdv_list_directory; a click reads the file through the bridge', async ({ page }) => {
     const problems = collectProblems(page);
@@ -587,15 +509,10 @@ test.describe('in the desktop app', () => {
 });
 
 // ------- How it looks: every theme, LOOKED AT (test-results/folder-*.png) -------
-// Dialogs, menus and the card fade in; a screenshot waits until nothing on the page is animating.
-async function settled(page) {
-  await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== 'running'));
-  await page.waitForTimeout(60);
-}
-
 for (const theme of ['light', 'dark', 'sepia']) {
   test(`the sidebar, quick open, search in files, the preview and the welcome list in the ${theme} theme`, async ({ page }) => {
-    const problems = await start(page);
+    // A browser that asks again for permission after a reload, so the last page load ends on the welcome screen.
+    const problems = await start(page, { permission: 'prompt' });
     await page.evaluate((t) => localStorage.setItem('mdv-theme', t), theme);
     await page.reload();
     await openFolder(page);
