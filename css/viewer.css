@@ -29,7 +29,7 @@
   --bg-tooltip: #23262E;
   --bg-scrim: rgba(18, 20, 26, 0.42);
   --bg-tts-highlight: rgba(69, 83, 201, 0.10);
-  --bg-chrome: rgba(251, 250, 247, 0.84);
+  --bg-chrome: rgba(251, 250, 247, 0.93);
 
   /* Text */
   --text-primary: #1D2129;
@@ -150,6 +150,9 @@
   --toolbar-height: 48px;
   --tts-height: 0px;
 
+  /* The drawn link mark: a repository badge, a link card and the link tooltip all mask it in their own colour. */
+  --mdv-icon-link: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 14a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.2 1.2'/%3E%3Cpath d='M14 10a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.2-1.2'/%3E%3C/svg%3E");
+
   /* Type */
   --font-reading: 'Literata', 'Charter', 'Iowan Old Style', 'Georgia', serif;
   --font-ui: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -186,7 +189,7 @@
     --bg-tooltip: #3A2E21;
     --bg-scrim: rgba(40, 28, 14, 0.40);
     --bg-tts-highlight: rgba(154, 74, 28, 0.12);
-    --bg-chrome: rgba(244, 236, 218, 0.86);
+    --bg-chrome: rgba(244, 236, 218, 0.94);
 
     --text-primary: #33281C;
     --text-secondary: #57483A;
@@ -311,7 +314,7 @@
     --bg-tooltip: #E3E5EA;
     --bg-scrim: rgba(0, 0, 0, 0.55);
     --bg-tts-highlight: rgba(148, 162, 255, 0.15);
-    --bg-chrome: rgba(20, 22, 27, 0.82);
+    --bg-chrome: rgba(20, 22, 27, 0.92);
 
     --text-primary: #E3E5EA;
     --text-secondary: #B3B8C3;
@@ -469,8 +472,11 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
   border-bottom: 1px solid var(--border-secondary);
   display: flex; align-items: center;
   padding: 0 10px 0 14px; gap: 4px;
-  backdrop-filter: saturate(1.6) blur(14px);
-  -webkit-backdrop-filter: saturate(1.6) blur(14px);
+  /* Frosted, but calm: nearly opaque (--bg-chrome) and with no saturation boost, so a bright diagram or chart scrolling
+     underneath is a faint hint behind the controls, not a coloured smear (saturate(1.6) over 84 % did that with the
+     pie and bar charts). */
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 .toolbar-group { display: flex; align-items: center; gap: 2px; }
 .toolbar-title {
@@ -1306,27 +1312,38 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
 .md-body .fm-repo-badge .mdv-repo-star { display: none; }
 .md-body a.fm-repo-badge::before {
   content: ''; width: 12px; height: 12px; flex-shrink: 0; background: currentColor;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 14a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.2 1.2'/%3E%3Cpath d='M14 10a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.2-1.2'/%3E%3C/svg%3E") center / contain no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 14a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.2 1.2'/%3E%3Cpath d='M14 10a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.2-1.2'/%3E%3C/svg%3E") center / contain no-repeat;
+  -webkit-mask: var(--mdv-icon-link) center / contain no-repeat; mask: var(--mdv-icon-link) center / contain no-repeat;
 }
 .md-body a.fm-repo-badge:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-strong); }
 .md-body .fm-repo-badge::after { content: none !important; }
 
-/* ===== Section minimap: a rail of the H2 sections =====
+/* ===== Section rail: where the reader is, section by section =====
    The first element of the document, ahead of the dashboard and the title as chrome (never between them), and it
-   sticks under the toolbar while reading, so read / current / ahead is always in view. The column's top padding
-   shrinks to make room for it.
-   With room each segment carries its label (data-label); otherwise (.is-track, set by enhancements.js) the segments
-   become a track and the rail names the current section (data-current) and where it is (data-position). The
-   scroll spy (navigation.js) marks .active and .passed segments and sets data-current and data-position. */
+   sticks under the toolbar while reading. A slim progress strip with one segment per H2 section: the sections above
+   the reader are filled, the current one is in the accent and filled as far as the reader has got
+   (--mdv-rail-progress, written on that segment on every frame of scrolling), and the ones ahead are an empty track.
+   The column's top padding shrinks to make room for it.
+   With room each segment carries its label (data-label) over its bar; otherwise (.is-track, set by enhancements.js)
+   the segments are bars only, and the rail names the current section (data-current) and where it is
+   (data-position). In a title's introduction no section is current, so the rail marks where the reader is
+   (.at-intro), as the outline marks the title: the track form shows the title after a "you are here" dot, and the
+   label form puts the dot at the start of the next section's bar. A segment's full name shows on hover and on
+   keyboard focus. The scroll spy (navigation.js) sets .active, .passed, .at-intro, data-current, data-position and
+   the progress; nothing else writes them. */
 .content-wrapper:has(.section-minimap) { padding-top: 14px; }
 .section-minimap {
+  /* A segment's bar is --fill up to --p (0 to 1) and --rest after it; these are the three states' colours. Read,
+     current and ahead are told apart at 3:1 or more in every theme (polish.spec.mjs measures them). */
+  --rail-ahead: color-mix(in srgb, var(--text-tertiary) 20%, var(--bg-primary));
+  --rail-read: color-mix(in srgb, var(--accent) 88%, var(--bg-primary));
+  --rail-now: var(--accent);
+  --rail-now-rest: color-mix(in srgb, var(--accent) 22%, var(--bg-primary));
   position: sticky; top: calc(var(--toolbar-height) + 6px); z-index: 40;
-  display: flex; align-items: center; gap: 3px;
-  height: 34px; margin: 0 0 18px; padding: 0 3px;
+  display: flex; align-items: center; gap: 2px;
+  height: 34px; margin: 0 0 18px; padding: 0 4px;
   background: var(--bg-primary);
   border: 1px solid var(--border-secondary);
-  border-radius: 12px;
+  border-radius: 11px;
   /* The first shadow is a band of page colour that fills the gap above the rail, so text scrolling under the
      translucent toolbar does not show between the two. */
   box-shadow: 0 -7px 0 0 var(--bg-primary), var(--shadow-xs);
@@ -1341,51 +1358,77 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
 }
 .section-minimap.is-track::before {
   content: attr(data-current);
-  max-width: 38%; margin-right: 10px;
+  max-width: 38%; margin-right: 12px;
   font-weight: 600; color: var(--text-primary);
+  transition: color var(--transition-fast), padding var(--transition-fast);
+}
+/* In the title's introduction: the title, in the accent, after a "you are here" dot. */
+.section-minimap.is-track.at-intro::before {
+  padding-left: 14px; color: var(--accent-strong);
+  background: radial-gradient(circle at 4px 50%, var(--accent) 3.5px, transparent 4px) no-repeat;
 }
 .section-minimap.is-track::after {
   content: attr(data-position);
-  flex-shrink: 0; margin-left: 10px;
+  flex-shrink: 0; margin-left: 12px;
   font-weight: 500; color: var(--text-tertiary); font-variant-numeric: tabular-nums;
 }
 .minimap-segment {
+  --p: 0; --fill: var(--rail-read); --rest: var(--rail-ahead);
   position: relative;
-  flex: 1 1 0; min-width: 0; height: 26px; padding: 0;
+  flex: 1 1 0; min-width: 0; height: 28px; padding: 0;
   display: flex; align-items: center; justify-content: center;
   border: 0; border-radius: 8px; background: none;
   color: var(--text-tertiary);
   font-size: 0.68rem; font-weight: 600; letter-spacing: 0.01em;
   cursor: pointer;
 }
-/* Every visible state is drawn on ::before. In label mode it carries the label, clipped with an ellipsis inside the
-   segment. */
+.minimap-segment.passed { --p: 1; color: var(--text-secondary); }
+.minimap-segment.active {
+  --p: var(--mdv-rail-progress, 0); --fill: var(--rail-now); --rest: var(--rail-now-rest);
+  color: var(--accent-strong);
+}
+.minimap-segment:focus-visible { outline-offset: -2px; border-radius: 8px; }
+/* Label mode: the label on ::before, clipped with an ellipsis inside the segment, and the bar under it, drawn by the
+   segment's own background. */
 .minimap-segment::before {
   content: attr(data-label);
   display: block; width: 100%; height: 100%;
-  padding: 0 8px; border-radius: 8px;
-  line-height: 26px; text-align: center;
+  padding: 1px 8px 7px; border-radius: 7px;
+  line-height: 20px; text-align: center;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   transition: background-color var(--transition-fast), color var(--transition-fast), height var(--transition-fast);
 }
-.minimap-segment:hover::before { background: var(--bg-hover); color: var(--text-primary); }
-.minimap-segment.passed::before { color: var(--text-secondary); }
-.minimap-segment.active::before { background: var(--accent); color: var(--text-on-accent); box-shadow: var(--shadow-xs); }
-/* Track mode: read, current and ahead as a segmented bar; the tooltip names each segment. */
-.section-minimap.is-track .minimap-segment::before {
-  content: ''; height: 5px; padding: 0; border-radius: 5px;
-  background: var(--border-primary); box-shadow: none;
+.section-minimap:not(.is-track) .minimap-segment {
+  background: linear-gradient(to right, var(--fill) calc(var(--p) * 100%), var(--rest) 0)
+    center bottom 4px / calc(100% - 16px) 3px no-repeat;
 }
-.section-minimap.is-track .minimap-segment.passed::before { background: color-mix(in srgb, var(--accent) 45%, var(--border-primary)); }
-.section-minimap.is-track .minimap-segment.active::before { background: var(--accent); height: 9px; }
-.section-minimap.is-track .minimap-segment:hover::before { background: var(--text-tertiary); height: 9px; }
-.section-minimap.is-track .minimap-segment.active:hover::before { background: var(--accent-hover); }
+/* In the title's introduction the label form has no room for the title, so the "you are here" dot sits where the
+   reader's next section starts: on the left end of its bar. */
+.section-minimap:not(.is-track).at-intro .minimap-segment:not(.passed):is(:first-child, .passed + *) {
+  background:
+    radial-gradient(circle, var(--accent) 3.5px, transparent 4px) left 4px bottom 1.5px / 8px 8px no-repeat,
+    linear-gradient(to right, var(--fill) calc(var(--p) * 100%), var(--rest) 0) center bottom 4px / calc(100% - 16px) 3px no-repeat;
+}
+.section-minimap:not(.is-track) .minimap-segment:hover::before { background: var(--bg-hover); color: var(--text-primary); }
+.section-minimap:not(.is-track) .minimap-segment.active::before { color: var(--accent-strong); }
+/* Track mode: the bars only, on ::before. They thicken as they are read: a hairline ahead, a bar once read, and the
+   current one tallest (and the one under the pointer), so an unread document reads as a ruler, not an empty bar. */
+.section-minimap.is-track .minimap-segment::before {
+  content: ''; height: 3px; padding: 0; border-radius: 4px;
+  background: linear-gradient(to right, var(--fill) calc(var(--p) * 100%), var(--rest) 0);
+}
+.section-minimap.is-track .minimap-segment.passed::before { height: 5px; }
+.section-minimap.is-track .minimap-segment.active::before { height: 7px; }
+.section-minimap.is-track .minimap-segment:hover::before { height: 7px; }
+.section-minimap.is-track .minimap-segment:not(.active):not(.passed):hover::before {
+  --rest: color-mix(in srgb, var(--text-tertiary) 55%, var(--bg-primary));
+}
 /* Full title on hover and keyboard focus. Out of layout (display: none) until then: a hidden but laid-out
    tooltip near the right edge would widen the page. */
 .minimap-segment::after {
   content: attr(data-label);
   display: none;
-  position: absolute; top: calc(100% + 8px); left: 50%;
+  position: absolute; top: calc(100% + 9px); left: 50%;
   transform: translateX(-50%);
   z-index: 20; pointer-events: none;
   max-width: min(280px, 80vw); width: max-content;
@@ -1407,15 +1450,16 @@ html:has(.section-minimap) { scroll-padding-top: calc(var(--toolbar-height) + 64
    Diagrams
    ========================================================================== */
 .mermaid-wrapper {
+  --mdv-card-pad: 24px;
   position: relative;
-  margin: 1.8em 0; padding: 44px 24px 26px;
+  margin: 1.8em 0; padding: 44px var(--mdv-card-pad) 26px;
   background-color: var(--diagram-bg);
   background-image: radial-gradient(circle at 1px 1px, var(--diagram-grid) 1px, transparent 1.4px);
   background-size: 18px 18px;
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  overflow-x: auto; overflow-y: hidden;
+  overflow: hidden;
   text-align: center;
   min-height: 96px;
   transition: box-shadow var(--transition-normal), border-color var(--transition-normal);
@@ -1433,7 +1477,8 @@ html:has(.section-minimap) { scroll-padding-top: calc(var(--toolbar-height) + 64
 }
 .md-body .mermaid-wrapper pre.mermaid {
   margin: 0; padding: 0; border: 0; border-radius: 0;
-  background: none; box-shadow: none; overflow: visible;
+  background: none; box-shadow: none;
+  overflow-x: auto; overflow-y: hidden;
   font-family: var(--font-ui);
 }
 /* Before Mermaid draws it (or when the library is unavailable) the source reads as quiet code. */
@@ -1445,6 +1490,66 @@ html:has(.section-minimap) { scroll-padding-top: calc(var(--toolbar-height) + 64
 .mermaid.rendered > svg {
   display: inline-block; height: auto; max-width: 100%;
   animation: mdv-fade-in 0.28s ease-out;
+}
+/* A drawing keeps a legible size (mdvSizeDiagram in mermaid.js sets its widths on its card).
+   On screen, a card at the column's own level grows into the page's margins when that makes it at least a fifth wider
+   than the column: up to its drawing's natural width (--mdv-wide-w), centred on the column and 40 px clear of the
+   content area's sides (--mdv-area, measured by mermaid.js), which keeps it out from under the floating scroll
+   buttons. A smaller gain would leave the card overhanging the text by a few pixels for little more drawing (at
+   1180 px, 36 px a side for 10 %), so it keeps the column. In clamp(), the factor 1000 makes a step: 0 below that
+   gain, the whole gain above it. One inside a list, a quote or a callout keeps its box, the expanded view's copy is
+   not in a card, and paper keeps the column. The three widths are registered so they do not inherit: a resize
+   restyles each card, not the drawing inside it. */
+@property --mdv-area { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --mdv-card-want { syntax: '<length-percentage>'; inherits: false; initial-value: 100%; }
+@property --mdv-card-w { syntax: '<length-percentage>'; inherits: false; initial-value: 100%; }
+@media screen {
+  :is(.md-body, .section-content) > .mermaid-wrapper {
+    --mdv-card-want: max(100%, min(calc(var(--mdv-wide-w) + 2 * var(--mdv-card-pad) + 2px), calc(var(--mdv-area) - 80px)));
+    --mdv-card-w: calc(100% + clamp(0px, (var(--mdv-card-want) - 120%) * 1000, var(--mdv-card-want) - 100%));
+    width: var(--mdv-card-w);
+    margin-left: calc((100% - var(--mdv-card-w)) / 2);
+  }
+}
+/* On a laptop or a desktop a drawing is always whole: it shrinks to fit its card however small that makes it, and the
+   expand button shows it at full size. Only a phone's screen gives it a floor (--mdv-diagram-min, 70 % of its natural
+   width), below which it scrolls sideways inside its card instead (below). With the floor on a desktop too, the
+   desktop app's window would show 4 of a 12-step pipeline's steps, a Gantt chart drawn before a sidebar opened would
+   lose its last section, and nothing would tell the reader. Screen only: paper cannot scroll. */
+@media screen and (max-width: 600px) {
+  .mermaid-wrapper .mermaid.rendered > svg { min-width: var(--mdv-diagram-min, 0px); }
+}
+/* Mermaid draws each diagram first in a scratch <div id="d…"> at the end of <body>, as wide as the window, and an XY
+   chart caps its own width there (max-width: 700 px) before it measures its labels in screen pixels: on a phone it
+   was shrunk, the labels measured short, and its axis title overlapped the tick labels. A scratch area wider than any
+   drawing measures them true. It is taken out of the page's flow and not painted (laid out and measured all the
+   same), so the page does not widen to 1,600 px while a diagram is drawn. The div lives only while one is. */
+body > div[id^="dmdv-mermaid-"] {
+  position: fixed; top: 0; left: 0; min-width: 1600px;
+  visibility: hidden; pointer-events: none;
+}
+/* A drawing wider than its card scrolls inside it, and fades out at the side it continues to: a scroll-driven
+   animation of its mask, so the fade follows the scroll position and is there only while the drawing can scroll. A
+   browser without scroll timelines just scrolls: behind @supports, an engine that took the animation without its
+   timeline cannot hold its last frame, a fade over the left edge of every drawing. The card's frame, label and
+   expand button stay whole. The mask hides the box's own focus ring, so the card draws it. */
+@supports (animation-timeline: scroll()) {
+  .md-body .mermaid-wrapper pre.mermaid.rendered {
+    --mdv-fade-end: linear-gradient(to right, #000 calc(100% - 44px), transparent);
+    --mdv-fade-both: linear-gradient(to right, transparent, #000 44px, #000 calc(100% - 44px), transparent);
+    --mdv-fade-start: linear-gradient(to left, #000 calc(100% - 44px), transparent);
+    animation: mdv-scroll-cue auto linear both;
+    animation-timeline: scroll(self inline);
+  }
+}
+@keyframes mdv-scroll-cue {
+  0% { -webkit-mask-image: var(--mdv-fade-end); mask-image: var(--mdv-fade-end); }
+  4%, 96% { -webkit-mask-image: var(--mdv-fade-both); mask-image: var(--mdv-fade-both); }
+  100% { -webkit-mask-image: var(--mdv-fade-start); mask-image: var(--mdv-fade-start); }
+}
+@supports selector(:has(*)) {
+  .md-body .mermaid-wrapper pre.mermaid:focus-visible { outline: none; }
+  .mermaid-wrapper:has(> pre.mermaid:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 }
 .diagram-expand-btn {
   position: absolute; top: 10px; right: 10px; z-index: 2;
@@ -1469,21 +1574,35 @@ html:has(.section-minimap) { scroll-padding-top: calc(var(--toolbar-height) + 64
 .mdv-diagram .actor, .mdv-diagram .note, .mdv-diagram .er.entityBox, .mdv-diagram .stateGroup rect {
   filter: drop-shadow(0 1px 1.5px var(--diagram-shadow));
 }
-/* Nodes that link to a section of the document */
+/* Nodes that link to a section of the document. At rest the cue is quiet: a dotted underline in a soft accent, set
+   below the descenders (an HTML label's box is unclipped, so a short one, such as a class name, keeps its line). An
+   SVG text label (a mind map's) cannot place an underline clear of its letters, so it takes the link colour instead.
+   Under the pointer or the keyboard focus the node lifts (a deeper shadow), its outline and label take the accent,
+   and the underline turns solid. The pointer cursor and the "Go to section" tooltip say the rest. */
 .mdv-diagram .mdv-node-link { cursor: pointer; }
-.mdv-diagram .mdv-node-link > :is(rect, polygon, circle, ellipse, path) {
-  transition: stroke var(--transition-fast), stroke-width var(--transition-fast);
+.mdv-diagram .mdv-node-link > :is(rect, polygon, circle, ellipse, path),
+.mdv-diagram .mdv-node-link > g > :is(rect, polygon, circle, ellipse, path) {
+  transition: stroke var(--transition-fast), stroke-width var(--transition-fast), filter var(--transition-fast);
 }
-.mdv-diagram .mdv-node-link:hover > :is(rect, polygon, circle, ellipse, path),
-.mdv-diagram .mdv-node-link:focus-visible > :is(rect, polygon, circle, ellipse, path) {
-  stroke: var(--accent) !important; stroke-width: 2px !important;
+.mdv-diagram .mdv-node-link:is(:hover, :focus-visible) > :is(rect, polygon, circle, ellipse, path),
+.mdv-diagram .mdv-node-link:is(:hover, :focus-visible) > g > :is(rect, polygon, circle, ellipse, path) {
+  stroke: var(--accent) !important; stroke-width: 1.75px !important;
+  filter: drop-shadow(0 4px 7px var(--diagram-shadow)) drop-shadow(0 1px 2px var(--diagram-shadow));
 }
+.mdv-diagram .mdv-node-link foreignObject { overflow: visible; }
 .mdv-diagram .mdv-node-link .nodeLabel {
-  text-decoration: underline;
+  text-decoration: underline dotted;
   text-decoration-color: color-mix(in srgb, var(--accent) 55%, transparent);
   text-decoration-thickness: 1.5px;
-  text-underline-offset: 3px;
+  text-underline-position: under;
+  text-underline-offset: 1px;
+  transition: color var(--transition-fast), text-decoration-color var(--transition-fast);
 }
+.mdv-diagram .mdv-node-link:is(:hover, :focus-visible) .nodeLabel {
+  color: var(--accent-strong) !important;
+  text-decoration-style: solid; text-decoration-color: currentColor;
+}
+.mdv-diagram .mdv-node-link text { fill: var(--accent-strong) !important; }
 .mdv-diagram .mdv-node-link:focus-visible { outline: none; }
 
 /* A diagram that could not be drawn */
@@ -1587,7 +1706,15 @@ html:has(.section-minimap) { scroll-padding-top: calc(var(--toolbar-height) + 64
   width: 36px; height: 36px; border-radius: 9px;
   background: var(--accent-soft); color: var(--accent-strong);
   display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; font-size: 1rem;
+  flex-shrink: 0; font-size: 0;
+}
+/* One drawn link mark (--mdv-icon-link) for every card and for the link tooltip; their badges name the kind of link.
+   The glyph links.js writes into each stays in the DOM but is not drawn (font-size 0): GitHub's star read as
+   "favourite" and the docs and file marks were colour emoji that changed with the operating system, as the inline
+   link marks did before they were drawn (see above). */
+.link-chip .link-chip-icon::before, .link-tooltip-icon::before {
+  content: ''; width: 17px; height: 17px; background: currentColor;
+  -webkit-mask: var(--mdv-icon-link) center / contain no-repeat; mask: var(--mdv-icon-link) center / contain no-repeat;
 }
 .link-chip .link-chip-body { min-width: 0; flex: 1; }
 .link-chip .link-chip-title {
@@ -1628,8 +1755,9 @@ html:has(.section-minimap) { scroll-padding-top: calc(var(--toolbar-height) + 64
 .link-tooltip-icon {
   width: 18px; height: 18px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  color: var(--text-tertiary);
+  color: var(--text-tertiary); font-size: 0;
 }
+.link-tooltip-icon::before { width: 14px; height: 14px; }
 .link-tooltip-text {
   font-family: var(--font-mono); font-size: 0.72rem;
   color: var(--text-secondary);
@@ -1793,7 +1921,7 @@ html:has(.section-minimap) { scroll-padding-top: calc(var(--toolbar-height) + 64
   position: fixed; bottom: 0; left: 0; right: 0;
   z-index: 90;
   background: var(--bg-chrome);
-  backdrop-filter: saturate(1.6) blur(14px); -webkit-backdrop-filter: saturate(1.6) blur(14px);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); /* calm, as the toolbar */
   border-top: 1px solid var(--border-secondary);
   padding: 9px 16px;
   display: none;
@@ -2118,6 +2246,8 @@ body.mdv-sidebar-open .content-wrapper { padding-right: 380px; }
   .md-body tr { break-inside: avoid; }
   .mermaid-wrapper { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .md-body pre, .mermaid-wrapper, .callout, .mdv-figure { break-inside: avoid; }
+  /* Paper cannot scroll sideways, so a drawing shrinks to the page however small, and its card keeps the column: the
+     floor and the wide card are screen rules. */
   .md-body h1, .md-body h2, .md-body h3 { break-after: avoid; }
   .md-body a[data-link-type]::after { content: none !important; }
 }
@@ -2152,7 +2282,7 @@ body.mdv-sidebar-open .content-wrapper { padding-right: 380px; }
   .md-body h1 { font-size: 1.75em; }
   .md-body h2 { font-size: 1.32em; }
   .md-body h3 { font-size: 1.14em; }
-  .mermaid-wrapper { padding: 40px 12px 16px; }
+  .mermaid-wrapper { --mdv-card-pad: 12px; padding: 40px var(--mdv-card-pad) 16px; }
   .md-body pre > code > code, .md-body pre > code { padding-left: 14px; padding-right: 14px; }
   .fm-metric { flex-basis: 84px; padding: 10px 12px 11px; }
   /* A phone has room for the essentials only. Page width is already full, focus mode matters less on a small

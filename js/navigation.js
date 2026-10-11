@@ -276,9 +276,11 @@ mdvNarrow.addEventListener('change', mdvSyncTocInert);
 //
 // The same decision drives the section rail (built by buildSectionMinimap in enhancements.js), and only this code
 // marks it. The rail once ran its own scroll listener with its own rule (the last h2 above the line), which disagreed
-// with the outline at the bottom of a page and past a closed <details>.
+// with the outline at the bottom of a page and past a closed <details>. Its fill (how far the reader is through the
+// current section) is measured in the same frame, so it never needs a listener of its own either.
 const mdvSpy = { headings: [], visible: null, links: new Map(), minimap: null, rail: [], railStart: '',
-                 railFrom: null, active: null, home: '', frame: 0 };
+                 railFrom: null, railCurrent: null, railEnd: null, railLanding: 0, railProgress: '', active: null,
+                 home: '', frame: 0 };
 
 function setupScrollSpy() {
   const body = document.getElementById('mdBody');
@@ -295,6 +297,9 @@ function setupScrollSpy() {
   mdvSpy.visible = null;
   mdvSpy.active = null;
   mdvSpy.railFrom = null;
+  mdvSpy.railCurrent = null;
+  mdvSpy.railEnd = null;
+  mdvSpy.railProgress = '';
   mdvScrollSpySchedule();
 }
 
@@ -336,6 +341,7 @@ function mdvScrollSpyUpdate() {
     }
   }
   mdvSetActiveHeading(found >= 0 ? list[found] : null, found);
+  mdvMarkRailProgress(line);
 }
 
 function mdvSetActiveHeading(h, index) {
@@ -360,7 +366,8 @@ function mdvSetActiveHeading(h, index) {
 // The rail shows h2 sections. The current one is the h2 at or above the current heading, within its h1 (an h1's own
 // introduction has none); every section before the reader's is read ("passed"). For the track form, which has no
 // room for labels, the rail also names the current section (otherwise the h1 the reader is in, or before any
-// heading the document's first h1) and its position.
+// heading the document's first h1) and its position. In an h1's introduction the outline marks the h1, and the rail
+// marks its title (.at-intro) instead of no section at all.
 function mdvMarkRail(h, index) {
   const nav = mdvSpy.minimap, rail = mdvSpy.rail;
   if (!nav) return;
@@ -382,7 +389,47 @@ function mdvMarkRail(h, index) {
   });
   nav.dataset.current = current ? current.seg.dataset.label : h1 ? mdvHeadingText(h1) : mdvSpy.railStart;
   nav.dataset.position = current ? `${at + 1} / ${rail.length}` : `${rail.length} sections`;
+  nav.classList.toggle('at-intro', !current && !!h1);
+  // The fill is written on the current segment only (mdvMarkRailProgress); a segment that stops being current drops it.
+  const prev = mdvSpy.railCurrent;
+  if (prev !== current) {
+    if (prev) prev.seg.style.removeProperty('--mdv-rail-progress');
+    mdvSpy.railProgress = '';
+  }
+  mdvSpy.railCurrent = current;
+  // Where a jump lands a heading: the page's scroll-padding-top, under the toolbar and the rail.
+  mdvSpy.railLanding = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+  // The current section ends where the next visible h1 or h2 starts (none: at the end of the document).
+  mdvSpy.railEnd = null;
+  const visible = mdvSpy.visible || [];
+  for (let i = current ? visible.indexOf(current.heading) + 1 : 0; i > 0 && i < visible.length; i++) {
+    if (visible[i].tagName === 'H1' || visible[i].tagName === 'H2') { mdvSpy.railEnd = visible[i]; break; }
+  }
   mdvKeepInView(current && current.seg, nav);
+}
+
+// How far the reader is through the current section, from 0 to 1, as --mdv-rail-progress on the current segment, which
+// CSS fills that far. Only that segment carries it: written on the rail, every segment and both pseudo-elements of each
+// would inherit it, and each frame of scrolling would restyle the whole rail (484 elements a frame with 120 sections).
+// Measured in scroll positions, so it moves with every frame of scrolling. A section starts where a jump to it lands
+// (its heading at the page's scroll-padding-top, or at the reading line if that is higher), so it is at 0 when a jump
+// arrives; counted from the reading line, a jump would arrive 15 to 27 % in. It ends where the next section becomes
+// current (the next h1 or h2 at the reading line), or, for the sections that end the page, where the page cannot
+// scroll any further, so at the bottom the current section is read to its end. Runs in the scroll spy's frame, after
+// it has decided the current section.
+function mdvMarkRailProgress(line) {
+  const current = mdvSpy.railCurrent;
+  if (!current) return;
+  const y = window.scrollY;
+  const last = document.documentElement.scrollHeight - window.innerHeight;
+  const start = current.heading.getBoundingClientRect().top + y - Math.min(mdvSpy.railLanding, line);
+  const end = Math.min(mdvSpy.railEnd ? mdvSpy.railEnd.getBoundingClientRect().top + y - line : Infinity, last);
+  const p = end <= start ? 1 : Math.min(1, Math.max(0, (y - start) / (end - start)));
+  const value = p.toFixed(3);
+  if (value !== mdvSpy.railProgress) {
+    mdvSpy.railProgress = value;
+    current.seg.style.setProperty('--mdv-rail-progress', value);
+  }
 }
 
 function mdvMark(el, on) {

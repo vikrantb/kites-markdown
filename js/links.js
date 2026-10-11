@@ -39,8 +39,9 @@ function enhanceLinks() {
       a.setAttribute('rel', 'noopener noreferrer');
     }
 
-    // Collect for links panel
-    allLinks.push({ href, text: a.textContent.trim(), type, element: a });
+    // Collect for links panel, with the words the reader sees: a repository badge's star is not drawn (enhancements.js)
+    const star = a.querySelector('.mdv-repo-star');
+    allLinks.push({ href, text: (star ? a.textContent.replace(star.textContent, '') : a.textContent).trim(), type, element: a });
 
     // Tooltip on hover
     a.addEventListener('mouseenter', (e) => showLinkTooltip(e, a, href, type));
@@ -184,9 +185,11 @@ function buildLinksPanel(links) {
     const group = document.createElement('div');
     group.className = 'links-panel-group';
 
+    // The label names the group. No glyph before it: GitHub's star read as "favourite", and the docs and file marks
+    // were colour emoji that changed with the operating system (the link cards and the tooltip draw one link mark).
     const title = document.createElement('div');
     title.className = 'links-panel-group-title';
-    title.innerHTML = `${info.icon} ${info.label} <span class="links-panel-group-count">${items.length}</span>`;
+    title.innerHTML = `${info.label} <span class="links-panel-group-count">${items.length}</span>`;
     group.appendChild(title);
 
     // Deduplicate by href

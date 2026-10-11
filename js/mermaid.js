@@ -52,6 +52,7 @@ function renderMermaidDiagrams() {
 
 async function mdvRenderMermaidPass(generation) {
   const els = [...document.querySelectorAll('.mermaid')].filter((el) => !el.closest('#diagramOverlay'));
+  mdvWatchDiagramScrollers(els);
   if (!els.length) return;
   const palette = mdvDiagramPalette();
   const todo = els.filter((el) => el.dataset.mdvPalette !== palette.key);
@@ -80,6 +81,7 @@ async function mdvRenderDiagram(el, palette) {
       svgEl.classList.add('mdv-diagram');
       mdvIsolateSvgIds(svgEl, id + '-', true);
       try { mdvFinishDiagram(svgEl, diagramType, palette); } catch (e) { console.warn('diagram finish:', e); }
+      if (wrapper) mdvSizeDiagram(wrapper, svgEl, diagramType);
     }
     el.classList.add('rendered');
     el.classList.remove('mermaid-error');
@@ -91,10 +93,13 @@ async function mdvRenderDiagram(el, palette) {
       if (typeof mdvLinkDiagramNodes === 'function') mdvLinkDiagramNodes(wrapper);
       if (typeof mdvRefreshDiagramOverlay === 'function') mdvRefreshDiagramOverlay(wrapper);
     }
+    mdvMarkDiagramScroller(el);
   } catch (err) {
     if (!el.isConnected) return;
     el.dataset.mdvPalette = palette.key; // the same source fails the same way; retry only in another palette
     mdvShowDiagramError(el, err, source);
+    if (wrapper) mdvSizeDiagram(wrapper, null);
+    mdvMarkDiagramScroller(el);
   }
 }
 
@@ -138,6 +143,84 @@ function mdvMakeDiagramExpandable(wrapper) {
     openDiagramOverlay(wrapper);
   });
 }
+
+// ---------- Size on the page ----------
+// mdvSizeDiagram gives each card two widths, and css/viewer.css decides where each applies, so the decision follows
+// the layout (a sidebar opening, the window resizing) without drawing the diagram again:
+// - --mdv-wide-w, the drawing's natural width. A card at the column's own level grows into the page's margins, up to
+//   that width and to the content area's width less 40 px a side (--mdv-area, below), when the window has room to make
+//   it at least a fifth wider; less would only look misaligned.
+// - --mdv-diagram-min, the least the drawing may shrink to: MDV_DIAGRAM_MIN_SCALE of its natural width. It applies on
+//   a phone only. Shrunk further there, labels fell under about 10 px (a sequence diagram was drawn at 49 %, its labels
+//   at 5 to 8 px; a 1,100 px flowchart at 30 %, at 4 px), so below its floor a drawing scrolls sideways inside its card,
+//   fades out at the side it continues to and becomes a keyboard stop (mdvMarkDiagramScroller). On a laptop or a
+//   desktop a drawing is always whole: it shrinks to fit, however small, and the expand button shows it at full size.
+//   With the floor there too, the desktop app's window would show 4 of a 12-step pipeline's steps, and nothing would
+//   say the rest was there.
+// A Gantt chart is laid out at least MDV_GANTT_MIN_WIDTH wide (mdvMermaidConfig); that layout width, which is its
+// natural width on a phone, is its floor there. svg null (a diagram that failed) clears both.
+const MDV_DIAGRAM_MIN_SCALE = 0.7;
+function mdvSizeDiagram(wrapper, svg, type) {
+  const vb = svg && svg.viewBox && svg.viewBox.baseVal;
+  const natural = vb && vb.width > 0 ? vb.width : 0;
+  if (!natural) {
+    wrapper.style.removeProperty('--mdv-diagram-min');
+    wrapper.style.removeProperty('--mdv-wide-w');
+    return;
+  }
+  const floor = type === 'gantt' ? Math.min(natural, MDV_GANTT_MIN_WIDTH) : natural * MDV_DIAGRAM_MIN_SCALE;
+  wrapper.style.setProperty('--mdv-diagram-min', Math.ceil(floor) + 'px');
+  wrapper.style.setProperty('--mdv-wide-w', Math.ceil(natural) + 'px');
+  mdvGiveCardsRoom([wrapper]);
+}
+
+// The content area's width, written on each card as --mdv-area, a registered property that does not inherit, so a
+// resize restyles the cards and nothing inside them. One observer measures it for the page's lifetime. A container
+// query on the content area gave the same width without script, but with cards sized against it every layout of the
+// page cost about four times as much in Chrome (0.53 against 0.13 ms on a 27-section handoff with nine diagrams), and
+// a layout follows every section change while scrolling.
+let mdvAreaWidth = 0;
+function mdvGiveCardsRoom(cards) {
+  for (const card of cards) card.style.setProperty('--mdv-area', mdvAreaWidth + 'px');
+}
+(function mdvWatchContentArea() {
+  const area = document.getElementById('contentWrapper');
+  if (!area || typeof ResizeObserver !== 'function') return;
+  new ResizeObserver((entries) => {
+    mdvAreaWidth = Math.round(entries[entries.length - 1].contentRect.width);
+    mdvGiveCardsRoom(document.querySelectorAll('#mdBody .mermaid-wrapper'));
+  }).observe(area);
+})();
+
+// A drawing that scrolls sideways inside its card is a keyboard stop, so the arrow keys can bring its hidden part into
+// view in every engine: Chrome makes such a box focusable by itself, WebKit (the Mac app) does not. Its focus ring is
+// drawn on the card (css/viewer.css), because the box's fade masks the box's own ring. Marked after each draw and again
+// whenever a box changes size (a rotation, a sidebar, a resize), by one observer that each render pass starts afresh.
+let mdvDiagramScrollerWatch = null;
+function mdvWatchDiagramScrollers(els) {
+  if (typeof ResizeObserver !== 'function') return;
+  if (mdvDiagramScrollerWatch) mdvDiagramScrollerWatch.disconnect();
+  else mdvDiagramScrollerWatch = new ResizeObserver((entries) => entries.forEach((e) => mdvMarkDiagramScroller(e.target)));
+  els.forEach((el) => mdvDiagramScrollerWatch.observe(el));
+}
+
+function mdvMarkDiagramScroller(box) {
+  const scrolls = box.scrollWidth > box.clientWidth + 1;
+  if (scrolls === box.hasAttribute('data-mdv-scrolls')) return;
+  if (scrolls) {
+    const wrapper = box.closest('.mermaid-wrapper');
+    box.setAttribute('data-mdv-scrolls', '');
+    box.tabIndex = 0;
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', `${(wrapper && wrapper.dataset.diagramLabel) || 'Diagram'}, scrolls sideways`);
+  } else {
+    for (const name of ['data-mdv-scrolls', 'tabindex', 'role', 'aria-label']) box.removeAttribute(name);
+  }
+}
+
+// A Gantt chart's axis carries a date label every few days whatever its width; narrower than this, on a phone, the
+// labels ran into each other ("Oct 03ct 05…") and the task names spilled across the bars.
+const MDV_GANTT_MIN_WIDTH = 600;
 
 // The width a diagram has on the page. Mermaid sizes a Gantt chart to its own hidden render container (the whole
 // window) unless told otherwise, and the result is then shrunk to the column with unreadably small text.
@@ -527,7 +610,8 @@ function mdvMermaidConfig(p, contentWidth) {
     class: { useMaxWidth: true },
     er: { useMaxWidth: true, fontSize: 13, entityPadding: 16, minEntityWidth: 110 },
     gantt: {
-      useMaxWidth: true, useWidth: contentWidth, barHeight: 24, barGap: 6, topPadding: 56, leftPadding: 90,
+      useMaxWidth: true, useWidth: contentWidth && Math.max(contentWidth, MDV_GANTT_MIN_WIDTH),
+      barHeight: 24, barGap: 6, topPadding: 56, leftPadding: 90,
       rightPadding: 40, gridLineStartPadding: 40, fontSize: 12, sectionFontSize: 13, numberSectionStyles: 2,
     },
     pie: { useMaxWidth: true, textPosition: 0.68 },
