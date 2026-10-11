@@ -145,7 +145,7 @@ The commenting layer wraps `renderMarkdown`. It reads the `MDV-COMMENTS` block f
 
 `buildSectionMinimap` adds a rail of buttons, one per H2, but **only when the document has three or more H2 headings**.
 
-- The rail is the first element of the document, outside every section, so the blocks inside sections keep their positions among their siblings (comment anchors record them). It is drawn in the space above the document, so it takes no room from it, and it stays under the toolbar while you read (`position: sticky`), so it always shows where you are. Jumps (outline, search, links, diagram nodes) land below it.
+- The rail is the first element of the document, ahead of the dashboard and the title (never between them), and outside every section, so the blocks inside sections keep their positions among their siblings (comment anchors record them). The column's top padding shrinks to make room for it. It stays under the toolbar while you read (`position: sticky`), so it always shows where you are. Jumps (outline, search, links, diagram nodes) land below it.
 - With room, each segment shows its section's title, cut with an ellipsis when it does not fit. Hovering a segment, or reaching it with Tab, shows the full title in a tooltip. The labels are drawn by CSS from `data-label` and named for screen readers with `aria-label`, so they are not document text: search, read-aloud and copy never pick them up.
 - When segments are narrower than 72 px (for example 17 sections in the reading column), they become a track: sections already read, the current one (larger, in the accent colour) and the ones ahead. The rail then names the current section and its position, "Architecture 3 / 17" (from `data-current` and `data-position`), and the title of the document above the first H2. The tooltip still names each segment. A `ResizeObserver` switches between the two modes when the column changes width.
 - Clicking a segment scrolls to that H2.
@@ -330,7 +330,7 @@ repos:
 | `status` | string | A pill that shows the text, with hyphens and underscores read as spaces (`in-progress` shows as IN PROGRESS). Its colour depends on the text: anything containing `ship` is green (shipped), `progress` is amber (in progress), `block` is red (blocked), and everything else is grey (draft). |
 | `date` | string | Shown with a calendar icon next to the status pill. Shown only when the dashboard itself is shown. |
 | `metrics` | list of `{label, value}` | A row of cards that share its width, each with a small label over a large value. They wrap on narrow screens; a card alone on its row takes the whole row. |
-| `repos` | list of `{name, github}` | A rounded badge per entry. With `github` set, the badge is a link that opens in a new tab and shows a link icon before the name. Without it, the badge is plain text. `name` defaults to `repo`. |
+| `repos` | list of `{name, github}` | A rounded badge per entry. With `github` set, the badge is a link that opens in a new tab and shows a link icon before the name (the star glyph render.js writes is kept in the text but hidden). Without it, the badge is plain text. `name` defaults to `repo`. |
 | `abbreviations` | map, or list of `KEY: value` | Every whole-word occurrence of a key gets a tooltip with its expansion. See [Abbreviation tooltips](#abbreviation-tooltips). |
 
 The section rail, if present, sits above the dashboard.

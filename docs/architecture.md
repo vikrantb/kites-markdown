@@ -775,7 +775,7 @@ template string and is not code. Anonymous handlers follow the table.
 | `mdvCaptionImages(body)` | `js/enhancements.js` | An image alone in its paragraph becomes a captioned figure (`p.mdv-figure`); the caption is an empty `span.mdv-figcaption` whose words CSS draws from `data-caption`, so they are not the paragraph's text |
 | `mdvAlignNumericColumns(body)` | `js/enhancements.js` | Right-aligns table columns whose cells are all numbers (`.mdv-num`, with tabular figures) |
 | `mdvTableScrollCues(body)` | `js/enhancements.js` | Marks the sides a table scrolls to (`mdv-more-left`, `mdv-more-right`), which CSS fades |
-| `mdvPolishDashboard(body)` | `js/enhancements.js` | The status pill reads a slug as words; a repository link drops its star glyph (CSS draws a link icon) |
+| `mdvPolishDashboard(body)` | `js/enhancements.js` | The status pill reads a slug as words; a repository link's star glyph moves into a hidden `span.mdv-repo-star` (CSS draws a link icon) |
 | `mdvHeadingLabel(h)` | `js/enhancements.js` | A heading's own words, without the fold toggle, the `#` permalink and a comment chip. Named apart from `navigation.js`'s helpers: classic scripts share one scope |
 | `applyAbbreviationTooltips(meta)` | `js/enhancements.js` | Wraps frontmatter `abbreviations` keys in `<abbr class="abbr-tooltip" title>`, outside code, math, diagrams and existing `<abbr>` |
 | `mdvFrontmatterAbbreviations(meta)` | `js/enhancements.js` | The abbreviation map from either YAML shape; the indented map is read from `rawMarkdown`'s frontmatter, only when it parses to the same meta |

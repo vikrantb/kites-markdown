@@ -179,7 +179,7 @@ for (const width of [1366, 390]) {
       return {
         rows: rows.size, holes,
         status: document.querySelector('#mdBody .fm-status-badge').innerText,
-        repo: document.querySelector('#mdBody a.fm-repo-badge').textContent,
+        repo: document.querySelector('#mdBody a.fm-repo-badge').innerText, // what is shown
       };
     });
     if (width === 1366) expect(d.rows).toBe(1);

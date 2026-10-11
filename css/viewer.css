@@ -1303,6 +1303,7 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
   transition: border-color var(--transition-fast), color var(--transition-fast), background-color var(--transition-fast);
 }
 .md-body a.fm-repo-badge { color: var(--text-link); }
+.md-body .fm-repo-badge .mdv-repo-star { display: none; }
 .md-body a.fm-repo-badge::before {
   content: ''; width: 12px; height: 12px; flex-shrink: 0; background: currentColor;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 14a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.2 1.2'/%3E%3Cpath d='M14 10a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.2-1.2'/%3E%3C/svg%3E") center / contain no-repeat;
@@ -1312,15 +1313,16 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
 .md-body .fm-repo-badge::after { content: none !important; }
 
 /* ===== Section minimap: a rail of the H2 sections =====
-   The first element of the document. Its negative top margin puts it in the content's top padding, so it takes no
-   room from the document, and it sticks under the toolbar while reading, so read / current / ahead is always in view.
+   The first element of the document, ahead of the dashboard and the title as chrome (never between them), and it
+   sticks under the toolbar while reading, so read / current / ahead is always in view. The column's top padding
+   shrinks to make room for it.
    With room each segment carries its label (data-label); otherwise (.is-track, set by enhancements.js) the segments
    become a track and the rail names the current section (data-current) and where it is (data-position). */
-.content-wrapper:has(.section-minimap) { padding-top: 52px; }
+.content-wrapper:has(.section-minimap) { padding-top: 14px; }
 .section-minimap {
   position: sticky; top: calc(var(--toolbar-height) + 6px); z-index: 40;
   display: flex; align-items: center; gap: 3px;
-  height: 34px; margin: -52px 0 18px; padding: 0 3px;
+  height: 34px; margin: 0 0 18px; padding: 0 3px;
   background: var(--bg-primary);
   border: 1px solid var(--border-secondary);
   border-radius: 12px;

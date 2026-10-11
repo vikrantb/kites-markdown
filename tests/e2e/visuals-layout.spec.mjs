@@ -2,7 +2,7 @@
 import { test, expect } from '@playwright/test';
 import { open } from './visuals-helpers.mjs';
 
-test('the section rail comes first, takes no room, and stays under the toolbar showing where the reader is', async ({ page }) => {
+test('the section rail comes first and stays under the toolbar, showing where the reader is', async ({ page }) => {
   await open(page, 'kitchen-sink.md');
   const rail = page.locator('#mdBody > .section-minimap');
   await expect(rail).toHaveCount(1);

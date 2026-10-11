@@ -110,7 +110,8 @@ function mdvTableScrollCues(body) {
 }
 
 // The frontmatter dashboard (render.js): a status written as a slug ("in-progress") reads as words, and a repository
-// link drops the star glyph, which read as "favourite"; CSS draws a link icon instead.
+// link's star glyph, which read as "favourite", is set apart in its own element that CSS hides (it draws a link
+// icon instead). The text itself is unchanged, so anything reading the badge's text still finds it.
 function mdvPolishDashboard(body) {
   const badge = body.querySelector(':scope > .fm-dashboard .fm-status-badge');
   if (badge) {
@@ -118,7 +119,13 @@ function mdvPolishDashboard(body) {
   }
   for (const a of body.querySelectorAll(':scope > .fm-dashboard a.fm-repo-badge')) {
     const t = a.firstChild;
-    if (t && t.nodeType === Node.TEXT_NODE) t.textContent = t.textContent.replace(/^\s*\u2605\s*/, '');
+    const m = t && t.nodeType === Node.TEXT_NODE && t.textContent.match(/^\s*\u2605/);
+    if (!m) continue;
+    const star = document.createElement('span');
+    star.className = 'mdv-repo-star';
+    star.textContent = m[0];
+    t.textContent = t.textContent.slice(m[0].length);
+    a.insertBefore(star, t);
   }
 }
 
