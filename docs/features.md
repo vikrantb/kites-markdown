@@ -115,10 +115,26 @@ These two buttons only matter for comments:
 
 For a reader of notes that live in folders of related documents (status reports, handoffs, proposals): a sidebar of
 the folder's Markdown files, quick open, search in files, recent documents and link previews. `js/folder.js` is the
-folder itself (`window.mdvFolder`, its path arithmetic in `folder-paths.js`); `folder-tree.js`, `quick-open.js`, `folder-search.js`, `recents.js` and
-`link-preview.js` are built on it, with their styles in `css/folder.css`. They show a document only through
-`mdvOpenDocument` (`js/files.js`). Tests: `tests/e2e/folder.spec.mjs`; the desktop app's own walk: the shell's unit
-tests (`desktop/src-tauri/src/folders.rs`) and its self-test (`--expect folder`).
+folder itself (`window.mdvFolder`, its path arithmetic in `folder-paths.js`); `folder-open.js` opens its documents;
+`folder-tree.js`, `quick-open.js`, `folder-search.js`, `recents.js` and `link-preview.js` are built on it, with their
+styles in `css/folder.css`. They show a document only through `mdvOpenDocument` (`js/files.js`). Tests:
+`tests/e2e/folder*.spec.mjs` (helpers in `folder-helpers.mjs`); the desktop app's own walk: the shell's unit tests
+(`desktop/src-tauri/src/folders.rs`) and its self-test (`--expect folder`).
+
+### Opening a document from the folder
+
+Every way the folder opens a document (the sidebar, quick open, search in files, recent documents) goes through
+`js/folder-open.js`:
+
+- **The last request wins.** Each request takes a ticket before it reads the file; a read that finishes after the
+  reader asked for another document (a large file, a busy disk) is dropped, so the document on screen is always the
+  last one asked for.
+- **The reader's place is kept.** As the reader leaves a document of the folder, the load seam hands over their place in
+  it (`mdvOnDocumentOpening`); going back to it from the sidebar, quick open or the recent menu opens it there
+  (`mdvOpenDocument`'s `position`), as Back and Forward do. A document never read before opens at its top; search in
+  files opens at the match.
+- **After a reload,** the document the reader was reading comes back (the comment code reopens the `current` file at
+  startup; every document shown from a file handle is kept as that file, `mdvRecentsRememberLast`).
 
 ### Opening a folder
 
@@ -135,8 +151,8 @@ tests (`desktop/src-tauri/src/folders.rs`) and its self-test (`--expect folder`)
   when the browser still allows it; otherwise the sidebar offers **Reconnect**, and the browser asks again on that click.
   The desktop app keeps the folder's path (`mdv-folder`) and whether the sidebar was open (`mdv-folder-panel`), and a new
   window opens with it.
-- **Kept current:** the folder is listed again when the window comes back into focus (at most every 5 s), and by the
-  sidebar's refresh button.
+- **Kept current:** the folder is listed again when the window comes back into focus, when quick open or search in
+  files opens (each at most every 5 s), and by the sidebar's refresh button.
 
 ### Folder sidebar
 
@@ -147,14 +163,18 @@ tests (`desktop/src-tauri/src/folders.rs`) and its self-test (`--expect folder`)
   folder shows how many files it holds; `.md` is left off the names and other extensions are tagged. A folder of 40
   files or fewer opens fully; a larger one opens down to the current document.
 - The document on screen is marked and kept in view, whichever way it was opened (`mdvFolderNoteShown`).
-- **Click** (or Enter) opens a file through `mdvOpenDocument`; in the desktop app **Cmd/Ctrl-click** opens it in its own
-  window, as a link does. At 900 px or less the panel closes after a pick.
+- **Click** (or Enter, or Space) opens a file through `mdvOpenDocument`; in the desktop app **Cmd/Ctrl-click** opens it in
+  its own window, as a link does. At 900 px or less the panel closes after a pick.
 - **Filter:** typing narrows the tree to the files whose paths hold every word typed, with the words marked, and says
-  how many match. Down moves into the tree, Enter opens the first match, Esc clears it.
+  how many match. Down moves into the tree, Enter opens the first match (and moves into it), Esc clears it.
 - **Keyboard (WAI-ARIA tree):** one row is in the Tab order; Up and Down move, Right opens a folder (then moves into it),
-  Left closes it (then moves to its parent), Home and End, Enter or Space opens, typing a name's first letters moves
-  to it. Rows carry `role="treeitem"`, `aria-level`, `aria-setsize`, `aria-posinset`, folders `aria-expanded`, and the
-  current document `aria-selected` and `aria-current`.
+  Left closes it (then moves to its parent), Home and End, typing a name's first letters moves to it. **Enter** opens a
+  file and moves the keyboard focus into the document, so Space and the arrows scroll it; **Space** opens it and stays
+  in the tree, to look through files. **`Ctrl/Cmd+Shift+E`** comes back to the tree from anywhere, showing the sidebar
+  first when it is hidden. Rows carry `role="treeitem"`, `aria-level`, `aria-setsize`, `aria-posinset`, folders
+  `aria-expanded`, and the current document `aria-selected` and `aria-current`.
+- **The toolbar:** the folder button and the recent-documents menu sit at its left. Between 901 and 1,180 px they take
+  the room of the word count and reading time, which are hidden there, so the document's name keeps its place.
 - Names from the file system are always set as text.
 
 ### Quick open
@@ -162,30 +182,47 @@ tests (`desktop/src-tauri/src/folders.rs`) and its self-test (`--expect folder`)
 `Ctrl/Cmd+P`, or the sidebar's **Go to a file**: a dialog that finds a file from a few letters of its name or path. Every
 letter typed must appear in order; a path ranks higher when the letters start words, run together, or fall in the file's
 own name, and words separated by spaces must each match (`hnd ui` finds `handoffs/2026-10-08-ui.md`). With nothing
-typed it lists the recent documents first. Up and Down move, Enter opens, `Ctrl/Cmd+Enter` opens in a new window in the
-desktop app, Esc closes. With no folder open it searches the recent documents, and the desktop app opens the document's
-folder for it (`mdvQoOpen`, `mdvFuzzy`).
+typed it lists the recent documents first, then the folder's files, the most recently changed first (a browser learns the
+files' times in the background as the dialog opens, `mdvFolderLearnTimes`). Up and Down move, Enter opens,
+`Ctrl/Cmd+Enter` opens in a new window in the desktop app, Esc closes. With no folder open it searches the recent
+documents, and the desktop app opens the document's folder for it (`mdvQoOpen`, `mdvFuzzy`).
+
+- **A file an agent has just written** is found: a listing more than 5 s old is taken again as the dialog opens, and the
+  list follows when it arrives, keeping a row the reader moved to with the arrows.
+- **"No file in “handoffs” matches"** names the folder it looked in: in the desktop app that is the document's own folder
+  unless the reader opened another.
+- A recent document from another folder of the same name is not taken for this folder's file (`isSameEntry`).
 
 ### Search in files
 
-`Ctrl/Cmd+Shift+F` while the folder sidebar is shown, or the sidebar's **Search in files**: full text over every file in
-the folder, grouped by file, with each file's match count and up to five matching lines (line number, about 130
-characters around the words, the words marked). Enter or a click opens the file and goes to the match: the rendered
-block that holds it is unfolded, scrolled into view and flashed, and the words themselves are highlighted for four
-seconds (the CSS Custom Highlight API; nothing in the document changes). Enter right after typing searches, then goes.
+`Ctrl/Cmd+Shift+F` whenever a folder is open (its sidebar shown or not), or the sidebar's **Search in files**: full text
+over every file in the folder, grouped by file, with each file's match count and up to five matching lines, one row per
+line (line number, about 130 characters around the words, every match on the line marked). Enter or a click opens the
+file and goes to the match: the rendered block that holds it is unfolded, scrolled into view and flashed, and the words
+themselves are highlighted for four seconds (the CSS Custom Highlight API; nothing in the document changes). Enter
+pressed before the results for what was typed are there (right after typing, or while the first search reads the
+folder) goes to the first match once they are; typing on cancels that.
+
+- **Finding the block:** every block of the page that holds the words is a candidate, in reading order, with the
+  occurrences it holds numbered as in the file; the words of the match's line, the heading it sits under and where it
+  falls in the file decide, so a short line (`- v2`) is found by its place (`mdvXsReveal`).
 
 - **Lazily and in the background:** the files are read the first time the dialog opens, eight at a time, in slices of
   about 12 ms, so the page never waits; a newer query stops an older one. Each later opening reads again only the files
   whose size or time changed, so documents rewritten while you read are searched as they are now.
 - **Limits:** a file over 1 MB, and anything past 64 MB in all, is not read (the dialog says how many); at most 200 files
-  are listed. The comment block at the end of a file (`MDV-COMMENTS`) is not searched.
-- `Ctrl/Cmd+Shift+F` still folds or unfolds every section while the sidebar is not shown (`toggleAllSections`).
+  are listed. The comment block at the end of a file (`MDV-COMMENTS`) is not searched. The search index belongs to the
+  folder as opened, never to its name.
+- "No matches in “notes”" names the folder searched.
+- `Ctrl/Cmd+Shift+F` folds or unfolds every section only when no folder is open (`toggleAllSections`); the toolbar's
+  fold button always does. The `?` sheet lists both, each with when it applies.
 
 ### Recent documents
 
 The last 15 documents you had on screen, newest first, on the welcome screen (with **Open a folder…** and **Clear**)
 and in the toolbar's clock menu (with **Clear the list**); each shows its name, its folder and when you opened it, and a
-click opens it again. Recorded whichever way a document was opened (`mdvRecentsNote`, from `mdvFolderOn('shown')`).
+click opens it again, at the reader's place in it when they read it in this session. Recorded whichever way a document
+was opened (`mdvRecentsNote`, from `mdvFolderOn('shown')`).
 
 - **Desktop app:** every document, by path (`localStorage` `mdv-recents`). An empty window opens a recent document as a
   double-click would (`mdvHost.openPath`); a window that shows a document opens it in place; Cmd/Ctrl-click opens it in
@@ -200,14 +237,19 @@ click opens it again. Recorded whichever way a document was opened (`mdvRecentsN
 
 Resting the pointer on a link to another Markdown document, or reaching it with Tab, shows after a moment a card with
 that document's title (its frontmatter `title`, else its first heading, else its file name), its first paragraph and
-where it is. Links get one when they lead to a Markdown file in the open folder, and in the desktop app to any Markdown
-file. The card replaces the link's address tooltip; it goes away when the pointer leaves the link and the card, on any
-key, on a scroll or a click.
+where it is. A link to a section (`plan.md#risks`) shows that section's heading and first paragraph, and names the
+document. Links get one when they lead to a Markdown file in the open folder, and in the desktop app to any Markdown
+file. The card replaces the link's address tooltip; it goes away when the pointer leaves the link and the card, on a
+key that is not a modifier (holding Ctrl, Cmd, Shift or Alt for a click leaves it), on a scroll or a click.
 
-The other document is untrusted input like any document: only its block structure is parsed (`md.block.parse`), its
-title and paragraph go through markdown-it and the render path's DOMPurify configuration with images and media also
-removed (`mdvPreviewSanitize`), links become text, images their alt text, nothing in the card loads from the network,
-and the card is a `[data-mdv-document]` container.
+- **As the file is now:** what a card shows is kept per link and used again only while the file's size and time are
+  unchanged (a browser asks the file without reading it; the desktop app reads it again).
+- **Nothing loads:** the other document is untrusted input like any document. Only its block structure is parsed
+  (`md.block.parse`); its title and paragraph go through markdown-it and the render path's DOMPurify instance and
+  configuration, made stricter (`mdvPreviewSanitize`): no images, media, SVG, MathML or form controls, and no `style`
+  attribute (it can fetch through `url()` or `image-set()`) nor any attribute that holds an address (`background`,
+  `src`, `srcset`, `href`, `poster`, …). Links become text, images their alt text, math its TeX source, and the card is a
+  `[data-mdv-document]` container. Resting on a link fetches nothing, so it cannot tell anyone the link was rested on.
 
 ---
 
