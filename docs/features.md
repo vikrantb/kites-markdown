@@ -131,6 +131,7 @@ The commenting layer wraps `renderMarkdown`. It reads the `MDV-COMMENTS` block f
 - **Built by** `buildToc`. It lists every H1–H6 in the document, by the heading's own words (`mdvHeadingText`: without the fold chevron, the permalink `#` or comment chips; a `#` the author wrote, as in "C# tips", is kept). H1 and H2 entries share one indent; H3–H6 are indented progressively further (CSS on `.toc-link[data-level]`). A heading without an `id` gets one (`heading-<n>`). The sidebar is a `nav` named "Table of contents".
 - **Click an entry** (or Tab to it and press Enter) to scroll smoothly to that heading. A heading inside a folded section is unfolded first, and the keyboard focus moves to the heading, so Tab continues from there. On narrow screens the overlay also closes. One delegated listener on `#tocList` handles every entry.
 - **Toggle** with the toolbar button or `Ctrl/Cmd+B` (`toggleToc`). Wider than 900 px, the sidebar hides and the content takes the full width. At 900 px or less, the sidebar is off-canvas and the toggle slides it in as an overlay; `Esc` closes it.
+- **A hidden outline is inert** (`mdvSyncTocInert`): out of the Tab order and away from screen readers, whether it was hidden by the toggle or is off-canvas on a narrow screen **(tested)**. Before, every outline link stayed a tab stop while hidden, where the focus could not be seen: 25 on `kitchen-sink.md`, one per heading on any document.
 - **No headings:** the sidebar is hidden and the content uses the full width. The next document with headings shows the sidebar again as you left it (before, it stayed hidden until toggled twice).
 - **Not remembered** between page loads.
 
@@ -142,7 +143,7 @@ The current heading is the last visible heading whose top is above the reading l
 - the toolbar breadcrumb changes to that heading's text, and back to the file path above the first heading;
 - the section minimap highlights the H2 at or above it.
 
-It is right in both directions: scrolling back up into a long section highlights that section. The earlier version used an `IntersectionObserver` band, which only noticed headings entering the band, so the section below stayed highlighted; it also created a new observer on every render and never disconnected it. At the very end of the document, the last heading on screen becomes current, so short final sections are reachable. Headings inside folded sections or closed `<details>` are skipped.
+It is right in both directions: scrolling back up into a long section highlights that section. The earlier version used an `IntersectionObserver` band, which only noticed headings entering the band, so the section below stayed highlighted; it also created a new observer on every render and never disconnected it. At the very end of a document that scrolls, the last heading on screen becomes current, so short final sections are reachable **(tested)**. A page too short to scroll is at its top as much as at its bottom, so there the reading line decides (before, a short note opened with its last heading current) **(tested)**. Headings inside folded sections or closed `<details>` are skipped (`mdvHeadingVisible`, which uses `checkVisibility()`: Chrome still reports a box for a heading inside a closed `<details>`) **(tested)**.
 
 ### Section minimap
 
@@ -154,10 +155,11 @@ It is right in both directions: scrolling back up into a long section highlights
 
 ### Collapsing and expanding sections
 
-- **Per section** (`addSectionToggles`, `toggleSection`). Every H1–H4 gets a chevron button at its start. The content after the heading, up to the next heading of the same or a higher level, is wrapped in a collapsible container. A heading with no content after it keeps a hidden, inactive chevron. The chevron is a button named "Toggle section", with `aria-expanded` and `aria-controls` pointing at its container, so it works from the keyboard and screen readers announce its state.
+- **Per section** (`addSectionToggles`, `toggleSection`). Every H1–H4 gets a chevron button at its start. The content after the heading, up to the next heading of the same or a higher level, is wrapped in a collapsible container. A heading with no content after it keeps a hidden, inactive chevron. The chevron is a button named after its section ("Toggle section: C# tips"), with `aria-expanded` and `aria-controls` pointing at its container, so it works from the keyboard and screen readers announce its state. The heading itself is named by its own words (`aria-label`); before, the chevron inside it made every heading's name start with "Toggle section" **(tested in Chrome's accessibility tree; not with a screen reader)**.
+- **The `#` permalink** after each heading is out of the Tab order (`tabindex="-1"`). It is invisible until hovered and already hidden from screen readers, so tabbing on from a heading (an outline jump puts the focus there) used to land on nothing visible **(tested)**.
 - **What moves with a block.** The wrapper takes every node up to the next heading, including the HTML comments between blocks: a `<!-- narrate: -->` stays right before its diagram or table, and a comment thread's `<!-- MDV-ANCHOR -->` stays right before its block. Comments and whitespace after a section's last block stay outside, with what follows. Before, only elements moved, which lost narrations and attached comment threads to the next heading.
 - **All sections** (`toggleAllSections`). The toolbar chevron or `Ctrl/Cmd+Shift+F` collapses or expands every section at once. Each new render starts with everything expanded.
-- **Jumping into a folded section** (from the outline, search or read-aloud) unfolds it (`mdvReveal`).
+- **Jumping into a folded section** (from the outline or search) unfolds it and opens a closed `<details>` around the target (`mdvReveal`) **(tested)**. Read-aloud unfolds every folded section around the blocks it is reading (`mdvUnfold`) **(tested)**.
 - H5 and H6 cannot be collapsed separately. Their content folds with the nearest H1–H4 above them.
 
 ### Focus mode
@@ -206,11 +208,11 @@ Open with the **Search** button or `Ctrl/Cmd+K` (`openSearch`); `Ctrl/Cmd+K` aga
 
 | Aspect | Behaviour | Function |
 |---|---|---|
-| What is indexed | Every heading, and the readable text of every paragraph, list item, table cell, definition, quote, code block, figure caption and `<details>` summary with at least 2 characters. Each entry holds only its own words: a nested list or a paragraph inside a quote has its own entry, so a sentence is never listed twice. The whole text is indexed (it used to stop at 200 characters, so later words were never found). Diagram source and the viewer's own controls are left out | `buildSearchIndex` (on render: marks the index stale), `mdvSearchIndex`, `mdvIndexDocument` (on the first search after a render) |
+| What is indexed | Every heading, and the readable text of every paragraph, list item, table cell, definition, quote, code block, figure caption, `<details>` summary and link card (by its title) with at least 2 characters. Each entry holds only its own words: a nested list or a paragraph inside a quote has its own entry, so a sentence is never listed twice. The whole text is indexed (it used to stop at 200 characters, so later words were never found). Diagram source, an SVG's `<style>` and the viewer's own controls are left out **(tested)** | `buildSearchIndex` (on render: marks the index stale and drops the old results, or runs the open query again), `mdvSearchIndex`, `mdvIndexDocument` (on the first search after a render) |
 | Matching | Case-insensitive substring match. Starts at 2 characters. Heading hits first, then blocks in reading order. At most 20 results | `handleSearch` |
 | Results | Heading hits show `#` marks for their level. Content hits show the nearest preceding heading and about 160 characters around the first match. Matches are highlighted. The footer says how many matched ("3 matches", "First 20 of 57 matches", "No matches") and screen readers hear it | `handleSearch`, `mdvSnippet`, `mdvHighlight`, `mdvSearchStatus` |
 | Keyboard | `↑` / `↓` move the selection and wrap around. `Enter` jumps to the selected result, or to the first one when none is selected. `Esc` closes | `handleSearchKeys` |
-| Jump target | A heading hit scrolls to that heading. A content hit scrolls to the block itself and briefly highlights it (it used to scroll to the section's heading, which could leave the match off screen). A folded section is unfolded first, and the keyboard focus moves to the target | `goSearch`, `mdvGoTo` |
+| Jump target | A heading hit scrolls to that heading. A content hit scrolls to the block itself and briefly highlights it (it used to scroll to the section's heading, which could leave the match off screen); the highlight then gives back any background colour the author set on the block **(tested)**. A folded section is unfolded and a closed `<details>` opened first, and the keyboard focus moves to the target | `goSearch`, `mdvGoTo`, `mdvFlash` |
 | Close | `Esc`, `Ctrl/Cmd+K`, or a click on the dimmed backdrop | `closeSearch` |
 | Screen readers | The input is a `combobox` controlling a `listbox` of `option`s; the selected result is its `aria-activedescendant` | `wireSearch` |
 
@@ -252,9 +254,10 @@ Open with the **Search** button or `Ctrl/Cmd+K` (`openSearch`); `Ctrl/Cmd+K` aga
 Search, the shortcuts sheet and the image lightbox are modal dialogs (`mdvOpenModal`, `mdvCloseModal` in `js/navigation.js`):
 
 - they have `role="dialog"`, `aria-modal="true"` and a name ("Search this document", "Keyboard Shortcuts", "Image: <alt text>");
-- opening one moves the keyboard focus into it (the search box, the sheet's Close button, the lightbox itself) and makes the rest of the page `inert`, so neither the mouse, the keyboard nor a screen reader reaches what is behind it;
+- opening one moves the keyboard focus into it (the search box, the sheet's Close button, the lightbox itself), and neither the mouse, the keyboard nor a screen reader reaches what is behind it. The toolbar, panels and player are made `inert`. The document area (the outline and the document) is hidden from screen readers with `aria-hidden` instead, because making it inert restyles every node in it: on a 3,000-section document that took more than 100 ms each way. The backdrop takes the pointer, and a focus guard returns any focus that lands behind the dialog **(tested)**;
 - `Tab` and `Shift+Tab` stay inside;
-- `Esc` closes it, and the focus returns to whatever had it before (a jump to a search result moves the focus to the result instead);
+- `Esc` closes it, and the focus returns to whatever had it before (a jump to a search result moves the focus to the result instead). If nothing had the focus, the next `Tab` continues from where you last clicked in the page, or from the top of the page; before, it went to an invisible button at the top **(tested)**;
+- while one is open, the viewer's other shortcuts do nothing, and the browser does not get them either (`Ctrl/Cmd+Shift+R` is its hard reload, `Ctrl/Cmd+O` its Open dialog); `Ctrl/Cmd+S` still saves. The expanded diagram counts as a dialog here: a shortcut pressed over it used to open search or the sheet underneath it, out of sight **(tested)**;
 - only one is open at a time.
 
 ### Diagrams: expand, zoom and fit
@@ -416,7 +419,7 @@ The global shortcuts come from one table, `MDV_SHORTCUTS` in `js/app.js`, which 
 - **Other keyboard layouts.** On a layout whose letters are not Latin (Russian, Greek, Hebrew…), the physical key decides, as it does for the browser's own shortcuts: `Ctrl` with the key labelled K on a US keyboard opens search. `Ctrl+\` and `Ctrl+.` also match by physical key, so they work on layouts that put those characters elsewhere (on a German keyboard that key types `#`).
 - **Alt (AltGr) is never part of a shortcut**, so typing a character with AltGr (`Ctrl+Alt` on Windows) never triggers one.
 - **Typing is not a shortcut.** The shortcuts are ignored while the focus is in a text field (a text `input`, a `textarea`, a `select` or editable content), and while an input method is composing. A focused checkbox (a task-list item) or button does not count as a text field.
-- **While a dialog is open**, only `Esc` and the dialog's own toggle work: `Ctrl/Cmd+K` closes search, `?` closes the shortcuts sheet.
+- **While a dialog is open** (search, the shortcuts sheet, the image lightbox or the expanded diagram), only `Esc` and the dialog's own toggle work: `Ctrl/Cmd+K` closes search, `?` closes the shortcuts sheet. The other shortcuts are kept from the browser too, and from the comments sidebar's `Ctrl/Cmd+Shift+C`; `Ctrl/Cmd+S` still saves, and a `?` typed into the search box is text **(tested)**.
 
 | Keys | Action | Where it works | Handler |
 |---|---|---|---|

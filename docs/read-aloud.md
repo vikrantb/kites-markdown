@@ -2,7 +2,7 @@
 
 The viewer can read the rendered document aloud, one section at a time, using the browser's built-in Web Speech API (`window.speechSynthesis`). The viewer itself sends nothing to a server and bundles no voices: whatever voices the browser and operating system provide are what you hear. Note that some browser voices are network voices (for example Chrome's "Google" voices), in which case the browser itself may send the text to its speech service; that is browser behaviour, not something this code controls.
 
-The engine lives in `js/read-aloud.js`, under the banner comment `TTS (Text-to-Speech) Engine`. It borrows three helpers from `js/navigation.js`: `mdvExcludedFromText` (what is not the author's words), `mdvHeadingText` (a heading's own words) and `mdvReveal` (unfold the sections around an element). `extractNarrations` in `js/core.js` still runs on every render, but read-aloud no longer uses its result (see [Narration comments](#narration-comments)). Most functions use the `tts` prefix; a few have none (`buildTtsSections`, `findNarrationFor`, `speakSection`, `chunkText`, `speakNextChunk`, `updateTtsUI`, `clearTtsHighlights`), and the text helpers use `mdv`.
+The engine lives in `js/read-aloud.js`, under the banner comment `TTS (Text-to-Speech) Engine`. It borrows three helpers from `js/navigation.js`: `mdvExcludedFromText` (what is not the author's words), `mdvHeadingText` (a heading's own words) and `mdvUnfold` (unfold the sections around an element). `extractNarrations` in `js/core.js` still runs on every render, but read-aloud no longer uses its result (see [Narration comments](#narration-comments)). Most functions use the `tts` prefix; a few have none (`buildTtsSections`, `findNarrationFor`, `speakSection`, `chunkText`, `speakNextChunk`, `updateTtsUI`, `clearTtsHighlights`), and the text helpers use `mdv`.
 
 This page covers the feature end to end: how the text is collected, how it is split and queued, the Chrome workaround, highlighting, every control, keyboard access, and the known limitations. It describes the code as of the reading-aids change of 2026-10-10. Behaviour marked **(tested)** is covered by `tests/e2e/reading-aids.spec.mjs`, which runs in Chrome against a stand-in `speechSynthesis` that behaves like Chrome's where it matters (a cancel reports `interrupted` a moment later, and does not clear the paused flag). No audio is produced in the tests; real voices were not listened to. Anything reasoned from the code without running it is marked "(inferred)".
 
@@ -10,9 +10,9 @@ This page covers the feature end to end: how the text is collected, how it is sp
 
 | Concern | Function(s) | Notes |
 |---|---|---|
-| Collect spoken text into sections | `buildTtsSections`, `ttsBuildSections` (inner `extractText`), `ttsEnsureSections` | Built when the player opens, or at render time while the player is in use |
-| The words of one block | `mdvSpeakableText`, `ttsTableText`, `ttsDashboardText` | Without the viewer's controls; tables by row; images by alt text |
-| Keep the place after a re-render | `ttsReconcile` | Same section still there: carry on. Gone: stop |
+| Collect spoken text into sections | `buildTtsSections`, `ttsBuildSections` (inner `extractText`), `ttsEnsureSections` | Built when the player opens, or right after a render while the player is in use |
+| The words of one block | `mdvSpeakableText`, `ttsSpecialBlock`, `ttsTableText`, `ttsDashboardText` | Without the viewer's controls; diagrams, tables and code the same wherever they sit; tables by row; images by alt text |
+| Keep the place after a re-render | `ttsReconcile` | The same section (same heading, same words) still there: carry on. Otherwise: stop |
 | Attach a narration to a diagram or table | `findNarrationFor` | The comment node right before the block |
 | Open / close the player | `ttsToggle`, `ttsStop` | Toolbar "Listen" button, or Ctrl/Cmd+Shift+R |
 | Start, pause, resume | `ttsPlayPause`, `ttsPlay`, `ttsPause` | Android pauses by cancelling |
@@ -33,6 +33,7 @@ The engine keeps its state in script-level variables declared under the banner:
 |---|---|
 | `ttsSections` | Array of `{ heading, items, elements }` built by `ttsBuildSections` |
 | `ttsStale` | The sections are out of date (a render happened while the player was not in use) |
+| `ttsRebuildQueued` | A rebuild is waiting for the current render to finish (the player is in use) |
 | `ttsCurrentIdx` | Index of the section being (or about to be) spoken |
 | `ttsIsPlaying` | Whether the engine considers itself playing; gates `speakNextChunk` |
 | `ttsRate`, `ttsRates`, `ttsRateIdx` | Current speech rate, the cycle of allowed rates, and the position in that cycle |
@@ -63,10 +64,10 @@ Opening the player does not start speech; it only refreshes the label, progress 
 
 `renderMarkdown` calls `buildTtsSections` on every render (a document loaded, pasted, or re-rendered after a comment is added or a thread deleted). What happens depends on whether the player is in use:
 
-- **The player is open, reading or paused:** the sections are rebuilt at once (`ttsBuildSections`) and `ttsReconcile` keeps the listener's place (below).
+- **The player is open, reading or paused:** the sections are rebuilt as soon as the render has finished (`ttsBuildSections`, queued as a microtask, so no speech event can come in between), and `ttsReconcile` keeps the listener's place (below). `renderMarkdown` calls `buildTtsSections` before its later passes; the link pass then replaces each paragraph that holds only a link with a link card. Built at that point, the section held the paragraph that was about to leave the page, so its highlight went nowhere, and its words differed from the ones the player had built from the finished page **(tested)**.
 - **Otherwise:** the list is emptied and marked stale, and it is built when the player opens (`ttsEnsureSections`, also called by Play and the navigation functions). Most renders are never read aloud, and on a 3,000-section document building the sections takes about 30 ms, so this keeps that work off the render.
 
-Section folding (`addSectionToggles`) has already run by then, and the Mermaid diagrams may not have been turned into SVG yet. Neither matters: diagrams are identified by their `div.mermaid-wrapper`, which the fence renderer emits at parse time, and narration comments stay next to their blocks when sections fold.
+Either way the sections are built from the finished page: section folding has run, and Mermaid may already have drawn its diagrams as SVG. A diagram is identified by its `div.mermaid-wrapper` (which the fence renderer emits at parse time) wherever it sits, and is never walked into, so its SVG (a `<style>` element and the node labels) is never read; narration comments stay next to their blocks when sections fold.
 
 ### Collecting items: `extractText`
 
@@ -74,13 +75,14 @@ Section folding (`addSectionToggles`) has already run by then, and the Mermaid d
 
 | Element | Item type | Spoken text |
 |---|---|---|
-| The viewer's own additions: the section minimap, comment chips, buttons (`mdvExcludedFromText`) | (dropped) | Nothing. Before, the minimap's segment labels were read, run together, as part of the first section |
+| The viewer's own additions: the section minimap, comment chips, buttons, a link card's icon, address line and badge (`mdvExcludedFromText`) | (dropped) | Nothing. Before, the minimap's segment labels were read, run together, as part of the first section |
 | `div.fm-dashboard` (frontmatter) | `text` | Each badge as its own phrase, without the status dot: "In progress. 2026-10-04. 4 Open questions." **(tested)** (`ttsDashboardText`) |
 | `h1`-`h6` | `heading` | `mdvHeadingText`: the heading's own words, without the fold chevron, the permalink `#` or comment chips. A `#` the author wrote is kept ("C# tips") **(tested)** |
 | `div.section-content` | (recurse) | Its children are processed in order, so nested sections are flattened in document order |
 | `div.mermaid-wrapper` with a narration | `narration` | The narration text |
 | `div.mermaid-wrapper` without a narration | `skip` | Nothing; diagrams are silent unless narrated |
 | `pre` | `code` | "Code block in python." (the language label), or "Code block." for a fence without a language. The code itself is never read |
+| A link card (a paragraph that held only a link) | `text` | Its title, the link text: not the type icon, the address line or the badge **(tested)** |
 | `table` with a narration | `narration` | The narration text |
 | `table` without a narration | `table` | Row by row, cells separated by commas, each row a sentence, up to about 300 characters, then "And 6 more rows." (`ttsTableText`) **(tested)** |
 | Anything else with text | `text` | `mdvSpeakableText` (below) |
@@ -91,7 +93,9 @@ Section folding (`addSectionToggles`) has already run by then, and the Mermaid d
 - the text, with source line breaks treated as spaces;
 - nothing from the viewer's additions or from `aria-hidden` copies: KaTeX's HTML copy of a formula and the TeX source annotation are left out, so **each formula is read once**, from its MathML (for example "E=mc2"), where `textContent` used to repeat it three times ("E=mc2E=mc^2E=mc2") **(tested)**;
 - a phrase break after each paragraph, list item, row, definition, quote and other block, and a comma between table cells;
-- images by their alt text: "Image: Chart of sales." **(tested)**. An inline SVG with `role="img"` and an `aria-label` is read the same way. An image without alt text says nothing.
+- images by their alt text: "Image: Chart of sales." **(tested)**. An inline SVG with `role="img"` and an `aria-label` is read the same way. An image without alt text says nothing;
+- a diagram, table or code block *inside* the block (in a list item, a quote, a callout or `<details>`) is read as it would be at the top level (`ttsSpecialBlock`): a diagram by its narration or not at all, a table by its narration or by rows, code as "Code block in json." **(tested)**. Before, a diagram nested this way was read as its SVG: the stylesheet Mermaid puts inside every diagram (3,425 characters in one case) and the node labels;
+- never an element's `<style>`, `<script>` or `<template>`: they are recognised by `localName`, which is lower case for SVG as for HTML. The SVG `<style>` slipped past an upper-case `STYLE` before **(tested)**.
 
 ```mermaid
 flowchart TD
@@ -131,10 +135,10 @@ The result is one entry per heading, plus the optional introduction. Sub-heading
 
 ### After a re-render: `ttsReconcile`
 
-When the sections are rebuilt while the player is in use, `ttsReconcile` looks for the section the listener was in, by heading text (first at the same index, then anywhere):
+When the sections are rebuilt while the player is in use, `ttsReconcile` looks for the section the listener was in: the same heading **and the same words** (first at the same index, then anywhere):
 
-- **Found** (the same document re-rendered, for example after a comment was added): the index moves to it. If reading or paused, the new elements are highlighted and reading carries on through the rest of the section's chunks, then on through the new list **(tested)**.
-- **Not found** (another document): reading stops (if it was reading or paused) and the position resets to the first section **(tested)**.
+- **Found** (the same document re-rendered, for example after a comment was added, or after an edit elsewhere in the document): the index moves to it. If reading or paused, the new elements are highlighted and reading carries on through the rest of the section's chunks, then on through the new list **(tested)**.
+- **Not found** (another document, or the section's own words changed): reading stops (if it was reading or paused) and the position resets to the first section **(tested)**. Matching by heading alone kept reading the closed document whenever the new one shared the heading: every document with text before its first heading has an "Introduction", and two documents can share an "Installation" **(tested)**. Another document whose section is word for word the same is still treated as the same section.
 
 Before, a re-render rebuilt the list but left speech and the index alone, so reading carried on at the old index in whatever the new list was.
 
@@ -156,7 +160,7 @@ Renderers that pass HTML comments through or strip them (GitHub, for example) sh
 
 - Start: `<!--`, optional whitespace, `narrate:` (case-insensitive).
 - Body: everything up to the next `-->`, which may span several lines. Leading and trailing whitespace is trimmed.
-- Placement: right before a mermaid fence or a table, **anywhere in the document, including under headings** **(tested)**. Only `div.mermaid-wrapper` and `table` elements consult narrations. A comment in front of a paragraph, list, image or code block has no effect (an image is read by its alt text instead).
+- Placement: right before a mermaid fence or a table, **anywhere in the document**: under headings, and inside list items, quotes, callouts and `<details>` **(tested)**. Only `div.mermaid-wrapper` and `table` elements consult narrations. A comment in front of a paragraph, list, image or code block has no effect (an image is read by its alt text instead).
 
 ### How the narration is found: `findNarrationFor`
 
@@ -189,15 +193,15 @@ The engine never hands the browser more than one utterance at a time. It chains 
 - `ttsCancel()` is the only way speech is cancelled: it bumps `ttsGen`, stops the keep-alive and calls `speechSynthesis.cancel()`. Every utterance remembers the generation it was spoken in, and its `onend` and `onerror` do nothing once the generation has moved on.
 - `speakSection(idx)`:
   - if `idx` is past the last section, sets `ttsIsPlaying = false` and `ttsFinished = true`, fills the progress bar and stops. Pressing Play again starts from the first section;
-  - otherwise sets `ttsCurrentIdx`, clears old highlights, adds `tts-active` to every element of the section, unfolds any folded section around its first element (`mdvReveal`) and smooth-scrolls it to the centre of the viewport, builds `ttsChunks` with `chunkText`, resets `ttsChunkIdx` to 0, calls `updateTtsUI` and then `speakNextChunk`.
+  - otherwise sets `ttsCurrentIdx`, clears old highlights, adds `tts-active` to every element of the section, unfolds every folded section around each of those elements (`mdvUnfold`) and smooth-scrolls the first one to the centre of the viewport, builds `ttsChunks` with `chunkText`, resets `ttsChunkIdx` to 0, calls `updateTtsUI` and then `speakNextChunk`.
 - `speakNextChunk`:
   - returns immediately if `ttsIsPlaying` is false (navigation while paused or stopped only moves the cursor);
   - if all chunks are spoken, stops the keep-alive, clears highlights and calls `speakSection(ttsCurrentIdx + 1)`;
-  - otherwise calls `ttsCancel()`, creates a `SpeechSynthesisUtterance` for the current chunk with `rate = ttsRate`, wires the handlers below, calls `speechSynthesis.speak()` and starts the keep-alive.
+  - otherwise calls `ttsCancel()`, clears a paused flag the browser kept after the cancel (`resume()`; a paused browser holds every new utterance in its queue), creates a `SpeechSynthesisUtterance` for the current chunk with `rate = ttsRate`, wires the handlers below, calls `speechSynthesis.speak()` and starts the keep-alive.
 - `onend` (current generation only): resets the error count, increments `ttsChunkIdx`, updates the progress bar, and calls `speakNextChunk`.
 - `onerror` (current generation only):
   - `canceled` or `interrupted`: something else on the page cancelled speech. Reading stops (`ttsHalt`), so the button does not show Pause while nothing plays;
-  - `not-allowed` (the browser refused, for example before any user gesture), or a third error in a row: reading stops and the label says so ("The browser blocked speech. Press Play to try again."). Before, every chunk of the document was skipped in a few milliseconds;
+  - `not-allowed` (the browser refused, for example before any user gesture), or a third error in a row: reading stops and the label says so ("The browser blocked speech. Press Play to try again.", or "Speech failed. Press Play to try again.") **(tested)**. Before, every chunk of the document was skipped in a few milliseconds;
   - anything else: the chunk is skipped.
 
 Why the generation number: the specification reports a `cancel()` of a speaking utterance as an `interrupted` error, and the browser delivers it after the code that cancelled has already started the next utterance. The old `onerror` treated that as a failed chunk and advanced, so Next, Previous, a seek or a speed change skipped the first chunk of the section it had just started. With the generation check, Next while speaking reads the next section from its first chunk **(tested)**.
@@ -251,7 +255,7 @@ The keep-alive is skipped entirely on Android (`isAndroid`), because, per the co
 
 - When a section starts, `speakSection` adds the class `tts-active` to every element in `section.elements`: the heading and each block that contributed text. Silent diagrams (the `skip` type) are not highlighted.
 - `.md-body .tts-active` gets `background: var(--bg-tts-highlight)` with a 4px radius and a background transition. The token is a translucent green, redefined for dark mode.
-- If the section is inside a folded section (or a closed `<details>`), it is unfolded first, so the highlight can be seen (`mdvReveal`).
+- Every folded section around the section's elements is unfolded first, so the highlight and the words being read can be seen (`mdvUnfold`) **(tested)**. Before, only the heading's surroundings were unfolded: after Fold all, the heading reappeared but its own section stayed folded. A closed `<details>` is not opened (its content is read anyway; see [Limitations](#limitations-and-browser-quirks)).
 - The first element (normally the heading) is scrolled into view with `scrollIntoView({ behavior: 'smooth', block: 'center' })`.
 - Highlighting is per section, not per chunk or per word; there is no `onboundary` handler.
 - `clearTtsHighlights` removes `tts-active` from every element in the document. It runs between sections, on navigation, and on stop.
@@ -285,7 +289,7 @@ There is still no Media Session integration (hardware media keys are not handled
 ### Play, pause and resume
 
 - **Desktop:** `ttsPause` calls `speechSynthesis.pause()` and remembers the generation. The next `ttsPlay` resumes mid-chunk only if nothing moved since (`ttsPausedGen === ttsGen`, and the browser is still paused and speaking), and restarts the keep-alive.
-- **Anything else is a fresh start:** `ttsPlay` cancels, calls `resume()` to clear a paused flag the browser can keep after a cancel, and then continues at the current chunk of the current section, or starts the section. Before, Pause, then Next (or Previous, or a seek), then Play stayed silent: the new section was never queued, and Play only resumed an empty queue **(tested)**.
+- **Anything else is a fresh start:** `ttsPlay` cancels and then continues at the current chunk of the current section, or starts the section. `speakNextChunk` clears the paused flag the browser can keep after a cancel before it speaks, on every path that speaks. Before, Pause, then Next (or Previous), then Play stayed silent: the new section was never queued, and Play only resumed an empty queue **(tested)**. Pause, then a click on the progress bar, showed Pause while nothing played, and the first press of the button only paused again **(tested)**.
 - **Android:** `ttsPause` cancels instead. The next `ttsPlay` speaks the interrupted chunk again (before, it restarted the whole section).
 - **After the end:** Play starts from the first section.
 
@@ -301,7 +305,7 @@ There is still no Media Session integration (hardware media keys are not handled
 
 - The bar is section-weighted: every section gets an equal share of the width regardless of its length.
 - At section start `updateTtsUI` sets the fill to `ttsCurrentIdx / total`. After each chunk, `onend` sets it to `(ttsCurrentIdx + ttsChunkIdx / chunkCount) / total` (a one-chunk section counts as complete).
-- A click (`ttsSeekClick`) converts the pointer position into a section index with `Math.floor(pct * total)`, where `pct` comes from `clientX` and the bar's bounding box, and starts reading that section. A click always starts playback and always lands on the start of a section.
+- A click (`ttsSeekClick`) converts the pointer position into a section index with `Math.floor(pct * total)`, where `pct` comes from `clientX` and the bar's bounding box, and starts reading that section. A click always starts playback, also while paused **(tested)**, and always lands on the start of a section.
 - The keyboard keys are listed under [Keyboard and screen readers](#keyboard-and-screen-readers).
 
 ### Stop and unload
@@ -324,7 +328,7 @@ There is no voice picker. The code never calls `speechSynthesis.getVoices()` and
 | Android pause | Pause cancels; Play speaks the interrupted chunk again from its start | `ttsPause`, `ttsPlay` |
 | Math | Read once, as the MathML characters ("E=mc2"), not as spoken mathematics ("E equals m c squared") | `mdvSpeakableText` |
 | Tables | Without narration, at most about 300 characters of rows are read, then the number of rows left out | `ttsTableText` |
-| Code | Code blocks are announced by language only ("Code block in python."); the content is never read | `extractText` |
+| Code | Code blocks are announced by language only ("Code block in python."), also inside lists and `<details>`; the content is never read | `ttsSpecialBlock` |
 | Closed `<details>` | Their content is read even when they are closed | `mdvSpeakableText` |
 | Long sentences | A sentence over 180 characters becomes one long utterance and relies on the keep-alive alone | `chunkText` |
 | Keyboard chord | Ctrl/Cmd+Shift+R is also the browser hard-reload shortcut; the page prevents the default, but which wins in every browser is unverified | `app.js` key handler |
@@ -332,7 +336,7 @@ There is no voice picker. The code never calls `speechSynthesis.getVoices()` and
 | Granularity | Highlight, progress and navigation are per section; there is no word or sentence tracking | `speakSection`, `updateTtsUI` |
 | Position | The position is not saved between sessions (the speed is) | script state |
 
-Fixed by the reading-aids change (2026-10-10), each covered by a test: narration under headings (issue 12); a chunk skipped after Next, Previous, a seek or a speed change; silence after Pause then Next then Play; reading continuing at a stale index after a re-render; the minimap's labels and the dashboard read run together; a heading's `#` deleted; formulas read three times; tables read as one run of text; images and inline SVG labels ignored; the keep-alive not restarted after a resume; a missing `speechSynthesis` throwing; Next on the last section falling silent; the speed not remembered; no keyboard access to the progress bar.
+Fixed by the reading-aids change (2026-10-10), each covered by a test: narration under headings (issue 12), and inside lists, quotes, callouts and `<details>`; a diagram in those containers read as its stylesheet; a link card read as its icon, address and badge; another document that shares a section name (or the "Introduction") read on in the closed one; Pause, then a seek, showing Pause while silent; the section being read left folded after Fold all; speech the browser refuses racing through the document; a chunk skipped after Next, Previous, a seek or a speed change; silence after Pause then Next then Play; reading continuing at a stale index after a re-render; the minimap's labels and the dashboard read run together; a heading's `#` deleted; formulas read three times; tables read as one run of text; images and inline SVG labels ignored; the keep-alive not restarted after a resume; a missing `speechSynthesis` throwing; Next on the last section falling silent; the speed not remembered; no keyboard access to the progress bar.
 
 ## Related documents
 

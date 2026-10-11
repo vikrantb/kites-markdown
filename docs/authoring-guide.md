@@ -386,7 +386,7 @@ Notes:
 
 ### How it works
 
-`<!-- narrate: ... -->` is a standard HTML comment. Every markdown renderer either strips it or passes it through invisibly. During read-aloud, our viewer speaks the text after the `narrate:` prefix in place of a mermaid diagram or a table that it directly precedes, anywhere in the document, including under headings. Diagrams without a narration are skipped; tables without one are read row by row, cells separated by commas, up to about 300 characters.
+`<!-- narrate: ... -->` is a standard HTML comment. Every markdown renderer either strips it or passes it through invisibly. During read-aloud, our viewer speaks the text after the `narrate:` prefix in place of a mermaid diagram or a table that it directly precedes, anywhere in the document: under headings, and inside list items, quotes, callouts and `<details>`. Diagrams without a narration are skipped; tables without one are read row by row, cells separated by commas, up to about 300 characters.
 
 ### Syntax
 

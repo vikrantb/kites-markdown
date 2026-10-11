@@ -72,7 +72,7 @@ individually today ([architecture.md](architecture.md) shows how).
 | Paste into the settings field and a reply box, before and after the fix | Before: the document was replaced. After: the document is kept, and a page-level paste unlinks the file handle (`null`) | Runtime (Chrome only) |
 | `?file=` fetch finishing after a handle was linked (simulated race) | Handle cleared, document renders, console clean | Runtime (Chrome only) |
 | Known issues 1, 3, 7, 8, 9, 10, 12, 13 | Reproduced as described in [Known issues](#known-issues) | Runtime (Chrome only) |
-| `pnpm exec playwright test --workers=1 tests/e2e/reading-aids.spec.mjs`, on this branch and on an extracted copy of main (2026-10-10) | 27 of 27 pass on the branch; 27 of 27 fail on main. 23 fail on the behaviour each names (narration, comment anchors, re-render time, observers, scroll spy, shortcuts, dialogs, read-aloud). Two search tests fail on main first because main focuses the search box 50 ms after Ctrl+K and drops the keys typed before that (also fixed here); the 200-character limit was confirmed separately on main with a positive control. The two screenshot tests stop at the lightbox step, because main has no keyboard-focusable images. Read-aloud runs against a stand-in `speechSynthesis` | Runtime (Chrome only) |
+| `pnpm exec playwright test --workers=1 tests/e2e/reading-aids.spec.mjs`, on this branch and on an extracted copy of main (2026-10-10) | 47 of 47 pass on the branch: the first 27, and 20 added after the review round. On main 46 of 47 fail. The one that passes, "a heading inside a closed `<details>` never becomes the current heading", is a regression the first version of this change introduced and the review round fixed. Of the 20 added tests, 17 fail on that first version (`5be7c54`). The other 3 cover guards that already worked, and each went red when its guard was removed; 28 such single-point sabotages went red in all. Of the first 27, 23 fail on main on the behaviour each names (narration, comment anchors, re-render time, observers, scroll spy, shortcuts, dialogs, read-aloud). Two search tests fail on main first because main focuses the search box 50 ms after Ctrl+K and drops the keys typed before that (also fixed here); the 200-character limit was confirmed separately on main with a positive control. The two screenshot tests stop at the lightbox step, because main has no keyboard-focusable images. Read-aloud runs against a stand-in `speechSynthesis` | Runtime (Chrome only) |
 | `node scripts/measure-large-document.mjs <dir> --sections 3000 --renders 5`, main and this branch alternately, 3 rounds, same machine (2026-10-10) | See [Reading aids](#reading-aids-fixed-2026-10-10) | Runtime (Chrome only) |
 
 **Not yet verified:**
@@ -165,7 +165,25 @@ headings, Chrome, file://), main and this change alternately, three rounds on on
 | Main-thread task time over a 120-step scroll through the document | 219–228 ms | 162–166 ms | 100–113 ms |
 
 The DOM node count shows the old observers did not keep old documents alive; they did keep their
-callbacks and target lists, and added work to every scroll. Also fixed and tested: the scroll spy
+callbacks and target lists, and added work to every scroll.
+
+How long a key takes to show its result on the same 3,000-section document (milliseconds from the key
+event to the second animation frame; `node scripts/measure-large-document.mjs <dir> --sections 3000
+--renders 3 --keys 3`, 3 presses per run, 2 runs per arm, arms alternating, Chrome, 1-minute load 26 to
+32 on 8 cores). "Before" is the first version of this change, which made the whole page inert for a
+dialog; "after" hides the document area with `aria-hidden` instead:
+
+| | main | before | after |
+|---|---|---|---|
+| `Ctrl+K` opens search | 24–95 | 192–265 | 31–106 |
+| `Esc` closes search | 22–27 | 183–201 | 29–34 |
+| `?` opens the shortcuts sheet | 23–26 | 190–199 | 31–42 |
+| `Esc` closes it | 22–40 | 183–205 | 30–46 |
+| `Ctrl+B` hides the outline | 38–55 | 34–40 | 58–64 |
+| `Ctrl+B` shows it | 16–91 | 16–88 | 54–119 |
+
+`Ctrl+B` got slower: a hidden outline is now `inert`, so it leaves the Tab order, and switching that
+restyles every outline entry (3,601 here). Also fixed and tested: the scroll spy
 was wrong when scrolling back up, the H1 could not be folded when the minimap followed it, a
 heading-less document hid the outline for the next one, search missed words after the first 200
 characters of a block, and a heading's own `#` was deleted from the outline, search and read-aloud.
@@ -190,9 +208,13 @@ The final review across all docs found these gaps:
 - **The viewer's own accessibility.** *Partly done 2026-10-10:* search, the shortcuts sheet and the
   image lightbox are modal dialogs that move focus in, trap Tab, close on Esc and give the focus
   back; the outline, section chevrons, document images, search results and the read-aloud player
-  have names and work from the keyboard (all covered by browser tests). Still open: names for the
-  icon-only toolbar buttons (they rely on `title`), and keyboard and focus handling in the diagram
-  overlay, the links panel, the settings panel and the comments sidebar.
+  have names and work from the keyboard; a hidden outline and the invisible `#` permalinks are out of
+  the Tab order; headings are named by their own words (all covered by browser tests, in Chrome's
+  accessibility tree; no screen reader was used). Still open: names for the icon-only toolbar
+  buttons (they rely on `title`); keyboard and focus handling in the diagram overlay (its Expand
+  button is invisible when focused, and the overlay neither takes nor returns the focus), the links
+  panel (its off-screen entries are tab stops), the settings panel and the comments sidebar; a skip
+  link past the outline and the minimap; the contrast of the selected search result.
 - **Performance on large documents.** *Partly done 2026-10-10:* re-rendering a 3,000-section document
   is about 5.6 times faster, and the reading aids no longer create observers per render (numbers in
   [Reading aids](#reading-aids-fixed-2026-10-10)). Still open: every render re-parses the whole

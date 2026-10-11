@@ -260,12 +260,13 @@ Everything below runs in this order on page load.
 | `LINK_TYPES` | 2573 | `enhanceLinks`, `showLinkTooltip`, `buildLinksPanel` |
 | `tooltipHideTimer` | 2675 | `showLinkTooltip`, `hideLinkTooltip`, tooltip `mouseenter` |
 | `CALLOUT_TYPES` | 2817 | `transformCalloutBlocks` (NOTE, TIP, IMPORTANT, WARNING, CAUTION, TLDR, DECISION, COST) |
-| `MDV_NOT_TEXT_TAGS`, `MDV_NOT_TEXT_CLASSES` | `navigation.js` | `mdvExcludedFromText`: what is not the author's words (the viewer's controls, `aria-hidden` copies, MathML annotations) |
+| `MDV_NOT_TEXT_TAGS`, `MDV_NOT_TEXT_CLASSES` | `navigation.js` | `mdvExcludedFromText`: what is not the author's words (the viewer's controls, a link card's icon, address and badge, `aria-hidden` copies, MathML annotations, `<style>`/`<script>`/`<template>` matched by `localName` so SVG's count too) |
 | `mdvSpy` | `navigation.js` | The scroll spy: the render's headings, visible headings, TOC links and minimap segments by id, the active heading, the breadcrumb's home text, the pending animation frame. Set by `setupScrollSpy`, read by `mdvScrollSpyUpdate` |
-| `mdvModal` | `navigation.js` | The open dialog `{ el, returnTo, inerted }`, or `null`. `mdvOpenModal`, `mdvCloseModal`, the Tab trap, the shortcut handler |
+| `mdvModal` | `navigation.js` | The open dialog `{ el, returnTo, tabStart, inerted, hidden }`, or `null`. `mdvOpenModal`, `mdvCloseModal`, the Tab trap, the focus guard, the shortcut handler |
+| `mdvNarrow` | `navigation.js` | `matchMedia('(max-width: 900px)')`, the stylesheet's breakpoint: `toggleToc` and `mdvSyncTocInert` |
 | `mdvSearchStale` | `navigation.js` | The search index is out of date; `mdvSearchIndex` rebuilds it on the next search |
 | `MDV_SHORTCUTS`, `MDV_IS_MAC` | `app.js` | The shortcut table that drives the key handler and the `?` sheet |
-| `ttsSections`, `ttsStale` | `read-aloud.js` | Built by `ttsBuildSections` (at render time only while the player is in use, otherwise when it opens), read by all `tts*` functions |
+| `ttsSections`, `ttsStale`, `ttsRebuildQueued` | `read-aloud.js` | Built by `ttsBuildSections` (right after a render, as a microtask, only while the player is in use; otherwise when it opens), read by all `tts*` functions |
 | `ttsCurrentIdx`, `ttsIsPlaying`, `ttsUtterance`, `ttsFinished` | `read-aloud.js` | `speakSection`, `speakNextChunk`, `ttsPlay`, `ttsPause`, `ttsStop`, `ttsGoTo`, `ttsSeekClick`, `ttsReconcile` |
 | `ttsRate`, `ttsRates`, `ttsRateIdx` | `read-aloud.js` | `ttsCycleSpeed`. The rate is saved in `localStorage` (`mdv-tts-rate`). |
 | `ttsGen`, `ttsPausedGen`, `ttsErrors` | `read-aloud.js` | The generation number every cancel bumps (stale utterance events are ignored), the generation a desktop pause may resume, consecutive errors |
@@ -375,9 +376,11 @@ passes, and the code-block markup.
 | `document.body` `drop` | 1972 | Reads the first file if its name matches `.md`, `.markdown`, `.mdx`, `.txt` or `.text`, via `readFile` |
 | `document` `paste` | 1979 | Ignored while the search overlay is open or when the paste target is an `input`, `textarea`, `select` or content-editable element. Otherwise pasted text longer than 10 characters becomes the document: `mdvFileHandle = null`, then `renderMarkdown(text, 'Pasted Content')` and `updateUrl('pasted')` |
 | `#tocList` `click` | `navigation.js` | One delegated listener for every outline link: unfold, scroll to and focus the heading, close the mobile outline |
+| `mdvNarrow` `change` | `navigation.js` | The window crossed 900 px: `mdvSyncTocInert` (a hidden outline is inert) |
 | `window` `scroll` (passive), `window` `resize` (passive) | `navigation.js` | The scroll spy: schedules `mdvScrollSpyUpdate` for the next animation frame |
 | `#mdBody` `toggle` (capture) | `navigation.js` | A `<details>` opened or closed: the scroll spy recomputes which headings can be seen |
 | `document` `keydown` (capture) | `navigation.js` | While a dialog is open, Tab and Shift+Tab cycle inside it |
+| `document` `focusin` | `navigation.js` | The focus guard: focus that lands behind the open dialog goes back into it |
 | `#searchResults` `click` | `navigation.js` | One delegated listener: `goSearch` for the clicked result |
 | `#mdBody` `click`, `keydown` | `navigation.js` | Delegated: a click on, or Enter/Space on a focused, `img[role=button]` opens the lightbox |
 | `#ttsProgressBar` `keydown` | `read-aloud.js` | `ttsSliderKeys`: arrows, Page Up/Down, Home, End move between sections |
@@ -386,7 +389,7 @@ passes, and the code-block markup.
 | `#linkTooltip` `mouseenter`/`mouseleave` | 2717–2718 | Keeps the tooltip open while it is hovered |
 | `window` `beforeunload` | 3227 | Stops the keep-alive timer and cancels speech |
 | `window` `scroll` (passive) | 3280 | Progress bar width, FAB visibility |
-| `document` `keydown` | `app.js` | Main shortcut handler, driven by `MDV_SHORTCUTS` (section 7) |
+| `document` `keydown` | `app.js` | Main shortcut handler, driven by `MDV_SHORTCUTS` (section 7). While a dialog is open it calls `stopImmediatePropagation` for the table's shortcuts, so the comments listener below does not see them |
 | `document` `mouseup` | 4107 | `mdvHandleSelection` (shows the "Comment" popover), unless the click is inside comment UI |
 | `document` `keydown` | 4169 | Comment shortcuts (Ctrl/Cmd+Shift+C, Ctrl/Cmd+S) |
 | `window` `load` | 4202 | Restores the workspace and the last file handle from IndexedDB |
@@ -450,8 +453,10 @@ case-insensitively (`mdvTypedKey`), so Caps Lock and Shift do not change it; req
 letter shortcuts and ignores it for punctuation; never matches with Alt (AltGr) held; falls back to the
 physical key (`e.code`) on non-Latin layouts and for `\` and `.`. `mdvIsTextEntry` decides what counts as
 typing (a text `input`, `textarea`, `select` or editable content, not a checkbox or a button), and key
-events of an input method that is composing are ignored. While a dialog is open only `Escape` and that
-dialog's own toggle are handled.
+events of an input method that is composing are ignored. While a dialog is open (one of ours, or the
+expanded diagram: `mdvFrontDialog`) only `Escape` and that dialog's own toggle are handled; the table's
+other shortcuts are prevented and stopped, except Save (`inDialog`), and a `?` typed into a text field
+stays text.
 
 | Keys | Where it works | Action | Implemented in |
 |---|---|---|---|
@@ -724,21 +729,26 @@ Functions marked with a file name instead of a line were added or rewritten afte
 
 | Function | Line | One line |
 |---|---|---|
-| `mdvExcludedFromText(el)` | `navigation.js` | True for what is not the author's words: the viewer's controls (chevron, permalink, comment chips, code header, expand button, minimap, buttons), `aria-hidden` copies and MathML annotations |
+| `mdvExcludedFromText(el)` | `navigation.js` | True for what is not the author's words: the viewer's controls (chevron, permalink, comment chips, code header, expand button, minimap, link-card icon, address and badge, buttons), `aria-hidden` copies, MathML annotations, and `<style>`, `<script>` and `<template>` in any namespace |
 | `mdvHeadingText(h)` | `navigation.js` | A heading's own words; keeps a `#` the author wrote |
-| `addSectionToggles()` | `navigation.js` | Adds a chevron (`aria-expanded`, `aria-controls`) to `h1`–`h4` and moves every following node, comments included, into `.section-content`; comments after the last block stay outside |
+| `addSectionToggles()` | `navigation.js` | Adds a chevron named after its section (`aria-expanded`, `aria-controls`) to `h1`–`h4`, names each of those headings by its own words, takes the `#` permalinks out of the Tab order, and moves every following node, comments included, into `.section-content`; comments after the last block stay outside |
 | `mdvSectionOf(btn)` | `navigation.js` | The section a chevron controls (through `aria-controls`, not `nextElementSibling`) |
 | `mdvSetCollapsed(btn, content, collapsed)` | `navigation.js` | Folds or unfolds one section and tells the scroll spy |
 | `toggleSection(heading, btn)` | `navigation.js` | Collapses or expands one section |
 | `toggleAllSections()` | `navigation.js` | Collapses or expands all sections |
-| `mdvReveal(el)` | `navigation.js` | Unfolds every folded section and closed `<details>` around an element |
+| `mdvUnfold(el)` | `navigation.js` | Unfolds every folded section around an element (read-aloud, for each block it reads) |
+| `mdvReveal(el)` | `navigation.js` | `mdvUnfold`, and opens every closed `<details>` around the element (outline and search jumps) |
 | `mdvFocusInDocument(el)` | `navigation.js` | Focuses a document element without scrolling (temporary `tabindex="-1"`) |
 | `mdvGoTo(el, { flash })` | `navigation.js` | Reveal, smooth-scroll, focus, and optionally flash |
+| `mdvFlash(el)` | `navigation.js` | Two-second background highlight that gives back the author's own inline background colour |
 | `buildToc()` | `navigation.js` | Fills `#tocList` from `h1`–`h6`; hides the TOC when there are no headings and shows it again (per `tocVisible`) when there are |
-| `toggleToc()` | 2353 | Mobile slide-in at 900px or less, otherwise hide/show plus full width |
+| `toggleToc()` | `navigation.js` | Mobile slide-in at 900px or less, otherwise hide/show plus full width; then `mdvSyncTocInert` |
+| `mdvHideMobileToc()` | `navigation.js` | Slides the narrow-screen outline out (an outline jump, Esc) |
+| `mdvSyncTocInert()` | `navigation.js` | Makes the outline inert while it cannot be seen (hidden when wide, off-canvas when narrow) |
 | `setupScrollSpy()` | `navigation.js` | Hands the scroll spy this render's headings, outline links and minimap segments; creates nothing |
 | `mdvScrollSpySchedule()`, `mdvScrollSpyInvalidate()` | `navigation.js` | Run the update on the next frame; also forget which headings are visible |
-| `mdvScrollSpyUpdate()` | `navigation.js` | Binary search for the last visible heading above the reading line (the last one on screen at the very bottom) |
+| `mdvHeadingVisible(h)` | `navigation.js` | Whether a heading can be seen: `checkVisibility()` (not in a folded section or a closed `<details>`), else `getClientRects()` |
+| `mdvScrollSpyUpdate()` | `navigation.js` | Binary search for the last visible heading above the reading line (the last one on screen at the very bottom of a page that scrolls) |
 | `mdvSetActiveHeading(h, index)` | `navigation.js` | Active outline link and minimap segment (`aria-current`), breadcrumb text |
 | `mdvMark(el, on)`, `mdvKeepInView(el, scroller)` | `navigation.js` | Toggle `.active` and `aria-current`; scroll only the outline or minimap so the entry is visible |
 | `buildSectionMinimap()` | 2855 | A pill bar of `h2`s (only when there are 3 or more), inserted after the dashboard or first `h1` |
@@ -747,11 +757,12 @@ Functions marked with a file name instead of a line were added or rewritten afte
 
 | Function | Line | One line |
 |---|---|---|
-| `mdvOpenModal(el, { label, labelledBy, focus })` | `navigation.js` | `role="dialog"`, `aria-modal`, a name; the rest of the page `inert`; focus moves in |
-| `mdvCloseModal(el, { restoreFocus })` | `navigation.js` | Hides it, lifts `inert`, gives the focus back |
+| `mdvOpenModal(el, { label, labelledBy, focus })` | `navigation.js` | `role="dialog"`, `aria-modal`, a name; the toolbar, panels and player `inert`, the document area (`.layout`) `aria-hidden` (inert would restyle all of it); focus moves in |
+| `mdvCloseModal(el, { restoreFocus })` | `navigation.js` | Hides it, lifts `inert` and `aria-hidden`, gives the focus back, or (nothing had it) sets the Tab starting point to the reader's last click or the top |
+| `mdvSelectionElement()`, `mdvSetTabStart(el)` | `navigation.js` | The element of the reader's last click (its caret selection); focus and blur an element so the next Tab continues after it, without a focus ring |
 | `mdvFocusables(root)` | `navigation.js` | The visible focusable elements inside a dialog (for the Tab trap) |
-| `buildSearchIndex()` | `navigation.js` | Called on every render: empties the index and marks it stale |
-| `mdvSearchIndex()`, `mdvIndexDocument()` | `navigation.js` | Build the index on the first search after a render: headings, then each block's own text (`mdvOwnText`) with its nearest heading |
+| `buildSearchIndex()` | `navigation.js` | Called on every render: empties the index and marks it stale; drops the old results (they held the previous document) or, with search open, runs the query again |
+| `mdvSearchIndex()`, `mdvIndexDocument()` | `navigation.js` | Build the index on the first search after a render: headings, then each block's own text (`mdvOwnText`), link cards included, with its nearest heading |
 | `openSearch()` | `navigation.js` | Clears and opens the search dialog, focus in the input |
 | `closeSearch(opts)` | `navigation.js` | Closes it |
 | `handleSearch(q)` | `navigation.js` | Substring match (2 or more characters), first 20 results as `option`s, the count in `#mdvSearchStatus` |
@@ -782,21 +793,22 @@ Functions marked with a file name instead of a line were added or rewritten afte
 
 | Function | Line | One line |
 |---|---|---|
-| `buildTtsSections()` | `read-aloud.js` | Called on every render: rebuilds now while the player is in use, otherwise marks the sections stale |
+| `buildTtsSections()` | `read-aloud.js` | Called on every render: while the player is in use, rebuilds as soon as the render has finished (a microtask), otherwise marks the sections stale |
 | `ttsEnsureSections()`, `ttsBuildSections()` | `read-aloud.js` | Build the heading-delimited sections of speakable text and their elements |
-| `extractText(container)` (nested) | `read-aloud.js` | Recursive walk: viewer additions dropped, dashboard, headings, section-content, Mermaid, `pre`, tables, text |
-| `mdvSpeakableText(el)`, `ttsTableText(table)`, `ttsDashboardText(el)` | `read-aloud.js` | A block's words with phrase breaks, images by alt text, formulas once; tables by row; dashboard badges as phrases |
-| `ttsReconcile(before)` | `read-aloud.js` | After a re-render: keep the place, or stop when the section is gone |
+| `extractText(container)` (nested) | `read-aloud.js` | Recursive walk: viewer additions dropped, dashboard, headings, section-content, then `ttsSpecialBlock` (Mermaid, `pre`, tables), then text |
+| `mdvSpeakableText(el)`, `ttsTableText(table)`, `ttsDashboardText(el)` | `read-aloud.js` | A block's words with phrase breaks, images by alt text, formulas once, nested diagrams, tables and code as at the top level; tables by row; dashboard badges as phrases |
+| `ttsSpecialBlock(el)` | `read-aloud.js` | What a diagram (its narration, or nothing), a table (its narration, or its rows) or a code block ("Code block in python.") says, wherever it sits; `null` for anything else |
+| `ttsReconcile(before)` | `read-aloud.js` | After a re-render: keep the place when the same section (same heading and words) is there, otherwise stop |
 | `findNarrationFor(element)` | `read-aloud.js` | The `narrate:` comment node right before the block |
 | `ttsToggle()` | `read-aloud.js` | Shows the player (focus to Play), or stops it |
 | `ttsPlayPause()` | `read-aloud.js` | Play or pause |
-| `ttsPlay()` | `read-aloud.js` | Resumes the paused utterance, or starts afresh (clearing a stuck paused flag) |
-| `speakSection(idx)` | `read-aloud.js` | Unfolds, highlights, scrolls, chunks the section and speaks it |
+| `ttsPlay()` | `read-aloud.js` | Resumes the paused utterance, or starts afresh |
+| `speakSection(idx)` | `read-aloud.js` | Unfolds every block of the section, highlights, scrolls, chunks the section and speaks it |
 | `chunkText(text, maxLen)` | 3144 | Sentence-boundary chunks of at most about 180 characters |
 | `ttsStartKeepAlive()` | 3161 | 12 s pause/resume timer (not on Android) |
 | `ttsStopKeepAlive()` | 3171 | Clears the timer |
 | `ttsCancel()`, `ttsHalt()` | `read-aloud.js` | Cancel speech and make its late events stale; also stop reading |
-| `speakNextChunk()` | `read-aloud.js` | Speaks one chunk and moves to the next on `onend` (current generation only) |
+| `speakNextChunk()` | `read-aloud.js` | Clears a paused flag the browser kept, speaks one chunk and moves to the next on `onend` (current generation only) |
 | `ttsPause()` | `read-aloud.js` | Pause (cancel on Android) |
 | `ttsStop()` | `read-aloud.js` | Cancels, resets, hides the player, gives the focus back |
 | `ttsGoTo(idx)` | `read-aloud.js` | Go to a section: read it when playing, otherwise move the cursor |
@@ -814,7 +826,8 @@ Functions marked with a file name instead of a line were added or rewritten afte
 | Function | Line | One line |
 |---|---|---|
 | `mdvTypedKey(e)` | `app.js` | The key as a lower-case character (Caps Lock and Shift ignored), or the physical key on a non-Latin layout |
-| `mdvShortcutMatches(e, s)` | `app.js` | Whether a key event is the shortcut `s` |
+| `mdvShortcutMatches(e, s)` | `app.js` | Whether a key event is the shortcut `s` (rows handled elsewhere match too; the caller checks `run`) |
+| `mdvFrontDialog()` | `app.js` | The dialog in front of the page: `mdvModal`, or the expanded diagram |
 | `mdvIsTextEntry(t)` | `app.js` | Whether the focus is in a text field |
 | `openShortcuts()`, `closeShortcuts()`, `toggleShortcuts()` | `app.js` | The shortcuts sheet as a dialog |
 | `mdvShortcutKeys(s)`, `mdvRenderShortcutSheet()` | `app.js` | The sheet, drawn from `MDV_SHORTCUTS` in the platform's key names |
