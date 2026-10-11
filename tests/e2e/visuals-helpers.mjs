@@ -1,6 +1,7 @@
 // Shared helpers for the visuals specs. Not a spec itself: Playwright only collects *.spec.mjs.
 import { expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
+import { waitForLayoutSettled } from './support/viewer.mjs';
 
 export const THEMES = ['light', 'sepia', 'dark'];
 const KNOWN_NOISE = [
@@ -76,6 +77,7 @@ export async function open(page, sample, theme = 'light', { waitUntil = 'load' }
   await page.goto(`markdown-viewer.html?file=samples/${sample}`, { waitUntil });
   await page.waitForSelector('#mdBody h1, #mdBody h2', { timeout: 30_000 });
   await waitForDiagrams(page);
+  await waitForLayoutSettled(page);
   return errors;
 }
 
