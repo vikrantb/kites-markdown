@@ -939,9 +939,8 @@ All comment functions are in `js/comments.js`; find them by name.
 | `mdvRemoveMarkers(src, ids)` | Removes those markers only: lines markdown-it reads as HTML blocks, never text in code, inline code, front matter or the comment block |
 | `mdvIsCommentOnly(html)`, `mdvTopBlocks(tokens)` | The numbering rule: top-level blocks, skipping HTML blocks that hold only comments |
 | `mdvAnnotateBlocks(state)` | markdown-it core rule `mdv_blocks`: `data-mdv-block` numbers and `data-mdv-anchor` ids on top-level blocks |
-| `mdvWithBlockAttrs(html, token)` | Puts those attributes on the first element of HTML a renderer builds itself (raw HTML blocks, Mermaid fences) |
+| `mdvWithBlockAttrs(html, token)` | Puts those attributes on the first element of HTML a renderer builds itself (raw HTML blocks, Mermaid fences, display formulas) |
 | `mdvSplitFrontmatter(src)`, `mdvLineOffset(text, line)`, `mdvParseMarkdown(text)` | Map block numbers back to source lines with the viewer's own markdown-it (the last parse is kept) |
-| `mdvSameBlocks(body, blocks)` | Returns true: it compared the source's top-level blocks with those of the old math pre-pass's output (`renderMath`), which no longer exists; math is a markdown-it rule now, so the rendered blocks are the source's |
 | `mdvLocateInsertion(elem)` | Where a new thread's marker goes: the start of the line of the top-level block holding `elem` |
 | `mdvShortId()`, `mdvNewCommentId()`, `mdvNormalize(t)` | Anchor ids, comment ids, text normalization |
 | `mdvBlockText(el)`, `mdvBlockLabel(el)` | A block's text without chips (hashed); a readable label for a thread card |
