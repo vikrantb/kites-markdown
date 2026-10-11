@@ -246,7 +246,7 @@ It is started only from `speakNextChunk`. Resuming after a desktop pause (`ttsPl
 
 ## Controls
 
-All controls live in the fixed bar `#ttsPlayer`. Every button is wired with an inline `onclick`.
+All controls live in the fixed bar `#ttsPlayer`. Every button names its action with `data-action` (for example `data-action="tts-next"`), which `js/actions.js` runs; there are no inline `onclick` attributes.
 
 | Control | Element | Function | Behaviour |
 |---|---|---|---|

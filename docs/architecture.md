@@ -41,7 +41,9 @@ no framework. It has four parts.
 | Inline `<script>` | 1745–4292 | All behaviour, as one classic (non-module) script of about 2,550 lines |
 
 Because it is a classic script, every top-level `function` and `let`/`const` is visible to every
-other part of the file. Inline `onclick="..."` attributes in the markup call these globals by name.
+other part of the file. (Since then the script has been split into the classic scripts in `js/`,
+and the markup no longer calls these globals with inline `onclick="..."` attributes: a control
+names its action with `data-action`, and `js/actions.js` runs it. See `CLAUDE.md`.)
 
 ```mermaid
 flowchart TD
@@ -147,7 +149,7 @@ the end of `<body>` runs. [dependencies.md](dependencies.md) lists the versions.
 |---|---|
 | 1746–1767 | Core state and the `fontSizes` table |
 | 1769–1806 | markdown-it instance, plugin registration, fence override for `mermaid` |
-| 1808–1818 | `renderMath` (KaTeX pre-pass) |
+| 1808–1818 | `renderMath` (KaTeX pre-pass; replaced by the markdown-it rule in `js/math.js`) |
 | 1820–1840 | `extractNarrations` |
 | 1842–1915 | Theme, dropdown, font size, width, focus mode, settings |
 | 1917–2074 | File input, drag and drop, paste, `updateUrl`, `loadFromUrl` |
@@ -643,7 +645,7 @@ template string and is not code. Anonymous handlers follow the table.
 
 | Function | Line | One line |
 |---|---|---|
-| `renderMath(src)` | 1809 | Regex pre-pass: double-dollar then single-dollar spans → KaTeX HTML in the raw markdown |
+| ~~`renderMath(src)`~~ | 1809 | Removed. Math is a markdown-it rule now: `mdvMathInline`, `mdvMathBlock` and `mdvTypeset` in `js/math.js` |
 | `extractNarrations(src)` | 1825 | Collects `<!-- narrate: -->` comments with positions, and resets `narrationMap` |
 | `parseFrontmatter(src)` | 2079 | Strips the leading `---` YAML and parses scalars, lists and lists of `key: value` maps |
 | `renderFrontmatterDashboard(meta)` | 2126 | HTML for status badge, date, metrics and repo badges. Empty if there is no status, metrics or repos. |
@@ -844,7 +846,8 @@ template string and is not code. Anonymous handlers follow the table.
   browser. [commenting.md](commenting.md) lists these as known bugs.
 - **The DOM is rebuilt on every render.** `#mdBody.innerHTML` is replaced, so per-element listeners
   are re-attached by the passes, while document-level listeners are attached once.
-- **Raw HTML in documents is live.** markdown-it runs with `html: true`, Mermaid runs with
-  `securityLevel: 'loose'`, and nothing sanitises the output before `innerHTML`. Treat the viewer
-  as a tool for documents you trust.
+- **Raw HTML in documents is sanitized.** markdown-it runs with `html: true`, and `mdvSanitize`
+  (DOMPurify, `js/render.js`) cleans everything rendered from a document before it reaches the
+  page; Mermaid is pinned to `securityLevel: 'strict'`, and a Content Security Policy refuses
+  inline script. See [rendering.md](rendering.md#security-posture).
 - **Line numbers in this document are as of the initial import.** Search for function names.

@@ -109,13 +109,13 @@ Fixed in the initial import, and kept here as a record:
 
 | # | Issue | Evidence | Fix direction |
 |---|---|---|---|
-| 7 | Raw HTML is rendered without sanitization, so an untrusted file can run script in the viewer and use any granted file-system handle. Remote images also reveal that a file was opened. | Verified: an `onerror` attribute executed. See [rendering.md](rendering.md#security-posture) | DOMPurify configured to keep the viewer's own markup **and HTML comments** (comments and narration depend on them), plus a Content Security Policy |
+| 7 | ~~Raw HTML is rendered without sanitization, so an untrusted file can run script in the viewer and use any granted file-system handle.~~ **Fixed.** Everything rendered from a document passes through DOMPurify 3.4.16 (`mdvSanitize`), Mermaid is pinned to `securityLevel: 'strict'`, and a CSP (`script-src 'self' file:`) refuses inline script and `javascript:` URLs. Comment anchors, narration, KaTeX MathML and the viewer's own markup are kept. Remote images still reveal a file was opened (a privacy property of remote images, noted in the README). | Was: an `onerror` attribute executed. Now: `tests/e2e/security.spec.mjs` over `tests/fixtures/hostile.md` asserts ~15 payloads never run, no forbidden element or handler survives, and the CSP blocks inline script reaching the page another way; `press-the-buttons.md` shows no document data can trigger a viewer action, `cover.md` that a document cannot cover the viewer's controls, and `comments-with-markup.md` that the sanitizer deletes no text. See [rendering.md](rendering.md#security-posture) | Done |
 
 ### Rendering
 
 | # | Issue | Evidence | Fix direction |
 |---|---|---|---|
-| 8 | Two `$` on one line become math, even in prices and code; code samples then show raw KaTeX HTML | Verified, with a repro in `../samples/repro-dollar-signs.md` | Render math inside markdown-it with Pandoc's `$` rules, never inside code |
+| 8 | ~~Two `$` on one line become math, even in prices and code.~~ **Fixed.** Math is a markdown-it rule (`js/math.js`) with Pandoc's dollar rules; code is tokenized before inline rules, so math never matches inside a code span or block. | Was verified with `../samples/repro-dollar-signs.md`. Now: that sample plus `tests/fixtures/math-dollars.md` (23 cases) in `render-correctness.spec.mjs` — prices and both code samples stay text, one formula renders; kitchen-sink math still renders (4 inline + 1 display). | Done |
 | 9 | Dark theme: diagrams keep their light-theme colours, and sequence-diagram labels and arrows are `#333` on `#1C1C24` | Verified: after `setTheme('dark')`, Mermaid's config is still `theme: 'default'` and already-rendered diagrams are skipped | Keep each diagram's source; re-initialize Mermaid with the matching theme and re-render all diagrams on a theme change |
 | 10 | Mermaid sequence-diagram notes overflow their box | Verified: 384px of text in a 295px note, in both themes | Try `sequence: { wrap: true }` |
 | 11 | Section minimap labels overlap and clip when a document has many `h2` sections | Seen in a screenshot of `kitchen-sink.md` (20 sections) | Truncate with an ellipsis or scroll; show the full title on hover |
@@ -124,14 +124,14 @@ Fixed in the initial import, and kept here as a record:
 | 14 | Clicking a diagram node never jumps to its section; the handler never attaches | Read ([features.md](features.md)) | — |
 | 15 | Frontmatter `abbreviations` do nothing | Read ([features.md](features.md)) | — |
 | 16 | Diagram overlay titles are guessed by regex: any source containing "pie" is titled "Pie Chart" | Read ([features.md](features.md)) | Use the diagram type Mermaid reports |
-| 17 | A frontmatter `status:` or `date:` with no value stops the whole document from rendering (`TypeError` in `renderFrontmatterDashboard`). When the file was opened by `?file=`, `loadFromUrl` swallows the error and shows **"File not found on server"** for a file that exists | Verified in Chrome: a 7-line file with an empty `status:` renders nothing, logs nothing, and shows the not-found prompt ([features.md](features.md#current-limitations)) | Coerce dashboard fields to strings, and move the dashboard into the guarded post-processing. Never report a render error as "not found" |
+| 17 | ~~A frontmatter `status:` or `date:` with no value stops the whole document from rendering, and `?file=` then shows "File not found" for a file that exists.~~ **Fixed.** Dashboard fields are coerced to text (`mdvFrontmatterText`), the dashboard build is wrapped, and `renderMarkdown` catches any render failure and shows an error block with the document's text — never a blank page, never "not found". | Was verified in Chrome. Now: `render-correctness.spec.mjs` renders `tests/fixtures/frontmatter-empty-fields.md` (empty `status:`/`date:`) and `frontmatter-odd-shapes.md`, and asserts a forced render failure shows the error block with the document text, not the not-found prompt. | Done |
 
 ### Robustness and polish
 
-- **A failed optional library disables its feature silently,** because the `if (window.X)` guards have no warning. Task lists were silently off this way until the initial import fixed a misspelled global.
+- ~~**A failed optional library disables its feature silently.**~~ **Fixed.** `MDV_LIBRARIES` in `js/render.js` lists every vendored global; a missing one produces one `console.warn` and a small dismissible notice naming the feature. Verified in `render-correctness.spec.mjs` by blocking four vendor files and asserting four warnings and one notice. Math then falls back to readable TeX source.
 - **The file-plus button (writable open) throws outside Chromium** when no document is loaded, because `mdvPickFile` clicks `#mdFile` while the input's id is `fileInput`. The plain **Open** button is unaffected. Read (commenting.md, bug 14).
 - **The startup restore of the last-opened file can override an explicit `?file=` link** if the restore finishes after the fetch. Read.
-- **Every load logs a `favicon.ico` 404.**
+- ~~**Every load logs a `favicon.ico` 404.**~~ **Fixed.** An inline SVG favicon (a `data:` URI `<link rel="icon">`); the browser never requests `favicon.ico`. Verified in `render-correctness.spec.mjs` (no favicon request; the icon decodes and draws).
 - **Several things are untested:** Firefox and Safari, a real save round-trip, read-aloud audio, and the GitHub extension after its sandbox change.
 
 Every doc has its own limitations section with more detail and lower-severity items.
@@ -150,8 +150,9 @@ The final review across all docs found these gaps:
   it (inferred).
 - **Shortcut edge cases.** The keydown handler compares `e.key` with exact lowercase letters, so
   Caps Lock probably disables the Mod+K, Mod+B and Mod+O shortcuts (inferred).
-- **The viewer's own accessibility:** focus handling in the overlays, ARIA labels on icon-only
-  toolbar buttons, and keyboard access to every control.
+- **The viewer's own accessibility:** focus handling in the overlays and keyboard access to every
+  control. (ARIA labels on icon-only buttons were added in stream S and are checked by
+  `render-correctness.spec.mjs`.)
 - **Performance on large documents.** Every render re-parses everything, and the
   IntersectionObservers created on each render are never disconnected.
 - **Line numbers drift.** `architecture.md` cites line numbers "as of the initial import". Either
@@ -161,9 +162,9 @@ The final review across all docs found these gaps:
 
 1. **Make comments safe** (known issues 1–6). Until then the README warns readers off using them on
    important files.
-2. **Sanitize rendered HTML** (issue 7), keeping HTML comments intact.
-3. **Fix the rendering bugs readers hit first:** dollar signs (8), dark-theme diagrams (9), the copy
-   button (13). Each has a verified repro above.
+2. ~~**Sanitize rendered HTML** (issue 7).~~ Done: DOMPurify + CSP + Mermaid strict (stream S).
+3. **Fix the rendering bugs readers hit first:** ~~dollar signs (8)~~ done (stream S), dark-theme
+   diagrams (9), the copy button (13). Each has a verified repro above.
 4. **Decide the form factor** (above). It determines whether the code can be split into modules, and
    the inline script is already about 2,550 lines.
 5. **Build the renderer registry,** then add the first one or two visualizations from the
