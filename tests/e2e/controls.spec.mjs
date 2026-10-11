@@ -158,12 +158,21 @@ test('links and code: tooltip copy, the links panel and copy-code', async ({ pag
 
   // The tooltip opens below the link; keep the link mid-screen so the tooltip is on screen too.
   const link = page.locator('#mdBody a[href="https://example.com/"]').first();
-  await link.evaluate((a) => a.scrollIntoView({ block: 'center' }));
-  await link.hover();
-  await expect(page.locator('#linkTooltip')).toHaveClass(/visible/);
-  await page.locator('#linkTooltipCopy').click();
-  await expect(page.locator('#linkTooltipCopy')).toHaveText('Copied!');
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('https://example.com/');
+  const tooltip = page.locator('#linkTooltip');
+  // The tooltip follows the link under the pointer. openDocument waits for the layout to settle, but a
+  // shift after that (the section rail fitting itself) can still put another link under the pointer
+  // between the hover and the click, and the copy then copies that link (seen on CI: the sync-engine
+  // URL). So the hover, the click and the clipboard read retry as one: a shift costs a retry, while a
+  // copy that never yields this link's URL stays red.
+  await expect(async () => {
+    await link.evaluate((a) => a.scrollIntoView({ block: 'center' }));
+    await link.hover();
+    await expect(tooltip).toHaveClass(/visible/, { timeout: 1_000 });
+    await expect(page.locator('#linkTooltipText')).toHaveText('example.com', { timeout: 1_000 });
+    await page.locator('#linkTooltipCopy').click({ timeout: 1_000 });
+    await expect(page.locator('#linkTooltipCopy')).toHaveText('Copied!', { timeout: 1_000 });
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('https://example.com/');
+  }).toPass({ timeout: 15_000 });
 
   await page.locator('#linksPanelBtn').click();
   await expect(page.locator('#linksPanel')).toHaveClass(/show/);
