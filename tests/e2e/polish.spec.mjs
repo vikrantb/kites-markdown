@@ -332,11 +332,12 @@ test('on a wide window a diagram much wider than the column uses the margins ins
     return { left: body.left, right: body.right, width: body.width, areaLeft: area.left, areaRight: area.right };
   });
   expect(wide.natural).toBeGreaterThan(1000);
-  expect(wide.scale).toBeGreaterThan(0.9); // was 0.59: 8 px labels
+  expect(wide.scale).toBeGreaterThan(0.85); // was 0.59: 8 px labels
   expect(wide.width).toBeGreaterThan(col.width);
   expect(Math.abs((wide.left + wide.right) / 2 - (col.left + col.right) / 2)).toBeLessThan(1); // centred on the column
   expect(wide.left).toBeGreaterThanOrEqual(col.areaLeft);
   expect(wide.right).toBeLessThanOrEqual(col.areaRight);
+  expect(wide.right).toBeLessThanOrEqual(1440 - 58); // clear of the floating scroll buttons (right: 20 px, 38 px wide)
   expect(wide.scrolls).toBe(false);
   // A drawing that fits is not faded.
   expect(await page.$eval('#mdBody pre.mermaid', (b) => getComputedStyle(b).maskImage || getComputedStyle(b).webkitMaskImage)).toBe('none');

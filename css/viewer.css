@@ -1483,13 +1483,14 @@ html:has(.section-minimap) { scroll-padding-top: calc(var(--toolbar-height) + 64
 /* A drawing keeps a legible size. mermaid.js gives each card the least its drawing may shrink to (--mdv-diagram-min:
    70 % of its natural width; a Gantt chart's own width) and, for a drawing wider than 768 px, that natural width
    (--mdv-wide-w, on a card marked .mdv-wide). Such a card grows into the page's margins when the window has room, up
-   to its drawing's natural width and centred on the column, so the drawing is not shrunk. Where even the page is too
+   to its drawing's natural width and centred on the column, so the drawing is not shrunk; it stays 40 px clear of the
+   content area's sides, which keeps it out from under the floating scroll buttons. Where even the page is too
    narrow (a phone), the drawing stops shrinking at its floor and scrolls sideways inside its card (below). Only cards
    at the column's own level grow: one inside a list, a quote or a callout keeps its box. The expanded view's copy is
    not in a card, so neither rule reaches it. */
 .content-wrapper { container-type: inline-size; }
 :is(.md-body, .section-content) > .mermaid-wrapper.mdv-wide {
-  --mdv-card-w: max(100%, min(calc(var(--mdv-wide-w) + 2 * var(--mdv-card-pad) + 2px), 100cqw));
+  --mdv-card-w: max(100%, min(calc(var(--mdv-wide-w) + 2 * var(--mdv-card-pad) + 2px), calc(100cqw - 80px)));
   width: var(--mdv-card-w);
   margin-left: calc((100% - var(--mdv-card-w)) / 2);
 }
