@@ -1,8 +1,10 @@
-// Opening the folder's documents (js/folder-open.js): the last request wins, the reader's place is kept, a document
-// the load seam declines leaves nothing behind, and the keyboard goes from the tree into the document and back.
-// Helpers and the stand-in for stream L's load seam: folder-helpers.mjs.
+// Opening the folder's documents (js/folder-open.js): the last request wins, also against a link and Back (the load
+// seam's one order of opens), the reader's place is kept, a document the load seam declines leaves nothing behind, and
+// the keyboard goes from the tree into the document and back. Helpers: folder-helpers.mjs.
 import { test, expect } from '@playwright/test';
-import { start, seed, openFolder, expectTitle, openInTree, scrollY } from './folder-helpers.mjs';
+import {
+  start, seed, openFolder, expectTitle, openInTree, scrollY, holdReads, letGo, desktopSetup, abs, collectProblems,
+} from './folder-helpers.mjs';
 
 // A long document: 30 parts of three paragraphs each, so a place in it is far from its top.
 const LONG = '# Long handoff\n\n' + Array.from({ length: 30 }, (_, i) => `## Part ${i + 1}\n\n` + [1, 2, 3].map((n) =>
@@ -45,6 +47,82 @@ test('the last click wins: a slower read for an earlier choice never replaces a 
   await page.waitForTimeout(1500);
   await expectTitle(page, 'Project notes');
   await expect(page.locator('#mdvFolderTree .is-current')).toHaveAttribute('data-path', 'README.md');
+  expect(problems).toEqual([]);
+});
+
+// One order for every open (js/files.js, mdvBeginOpen): a request counts from the moment the reader makes it, whatever
+// route it comes by, so a slow read for the sidebar never beats a later Back or link, nor the other way round.
+const opened = (page) => page.evaluate(() => window.__opened.map((o) => o.path));
+
+test('Back pressed while a file of the folder is still being read wins: that read is dropped when it finishes', async ({ page }) => {
+  const problems = await start(page);
+  await seed(page, { 'a.md': '# A\n\nThe first file.\n', 'b.md': '# B\n\nThe second file.\n', 'c.md': '# C\n\nThe third file.\n' });
+  await openFolder(page);
+  await openInTree(page, 'a.md', 'A');
+  await openInTree(page, 'b.md', 'B');
+  await holdReads(page, 'c.md'); // a large file, a busy disk
+  await page.locator('#mdvFolderTree [data-path="c.md"]').click();
+  await page.click('#mdvBackBtn');
+  await expectTitle(page, 'A');
+  await letGo(page, 'c.md');
+  await page.waitForTimeout(800);
+  await expectTitle(page, 'A');
+  await expect(page.locator('#mdvFolderTree .is-current')).toHaveAttribute('data-path', 'a.md');
+  expect(await opened(page)).toEqual(['a.md', 'b.md', 'a.md']); // c.md never reached the load seam
+  expect(problems).toEqual([]);
+});
+
+test('a file chosen in the sidebar while a link is still being read wins: the link\'s read is dropped when it finishes', async ({ page }) => {
+  const problems = await start(page);
+  await seed(page, { 'a.md': '# A\n\n[The third file](c.md)\n', 'b.md': '# B\n\nThe second file.\n', 'c.md': '# C\n\nThe third file.\n' });
+  await openFolder(page);
+  await openInTree(page, 'a.md', 'A');
+  await holdReads(page, 'c.md');
+  await page.locator('#mdBody a', { hasText: 'The third file' }).click(); // read through mdvFolder.read (js/document-links.js)
+  await openInTree(page, 'b.md', 'B');
+  await letGo(page, 'c.md');
+  await page.waitForTimeout(800);
+  await expectTitle(page, 'B');
+  await expect(page.locator('#mdvFolderTree .is-current')).toHaveAttribute('data-path', 'b.md');
+  expect(await opened(page)).toEqual(['a.md', 'b.md']);
+  expect(problems).toEqual([]);
+});
+
+test('desktop: a file chosen in the sidebar while Back still reads its document wins: Back gives way', async ({ page }) => {
+  // In the desktop app Back reads the file again through the bridge before it shows it (js/history.js)
+  const problems = collectProblems(page);
+  await desktopSetup(page);
+  await page.goto('markdown-viewer.html');
+  await expectTitle(page, 'Project notes');
+  await openFolder(page);
+  await page.locator(`#mdvFolderTree [data-path="${abs('status.md')}"]`).click();
+  await expectTitle(page, 'Status');
+  await page.locator(`#mdvFolderTree [data-path="${abs('handoffs/2026-10-01-api.md')}"]`).click();
+  await expectTitle(page, 'Handoff: the API');
+  await holdReads(page, abs('status.md'));
+  await page.click('#mdvBackBtn');
+  await page.locator(`#mdvFolderTree [data-path="${abs('handoffs/2026-10-08-ui.md')}"]`).click();
+  await expectTitle(page, 'Handoff: the reading UI');
+  await letGo(page, abs('status.md'));
+  await page.waitForTimeout(1000); // longer than Back waits for its read (600 ms) before it shows the kept text
+  await expectTitle(page, 'Handoff: the reading UI');
+  await expect(page.locator('#mdvFolderTree .is-current')).toHaveAttribute('data-path', abs('handoffs/2026-10-08-ui.md'));
+  expect(problems).toEqual([]);
+});
+
+test('a new version of the document on screen, shown while the next file is read, does not cancel that file', async ({ page }) => {
+  const problems = await start(page);
+  await seed(page, { 'a.md': '# A\n\nThe first version.\n', 'c.md': '# C\n\nThe third file.\n' });
+  await openFolder(page);
+  await openInTree(page, 'a.md', 'A');
+  await holdReads(page, 'c.md');
+  await page.locator('#mdvFolderTree [data-path="c.md"]').click();
+  // Another program saves a.md while c.md is read: live reload shows the new version, in a.md's place
+  await seed(page, { 'a.md': '# A\n\nThe second version.\n' });
+  await expect(page.locator('#mdBody')).toContainText('The second version.', { timeout: 10_000 });
+  await letGo(page, 'c.md');
+  await expectTitle(page, 'C');
+  await expect(page.locator('#mdvFolderTree .is-current')).toHaveAttribute('data-path', 'c.md');
   expect(problems).toEqual([]);
 });
 

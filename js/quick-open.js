@@ -340,5 +340,5 @@ mdvRegisterActions({
 });
 
 document.addEventListener('DOMContentLoaded', () => {
-  mdvFolderAddShortcut({ mod: true, key: 'p', label: 'Go to a file (quick open)', modal: 'mdvQuickOpen', run: () => mdvQoToggle() });
+  mdvRegisterShortcut('Mod+P', () => mdvQoToggle(), 'Go to a file (quick open)', { modal: 'mdvQuickOpen' });
 });

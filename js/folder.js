@@ -532,26 +532,6 @@ function mdvFolderToast(message, kind) {
   else console.warn(message);
 }
 
-// ------- Keyboard shortcuts: rows in app.js's MDV_SHORTCUTS table (the key handler and the ? sheet) -------
-// Added after every script has loaded. A row is matched in table order, so a row meant to win over an existing
-// one for the same keys goes in front of it (`before`).
-function mdvFolderAddShortcut(row, before) {
-  if (typeof MDV_SHORTCUTS === 'undefined' || !Array.isArray(MDV_SHORTCUTS)) return;
-  if (MDV_SHORTCUTS.some((r) => r.label === row.label)) return;
-  const at = before ? MDV_SHORTCUTS.findIndex(before) : -1;
-  if (at >= 0) MDV_SHORTCUTS.splice(at, 0, row); else {
-    const help = MDV_SHORTCUTS.findIndex((r) => r.key === '?');
-    MDV_SHORTCUTS.splice(help >= 0 ? help : MDV_SHORTCUTS.length, 0, row);
-  }
-}
-
-// What an existing row says in the ? sheet, for a row whose keys a folder feature now shares with it.
-function mdvFolderRelabelShortcut(match, label) {
-  if (typeof MDV_SHORTCUTS === 'undefined' || !Array.isArray(MDV_SHORTCUTS)) return;
-  const row = MDV_SHORTCUTS.find(match);
-  if (row) row.label = label;
-}
-
 // ------- The contract -------
 window.mdvFolder = {
   get kind() { return mdvFolderState.kind; },

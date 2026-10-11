@@ -574,7 +574,7 @@ function mdvTreeMarkCurrent() {
 mdvFolderOn('change', mdvTreeRender);
 mdvFolderOn('current', mdvTreeMarkCurrent);
 document.addEventListener('DOMContentLoaded', () => {
-  mdvFolderAddShortcut({ mod: true, shift: true, key: 'e', label: 'Go to the folder’s files', run: () => mdvTreeGoTo() });
+  mdvRegisterShortcut('Mod+Shift+E', () => mdvTreeGoTo(), 'Go to the folder’s files');
 });
 mdvTreeNarrow.addEventListener('change', () => { if (mdvTreeShown() && mdvTreeNarrow.matches) mdvTreeShow(false, { persist: false }); });
 // The panel comes back as the reader left it.

@@ -4,7 +4,7 @@
    sidebars, below the dialogs (300 and up): an open dialog is never covered.
    ========================================================================== */
 
-/* Back and forward, at the start of the toolbar, shown once there is somewhere to go */
+/* Back and forward, after the folder's buttons at the start of the toolbar, shown once there is somewhere to go */
 .mdv-history-nav { margin-right: 6px; flex-shrink: 0; }
 /* Where the toolbar has no room for both, they take the room of the reading time (words and minutes), so the
    document's name and the Open button keep theirs. js/history.js marks the toolbar while they show: a :has() rule here

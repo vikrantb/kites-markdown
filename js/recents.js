@@ -100,60 +100,51 @@ async function mdvRecentsOpen(entry, { newWindow = false } = {}) {
   if (entry.kind === 'path') {
     const host = window.mdvHost;
     if (newWindow || !host.currentPath) { await host.openPath(entry.path); return; }
-    // The last request wins (js/folder-open.js): a slower read for an earlier click never replaces a later choice.
-    const ticket = mdvFolderTakeTicket();
+    // The last request wins (the load seam's order of opens): a slower read for an earlier click never replaces a
+    // later choice.
+    const open = mdvBeginOpen();
     const inFolder = mdvFolderState.kind === 'desktop' && mdvFolderInside(entry.path, mdvFolderState.root);
     let doc;
     try {
       doc = inFolder ? await mdvFolder.read(entry.path) : Object.assign({}, await host.readDocument(entry.path), { handle: null });
     } catch (e) {
-      if (mdvFolderIsLatest(ticket)) mdvRecentsGone(entry, e);
+      if (open.current()) mdvRecentsGone(entry, e);
       return;
     }
-    if (!mdvFolderIsLatest(ticket)) return;
-    await mdvFolderShow(doc, { kind: 'path', path: doc.path, name: doc.name, handle: null });
+    if (!open.current()) return;
+    await mdvFolderShow(doc, { kind: 'path', path: doc.path, name: doc.name, handle: null }, { begun: open });
     return;
   }
   // A browser handle: reading it may need the reader's permission again (this click lets the browser ask).
-  const ticket = mdvFolderTakeTicket();
+  const open = mdvBeginOpen();
   const handle = entry.handle;
   let permission = 'prompt';
   try { permission = await handle.queryPermission({ mode: 'read' }); } catch (e) { /* ask */ }
   if (permission !== 'granted') {
     try { permission = await handle.requestPermission({ mode: 'read' }); } catch (e) { permission = 'denied'; }
   }
-  if (!mdvFolderIsLatest(ticket)) return;
+  if (!open.current()) return;
   if (permission !== 'granted') {
     mdvFolderToast('The browser did not allow reading ' + entry.name + '.', 'error');
     return;
   }
   let disk;
-  try { disk = await mdvReadHandle(handle); } catch (e) { if (mdvFolderIsLatest(ticket)) mdvRecentsGone(entry, e); return; }
-  if (!mdvFolderIsLatest(ticket)) return;
+  try { disk = await mdvReadHandle(handle); } catch (e) { if (open.current()) mdvRecentsGone(entry, e); return; }
+  if (!open.current()) return;
   if (disk.changing) { mdvFolderToast(entry.name + ' kept changing while it was read. Try again in a moment.', 'error'); return; }
   let path = null;
   if (mdvFolderState.kind === 'browser') {
     try { const parts = await mdvFolderState.root.resolve(handle); if (parts) path = parts.join('/'); } catch (e) { /* not in the open folder */ }
   }
-  if (!mdvFolderIsLatest(ticket)) return;
+  if (!open.current()) return;
   const doc = { name: disk.file.name, text: disk.text, path, handle, mtimeMs: disk.file.lastModified, utf8: disk.utf8 };
-  await mdvFolderShow(doc, { kind: 'handle', path, name: doc.name, handle });
+  await mdvFolderShow(doc, { kind: 'handle', path, name: doc.name, handle }, { begun: open });
 }
 
 function mdvRecentsGone(entry, e) {
   const gone = (e && (e.code === 'not-found' || e.name === 'NotFoundError'));
   mdvFolderToast(gone ? entry.name + ' is no longer where it was, so it was taken off the list.' : entry.name + ' could not be read: ' + mdvFolderSentence(String((e && (e.message || e.name)) || e)), 'error');
   if (gone) mdvRecentsForget(entry);
-}
-
-// The comment code reopens the last file at startup ('current' in IndexedDB: js/comments.js). Every document shown
-// from a file handle is that file, by whatever route it came (a folder, a recent document, Back and Forward), so a
-// reload shows the document the reader was reading. (The load seam remembers a handle only the first time it reads
-// it, so without this a reload could reopen an earlier document.) The desktop app reopens its window's own file.
-function mdvRecentsRememberLast(identity) {
-  if (!identity || identity.kind !== 'handle' || !identity.handle || mdvFolderIsDesktop()) return;
-  if (typeof mdvPutHandle !== 'function') return;
-  mdvPutHandle('current', identity.handle).catch(() => { /* remembering it is a convenience; IndexedDB may be off */ });
 }
 
 // ------- Drawing: the toolbar menu and the welcome screen -------
@@ -351,9 +342,7 @@ mdvRegisterActions({
     if (!document.getElementById('mdvWelcomeRecents')) mdvRecentsRenderWelcome(mdvRecent.items || []);
   }).observe(screen, { childList: true });
   mdvFolderOn('shown', (identity) => {
-    if (!identity) return;
-    mdvRecentsNote(identity);
-    mdvRecentsRememberLast(identity);
+    if (identity) mdvRecentsNote(identity);
   });
   mdvRecentsLoad().then(mdvRecentsRender);
 })();

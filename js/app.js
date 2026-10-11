@@ -68,15 +68,20 @@ function mdvShortcutMatches(e, s) {
 // sheet. Returns false, adding nothing, when another shortcut already has those keys. A script that loads before
 // this one registers from a DOMContentLoaded listener: every script has run by then. The physical key is accepted too
 // where the typed character can differ: punctuation that other layouts move ('[' on a German keyboard), and a letter
-// with Alt, which types another character on a Mac (Option+R is "®").
+// with Alt, which types another character on a Mac (Option+R is "®"). opts, optional:
+//   modal  the id of the dialog the shortcut opens: while that dialog is open, the same keys close it
+//   over   the keys are another shortcut's already, and this one takes them over: it goes in front of that one, which
+//          keeps its row in the sheet with `over` as its description (fn decides when that one still applies)
 const MDV_PHYSICAL_KEYS = { '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash', '.': 'Period', ',': 'Comma',
   '/': 'Slash', ';': 'Semicolon', "'": 'Quote', '`': 'Backquote', '-': 'Minus', '=': 'Equal' };
 
-function mdvRegisterShortcut(combo, fn, description) {
+function mdvRegisterShortcut(combo, fn, description, opts) {
+  opts = opts || {};
   const parts = String(combo).split('+');
   let key = parts.pop();
   if (key === '' && parts.length && parts[parts.length - 1] === '') { parts.pop(); key = '+'; } // 'Mod++'
   const row = { label: String(description || combo), run: fn };
+  if (opts.modal) row.modal = String(opts.modal);
   for (const m of parts) {
     const name = m.trim().toLowerCase();
     if (name === 'mod' || name === 'ctrl' || name === 'cmd' || name === 'meta') row.mod = true;
@@ -94,11 +99,13 @@ function mdvRegisterShortcut(combo, fn, description) {
   const shiftCounts = /^[a-z]$/.test(row.key) || row.key.length > 1;
   const same = (s) => !!s.mod === !!row.mod && !!s.alt === !!row.alt && s.key === row.key && (!shiftCounts || !!s.shift === !!row.shift);
   const taken = MDV_SHORTCUTS.find(same);
-  if (taken) {
+  if (taken && typeof opts.over === 'string') {
+    taken.label = opts.over;
+    MDV_SHORTCUTS.splice(MDV_SHORTCUTS.indexOf(taken), 0, row);
+  } else if (taken) {
     console.warn(`Shortcut ${combo} already does "${taken.label}"; "${row.label}" was not added.`);
     return false;
-  }
-  MDV_SHORTCUTS.push(row);
+  } else MDV_SHORTCUTS.push(row);
   const sheet = document.querySelector('#shortcutsOverlay .shortcuts-box');
   if (sheet) delete sheet.dataset.rendered; // drawn again, with this row, the next time it opens
   return true;

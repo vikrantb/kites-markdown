@@ -70,7 +70,7 @@ as it has been opened once: an app that declares a file type becomes the automat
   **File → New Window** (⌘N / Ctrl+N) opens an empty window; **View → Reload** (⌘R / Ctrl+R) re-reads
   the document on screen; **Close Window** is ⌘W / Ctrl+W.
 - **Links in a document:** a link to another Markdown file opens that file in the same window, and **Back**
-  (**Go → Back**, ⌘[ on a Mac, `Alt+←`, or the arrow at the left of the toolbar) returns to where you were, with
+  (**Go → Back**, ⌘[ on a Mac, `Alt+←`, or the toolbar's ‹ arrow, after the folder buttons) returns to where you were, with
   the focus on that link; **Go → Forward** (⌘] / `Alt+→`) goes on again. ⌘-click (Ctrl-click) opens it in a
   window of its own. Web and email links open in your browser or mail app; links within the page
   scroll. Links to other kinds of file are not opened (a short notice says so), and the window never navigates

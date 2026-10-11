@@ -333,7 +333,7 @@ test('a dropped file is read through a handle and followed (Chromium)', async ({
   expect(errors).toEqual([]);
 });
 
-for (const width of [1366, 1280]) {
+for (const width of [1366, 1280, 1180, 1024]) {
   test(`at ${width} px, with Back shown and the comments' "Not saved" status, the Open button stays on screen`, async ({ page }, info) => {
     const errors = collectErrors(page);
     await page.setViewportSize({ width, height: 900 });
@@ -352,10 +352,16 @@ for (const width of [1366, 1280]) {
         toolbarScroll: document.querySelector('.toolbar').scrollWidth,
         openVisible: Math.round(Math.max(0, Math.min(open.right, innerWidth) - Math.max(open.left, 0))),
         openWidth: Math.round(open.width),
+        // The folder's buttons are in the toolbar too (js/folder-tree.js); the status gives way to the name
+        nameCut: (() => { const t = document.getElementById('titleText'); return t.scrollWidth > t.clientWidth + 1 || t.clientWidth === 0; })(),
+        statusTip: document.getElementById('mdvSaveStatus').title === document.getElementById('mdvSaveStatus').textContent,
       };
     });
     expect(layout.toolbarScroll).toBeLessThanOrEqual(width);
     expect(layout.openVisible).toBe(layout.openWidth);
+    expect(layout.statusTip, 'the status\'s whole text is its tooltip').toBe(true);
+    // At 1024 px, with the folder's buttons, Back and a long status all shown, the name is cut short as well
+    if (width >= 1180) expect(layout.nameCut, 'the document\'s name is cut').toBe(false);
     expect(errors).toEqual([]);
   });
 }

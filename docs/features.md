@@ -47,8 +47,8 @@ Before a document is loaded, the body shows a welcome screen with a drop zone, a
 | `‹` / `›` | Back to *name* (Alt+←) / Forward to *name* (Alt+→) | Back and forward between the documents you opened (see [Back and forward](#back-and-forward)). Shown once there is somewhere to go; each names the document it goes to, and the one with nowhere to go is dimmed. | `mdvHistoryBack`, `mdvHistoryForward` (`js/history.js`) |
 | Title | — | Shows the file name. | `renderMarkdown` |
 | Breadcrumb | — | Shows the file path if the title contains `/`. When you scroll, it shows the current heading. Hidden at 900 px wide or less. | `renderMarkdown`, `setupScrollSpy` |
-| Reading meta | — | Word count and estimated minutes at 230 words per minute. Hidden at 900 px wide or less. | `renderMarkdown` |
-| Save status | — | Comment save state, for example "Saving…", "Saved ✓" or a call to set a save location. | `mdvSetStatus` |
+| Reading meta | — | Word count and estimated minutes at 230 words per minute. Hidden at 1,180 px wide or less (the folder icons take its room), and at 1,440 px or less while `‹` / `›` show. | `renderMarkdown` |
+| Save status | The whole status | Comment save state, for example "Saving…", "Saved ✓" or a call to set a save location. Short of room, it is cut short before the document's name is (its whole text is its tooltip). | `mdvSetStatus` |
 | `A−` / size label / `A+` | Smaller text / Larger text | Five reading sizes. | `changeFontSize`, `applyFontSize` |
 | Width icon | Toggle page width | Switches between a narrow reading column and full width. | `toggleWidth` |
 | Contents icon | Table of contents (Ctrl+B) | Shows or hides the table of contents. | `toggleToc` |
@@ -127,15 +127,18 @@ styles in `css/folder.css`. They show a document only through `mdvOpenDocument` 
 Every way the folder opens a document (the sidebar, quick open, search in files, recent documents) goes through
 `js/folder-open.js`:
 
-- **The last request wins.** Each request takes a ticket before it reads the file; a read that finishes after the
-  reader asked for another document (a large file, a busy disk) is dropped, so the document on screen is always the
-  last one asked for.
+- **The last request wins,** whatever route each came by. Each request begins its open at the load seam before it
+  reads the file (`mdvBeginOpen`, `js/files.js`), as a link and Back/Forward do; a read that finishes after the reader
+  asked for another document (a large file, a busy disk) is dropped, so the document on screen is always the last one
+  asked for: a file clicked in the sidebar, then Back pressed before it was read, leaves Back's document on screen
+  **(tested)**.
 - **The reader's place is kept.** As the reader leaves a document of the folder, the load seam hands over their place in
   it (`mdvOnDocumentOpening`); going back to it from the sidebar, quick open or the recent menu opens it there
   (`mdvOpenDocument`'s `position`), as Back and Forward do. A document never read before opens at its top; search in
   files opens at the match.
-- **After a reload,** the document the reader was reading comes back (the comment code reopens the `current` file at
-  startup; every document shown from a file handle is kept as that file, `mdvRecentsRememberLast`).
+- **After a reload,** the document the reader was reading comes back: the comment code reopens the `current` file at
+  startup, and the load seam keeps every document it shows from a file handle as that file, by whatever route it
+  came **(tested)**.
 
 ### Opening a folder
 
@@ -336,7 +339,7 @@ quick open show documents through the same seam. Go back and forward with:
 
 - `Alt+←` and `Alt+→` (`⌥←` and `⌥→` on a Mac), registered with `mdvRegisterShortcut`, and in the desktop app the
   **Go** menu (`⌘[` and `⌘]` on a Mac);
-- the **‹** and **›** buttons at the left of the toolbar.
+- the **‹** and **›** buttons near the left of the toolbar, after the folder and clock icons.
 
 These go to the previous or next **document**: they step over the places inside the document on screen (an
 in-document link such as a contents line, a heading's `#` permalink), and each button names the document it goes to
@@ -381,9 +384,15 @@ links to other kinds of file, keep their usual behaviour.
 reload, or Back itself). It keeps the reader's place when the same document is shown again, links the document to
 the handle it was read from (or to none), points the desktop bridge at the document's path, and sets the title.
 With a handle, text the comment code has not read through that handle is read again through `mdvOpenWithHandle`,
-so a comment save compares the file with what is shown. **The newest open wins:** an open that reads a file through a
-handle gives up before it renders when another open began (or another document was shown) meanwhile, and resolves
-`false`; `mdvOpenSeq` counts opens, so a caller can tell that it was overtaken rather than refused **(tested)**.
+so a comment save compares the file with what is shown; a document shown from a handle is the `current` file a
+reload of the page reopens, by every route **(tested)**. **The newest open wins, in one order for every route:** an
+open counts from the moment the reader asks for it. A caller that must read the document first (a link, Back and
+Forward, the folder's sidebar, quick open, search and recent documents) begins its open with `mdvBeginOpen()` before
+it reads and passes it as `opts.begun`; an open that reads a file through a handle gives up before it renders when
+another open began (or another document was shown) meanwhile. An overtaken open resolves `false`, and its
+`open.current()` (or `mdvOpenSeq`, which counts the opens) tells the caller it was overtaken rather than refused. A
+new version of the document on screen shown in its place (live reload: `push: false`, no history) overtakes nothing:
+it gives up while another open is under way, and an open begun before it stays the newest **(tested)**.
 Every render of a document, through the seam or not, is reported: `mdvShownDocument()` is the record of the document
 on screen, `mdvOnDocumentOpening(fn)` runs just before a document replaces the page and `mdvOnDocumentOpened(fn)` once
 it is shown, with an event whose `kind` is `first`, `open`, `reload` or `history`; `mdvOnDocumentDrawn(fn)` runs after
@@ -761,7 +770,7 @@ The global shortcuts come from one table, `MDV_SHORTCUTS` in `js/app.js`, which 
 | Mouse wheel | Zoom the diagram | diagram overlay | `wheel` listener on `diagramBody` |
 | `Shift`+right-click | Native browser context menu instead of the comment menu | document body | `mdvAttachContextMenu` |
 
-Other scripts add their shortcuts with `mdvRegisterShortcut(combo, fn, description)` (`js/app.js`): `combo` is modifiers and a key joined by `+` (`Mod`, `Shift`, `Alt`; a character or a key's name such as `ArrowLeft`), and the row joins the same table, so the key handler and the sheet both have it. A `fn` that returns `false` leaves the key to the browser. Keys another shortcut already has are refused (it returns `false` and warns in the console). A script that loads before `app.js` registers from a `DOMContentLoaded` listener.
+Other scripts add their shortcuts with `mdvRegisterShortcut(combo, fn, description, opts)` (`js/app.js`): `combo` is modifiers and a key joined by `+` (`Mod`, `Shift`, `Alt`; a character or a key's name such as `ArrowLeft`), and the row joins the same table, so the key handler and the sheet both have it. A `fn` that returns `false` leaves the key to the browser. Keys another shortcut already has are refused (it returns `false` and warns in the console), unless `opts.over` takes them over: the new row goes in front of the old one, which keeps its row in the sheet with `opts.over` as its description (the folder's search in files takes `Ctrl/Cmd+Shift+F` this way, and folds the sections itself when no folder is open). `opts.modal` names the dialog the shortcut opens, so the same keys close it. A script that loads before `app.js` registers from a `DOMContentLoaded` listener; the folder's shortcuts (quick open, search in files, back to the sidebar) are registered this way too.
 
 The `?` sheet is drawn from `MDV_SHORTCUTS` the first time it opens (`mdvRenderShortcutSheet`): it lists every global shortcut, the comment shortcuts and `Esc`, in the platform's own key names (`⌘` and `⇧` on a Mac, `Ctrl` and `Shift` elsewhere), with a Close button. It used to be static markup that left out the comment shortcuts, said `Ctrl` on a Mac, and showed the backslash twice.
 

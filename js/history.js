@@ -39,7 +39,6 @@ const mdvHistory = {
   index: -1,         // the tab's position now (Back moves it at once; its document follows once it is read)
   shown: null,       // the id of the document on screen
   seq: 0,
-  going: null,       // the latest Back/Forward or link being followed; an older one that finishes later gives way
   leaving: null,     // {href, nth}: the link the reader is following out of the document on screen
   fragment: false,   // the browser is making an in-document place of its own (a "#" permalink was clicked)
 };
@@ -310,7 +309,8 @@ document.addEventListener('click', (e) => {
 
 // Back or Forward moved the tab to a place of another document (`from` is where it was): that document is read and shown
 async function mdvHistoryShow(st, from) {
-  const going = mdvHistory.going = {};
+  // Counts from now, before the file is read: an open the reader asks for meanwhile (a link, the sidebar) wins
+  const open = mdvBeginOpen();
   const record = mdvHistory.docs.get(st.id) || null;
   const kept = record && record.doc && typeof record.doc.text === 'string' ? record.doc : null;
   let doc = kept;
@@ -319,7 +319,7 @@ async function mdvHistoryShow(st, from) {
   // before it replaces them
   if (!(kept && record.unsaved)) {
     const fresh = await mdvHistoryRead(record && record.doc ? record.doc : st, kept ? MDV_HISTORY_FRESH_MS : MDV_HISTORY_READ_MS);
-    if (mdvHistory.going !== going) return; // the reader went somewhere else meanwhile
+    if (!open.current()) return; // the reader went somewhere else meanwhile
     if (fresh) {
       readAgain = true;
       doc = Object.assign({}, record ? record.doc : null, fresh);
@@ -331,11 +331,9 @@ async function mdvHistoryShow(st, from) {
     mdvHistoryReturn(st, from);
     return;
   }
-  const opens = mdvOpenSeq;
-  const shown = await mdvOpenDocument(doc, { push: false, history: { id: st.id, n: st.n }, position: record ? record.position : null });
-  if (mdvHistory.going !== going) return;
+  const shown = await mdvOpenDocument(doc, { push: false, history: { id: st.id, n: st.n }, position: record ? record.position : null, begun: open });
+  if (!open.current()) return; // a newer open overtook this one
   if (!shown) {
-    if (mdvOpenSeq !== opens + 1) return; // a newer open overtook this one
     mdvHistoryProblem(doc.name, 'it could not be read');
     mdvHistoryReturn(st, from);
     return;

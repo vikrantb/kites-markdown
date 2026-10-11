@@ -524,14 +524,9 @@ mdvRegisterActions({
 // With a folder open the key always searches, whether or not the sidebar is shown: a narrow window hides it, and a
 // reader who hid it still has the folder. The fold row it shares the keys with says when it applies.
 document.addEventListener('DOMContentLoaded', () => {
-  const sameKeys = (row) => row.mod && row.shift && row.key === 'f';
-  mdvFolderRelabelShortcut((row) => sameKeys(row) && /fold/i.test(row.label), 'Fold or unfold all sections (no folder open)');
-  mdvFolderAddShortcut({
-    mod: true, shift: true, key: 'f', label: 'Search in the folder’s files', modal: 'mdvFolderSearch',
-    run: () => {
-      if (mdvXsIsOpen()) mdvXsClose();
-      else if (mdvFolderState.kind) mdvXsOpen();
-      else toggleAllSections();
-    },
-  }, sameKeys);
+  mdvRegisterShortcut('Mod+Shift+F', () => {
+    if (mdvXsIsOpen()) mdvXsClose();
+    else if (mdvFolderState.kind) mdvXsOpen();
+    else toggleAllSections();
+  }, 'Search in the folder’s files', { modal: 'mdvFolderSearch', over: 'Fold or unfold all sections (no folder open)' });
 });

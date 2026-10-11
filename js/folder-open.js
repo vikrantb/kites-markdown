@@ -3,18 +3,12 @@
 // ============================================
 // The sidebar, quick open, search in files and recent documents all show a document through mdvFolderOpenFile or
 // mdvFolderShow, which hand it to the load seam (mdvOpenDocument, js/files.js); nothing here renders a document.
-//   - A read that finishes after the reader asked for another document is dropped (tickets).
+//   - The last request wins, whatever route it came by: each open begins at the seam before its file is read
+//     (mdvBeginOpen), so a read that finishes after the reader asked for another document (here, a link, Back) is
+//     dropped. The seam keeps that one order for every open; this file keeps none of its own.
 //   - Returning to a document from here opens it at the reader's place in it, as Back and Forward do (places).
 //   - The render that follows is told which document it is (mdvFolderState.pendingOpen, js/folder.js), and a seam
 //     that declines or fails leaves nothing behind that a later render could be mistaken for.
-
-// ------- The last request wins -------
-// Every request to show a document from here (the sidebar, quick open, search in files, recent documents) takes a
-// ticket before it reads the file. Reads finish in any order (a large file, a busy disk); one that finishes after a
-// newer request has started is dropped, so the document on screen is always the one the reader asked for last.
-let mdvFolderTickets = 0;
-function mdvFolderTakeTicket() { return ++mdvFolderTickets; }
-function mdvFolderIsLatest(ticket) { return ticket === mdvFolderTickets; }
 
 // ------- The reader's place in each document -------
 // Taken from the load seam as the reader leaves a document of the folder (mdvOnDocumentOpening, js/files.js: its
@@ -41,7 +35,7 @@ function mdvFolderNoteLeaving(event) {
   mdvFolderPlaces.set(key, event.position);
   if (mdvFolderPlaces.size > MDV_FOLDER_PLACES_MAX) mdvFolderPlaces.delete(mdvFolderPlaces.keys().next().value);
 }
-if (typeof mdvOnDocumentOpening === 'function') mdvOnDocumentOpening(mdvFolderNoteLeaving);
+mdvOnDocumentOpening(mdvFolderNoteLeaving);
 
 function mdvFolderPlaceOf(path) {
   const key = mdvFolderPlaceKey(path);
@@ -49,21 +43,19 @@ function mdvFolderPlaceOf(path) {
 }
 
 // Shows a document through the load seam (js/files.js), at the reader's place in it when they read it before
-// (opts.atPlace), and resolves once it is on screen. pendingOpen tells the render that follows which document it is.
-async function mdvFolderShow(doc, identity, { atPlace = true } = {}) {
+// (atPlace), and resolves once it is on screen. begun: the open as mdvBeginOpen() began it, before the file was read.
+// pendingOpen tells the render that follows which document it is.
+async function mdvFolderShow(doc, identity, { atPlace = true, begun } = {}) {
   const s = mdvFolderState;
-  if (typeof window.mdvOpenDocument !== 'function') {
-    console.error('folder: mdvOpenDocument (js/files.js) is missing, so the folder cannot show a document.');
-    mdvFolderToast('This build cannot show documents from a folder: mdvOpenDocument is missing.', 'error');
-    return false;
-  }
   const pending = { text: doc.text, identity };
   s.pendingOpen = pending;
   const shown = identity.path ? mdvFolderWhenShowing(identity.path, 5000) : null;
   const place = atPlace ? mdvFolderPlaceOf(identity.path) : null;
+  const opts = { push: true, begun };
+  if (place) opts.position = place;
   let result;
   try {
-    result = await window.mdvOpenDocument(doc, place ? { push: true, position: place } : { push: true });
+    result = await window.mdvOpenDocument(doc, opts);
   } catch (e) {
     console.error('folder: mdvOpenDocument failed:', e);
     if (s.pendingOpen === pending) s.pendingOpen = null;
@@ -89,21 +81,21 @@ async function mdvFolderOpenFile(path, opts = {}) {
     await window.mdvHost.openPath(path);
     return true;
   }
-  const ticket = mdvFolderTakeTicket();
+  const open = mdvBeginOpen();
   const entry = s.byPath.get(path);
   const label = (entry && entry.rel) || mdvFolderBaseName(path);
   let doc;
   try {
     doc = await mdvFolderRead(path);
   } catch (e) {
-    if (!mdvFolderIsLatest(ticket)) return false;
+    if (!open.current()) return false;
     mdvFolderToast(mdvFolderSentence((e && e.message) || (label + ' could not be read')), 'error');
     if (e && e.code === 'not-found') mdvFolderRefresh();
     return false;
   }
-  if (!mdvFolderIsLatest(ticket)) return false; // the reader asked for another document meanwhile
+  if (!open.current()) return false; // the reader asked for another document meanwhile
   const done = () => {
-    if (!mdvFolderIsLatest(ticket)) return;
+    if (!open.current()) return;
     if (opts.then) opts.then();
     if (opts.focus) mdvFolderFocusDocument();
   };
@@ -113,7 +105,7 @@ async function mdvFolderOpenFile(path, opts = {}) {
     return true;
   }
   const identity = { kind: doc.handle ? 'handle' : 'path', path: doc.path, name: doc.name, handle: doc.handle || null };
-  const ok = await mdvFolderShow(doc, identity, { atPlace: !opts.then });
+  const ok = await mdvFolderShow(doc, identity, { atPlace: !opts.then, begun: open });
   if (ok) done();
   return ok;
 }

@@ -1,8 +1,8 @@
 // A folder of documents: the sidebar, quick open, search in files, recent documents and link previews.
-// The fixture folder, the browser's origin-private folder, the stand-in shell and the stand-in for stream L's load
-// seam are in folder-helpers.mjs. More of the folder's behaviour: folder-open.spec.mjs (opening documents: the last
-// request wins, the reader's place, the last document after a reload, the keyboard), folder-listing.spec.mjs (the
-// contract's resolve, listing again, quick open), folder-search.spec.mjs and folder-preview.spec.mjs.
+// The fixture folder, the browser's origin-private folder and the stand-in shell are in folder-helpers.mjs. More of
+// the folder's behaviour: folder-open.spec.mjs (opening documents: the last request wins, the reader's place, the
+// keyboard), folder-listing.spec.mjs (the contract's resolve, listing again, quick open), folder-search.spec.mjs and
+// folder-preview.spec.mjs.
 import { test, expect } from '@playwright/test';
 import {
   EXPECTED, FILES, start, seed, openFolder, listedPaths, expectTitle, openInTree,
@@ -158,6 +158,11 @@ test.describe('in a browser', () => {
     await page.keyboard.press('Control+p');
     await expect(rows.first().locator('.mdv-palette-tag')).toHaveText('recent');
     await expect(rows.first().locator('.mdv-palette-name')).toHaveText('2026-10-08-ui.md');
+    // The same keys close it again (mdvRegisterShortcut's modal), as Escape does.
+    await page.keyboard.press('Control+p');
+    await expect(dialog).toBeHidden();
+    await page.keyboard.press('Control+p');
+    await expect(dialog).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();
     expect(problems).toEqual([]);

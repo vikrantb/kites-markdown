@@ -1,5 +1,5 @@
-// Shared by the folder specs (folder*.spec.mjs): the fixture folder, the browser's origin-private folder and its
-// picker, a stand-in for the desktop shell, and the stand-in for stream L's load seam.
+// Shared by the folder specs (folder*.spec.mjs) and live.spec.mjs: the fixture folder, the browser's origin-private
+// folder and its picker, and a stand-in for the desktop shell.
 //
 // Browser: the folder is tests/fixtures/folder, written into the origin-private file system (OPFS), whose handles
 // are real FileSystemDirectoryHandles (listing, reading, resolve(), isSameEntry(), IndexedDB), and the folder picker
@@ -7,10 +7,8 @@
 // desktop.spec.mjs does) and records them; the shell's own walk is tested by its unit tests
 // (desktop/src-tauri/src/folders.rs) and by the app's self-test (--expect folder).
 //
-// mdvOpenDocument and mdvOnDocumentOpening belong to js/files.js (stream L). Until they are merged, the init script
-// below provides what the folder relies on, and nothing more (see SEAM); functions of the same names in js/files.js
-// replace them, and the recorder wraps whichever mdvOpenDocument is there. The tests assert on the page, not on the
-// stand-in.
+// Documents are shown by the viewer's own load seam (mdvOpenDocument, js/files.js); a recorder wraps it
+// (window.__opened) so a test can tell which opens reached it.
 import { expect } from '@playwright/test';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -34,37 +32,11 @@ function readTree(dir) {
 }
 export const FILES = Object.assign(readTree(FIXTURE), EXPECTED.addedAtRunTime);
 
-// The stand-in seam, run in the page before its scripts. What the folder relies on from stream L's js/files.js:
-//   - mdvOpenDocument(doc, opts) shows the document and links it to its handle, and resolves true;
-//   - mdvOnDocumentOpening(fn): fn hears, just before a document replaces the one on screen, {kind: 'open',
-//     position}, position being the reader's place in the one on screen (here simply its scrollY, which the folder
-//     keeps without looking inside);
-//   - opts.position opens the document at that place; any other document opens at its top.
-function SEAM() {
-  const opening = [];
-  window.mdvOnDocumentOpening = (fn) => {
-    opening.push(fn);
-    return () => { const i = opening.indexOf(fn); if (i >= 0) opening.splice(i, 1); };
-  };
-  window.mdvOpenDocument = async (doc, opts) => {
-    if (typeof rawMarkdown === 'string' && rawMarkdown) {
-      for (const fn of opening.slice()) fn({ kind: 'open', doc, position: { y: window.scrollY } });
-    }
-    mdvFileHandle = doc.handle || null;
-    rawMarkdown = doc.text;
-    currentFileName = doc.name;
-    renderMarkdown(doc.text, doc.name);
-    window.scrollTo({ top: opts && opts.position ? opts.position.y : 0, behavior: 'instant' });
-    return true;
-  };
-}
-
-// ------- The browser: an OPFS folder, the picker, and the seam -------
+// ------- The browser: an OPFS folder and the picker -------
 // permission: what queryPermission says until the page asks (requestPermission then grants), for a browser that
 // asks again after a reload. A slow disk: window.__slowNames (file names) or window.__slowAll, set by a test, make
-// those reads take 900 ms.
+// those reads take 900 ms; holdReads (below) makes a file's reads wait until the test lets them go.
 export async function browserSetup(page, { permission = 'granted', folder = 'notes' } = {}) {
-  await page.addInitScript(SEAM);
   await page.addInitScript(({ permission, folder }) => {
     window.__opened = [];
     window.__pickerCalls = 0;
@@ -84,10 +56,13 @@ export async function browserSetup(page, { permission = 'granted', folder = 'not
       proto.queryPermission = async function () { return granted ? 'granted' : permission; };
       proto.requestPermission = async function () { window.__permissionRequests++; granted = true; return 'granted'; };
     }
-    // A slow disk for the files named in window.__slowNames (or every file with window.__slowAll).
+    // A slow disk for the files named in window.__slowNames (or every file with window.__slowAll), and reads held
+    // until the test lets them go (window.__held: file name → a promise).
+    window.__held = {};
     const getFile = FileSystemFileHandle.prototype.getFile;
     FileSystemFileHandle.prototype.getFile = async function () {
       if (window.__slowAll || window.__slowNames.includes(this.name)) await new Promise((r) => setTimeout(r, 900));
+      if (window.__held[this.name]) await window.__held[this.name].promise;
       return getFile.call(this);
     };
     document.addEventListener('DOMContentLoaded', () => {
@@ -115,6 +90,19 @@ export async function seed(page, files = FILES, folder = 'notes') {
     }
   }, { files, folder });
 }
+
+// Every read of the file named `name` (in the desktop app: the file at that path) waits until letGo(page, name): a
+// read that takes as long as the test needs.
+export const holdReads = (page, name) => page.evaluate((name) => {
+  let release;
+  const promise = new Promise((r) => { release = r; });
+  window.__held[name] = { promise, release };
+}, name);
+export const letGo = (page, name) => page.evaluate((name) => {
+  const held = window.__held[name];
+  delete window.__held[name];
+  if (held) held.release();
+}, name);
 
 export async function removeFile(page, rel, folder = 'notes') {
   await page.evaluate(async ({ rel, folder }) => {
@@ -184,6 +172,7 @@ export async function desktopSetup(page, { doc = desktopDoc('README.md'), storag
           switch (cmd) {
             case 'mdv_initial_document': return doc;
             case 'mdv_read_document':
+              if (window.__held[args.path]) await window.__held[args.path].promise;
               if (disk[args.path]) return Object.assign({}, disk[args.path], { reason: 'reload' });
               return Promise.reject({ code: 'not-found', message: `${args.path} does not exist.` });
             case 'mdv_list_directory':
@@ -199,7 +188,7 @@ export async function desktopSetup(page, { doc = desktopDoc('README.md'), storag
       event: { async listen() { return () => {}; } },
     };
     window.__opened = [];
-    window.mdvOpenDocument = async (doc) => { rawMarkdown = doc.text; currentFileName = doc.name; renderMarkdown(doc.text, doc.name); return true; };
+    window.__held = {};
     document.addEventListener('DOMContentLoaded', () => {
       const open = window.mdvOpenDocument;
       window.mdvOpenDocument = (d, opts) => { window.__opened.push({ path: d.path, push: !!(opts && opts.push), handle: d.handle }); return open(d, opts); };
