@@ -281,6 +281,91 @@ test('the outline follows the reader down, back up, and to the end', async ({ pa
   await expect(page.locator('#tocList .toc-link.active')).toHaveAttribute('aria-current', 'location');
 });
 
+const activeEntry = (page) => page.evaluate(() => document.querySelector('#tocList .toc-link.active')?.textContent);
+
+test('the outline reaches short final sections at the bottom; a page too short to scroll starts at its top', async ({ page }) => {
+  await openViewer(page);
+  const parts = Array.from({ length: 10 }, (_, i) => `## Part ${i + 1}\n\n${'Line of text that fills the section. '.repeat(60)}\n`).join('\n');
+  await render(page, `# Long\n\n${parts}\n## Tail A\n\nShort.\n\n## Tail B\n\nShort.\n\n## Tail C\n\nShort.\n`);
+  await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
+  await frames(page);
+  // None of the three short tails can reach the reading line; the last one on screen is current.
+  expect(await activeEntry(page)).toBe('Tail C');
+  // A note that fits in the window: the reading line decides, as at the top of any page.
+  await render(page, `# Alpha\n\n${'A short paragraph.\n\n'.repeat(6)}## Beta\n\nEnd.\n`);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
+  expect(await page.evaluate(() => document.getElementById('beta').getBoundingClientRect().top > Math.max(80, innerHeight * 0.3))).toBe(true);
+  await frames(page);
+  expect(await activeEntry(page)).toBe('Alpha');
+  expect(await page.textContent('#breadcrumb')).toBe('Alpha');
+});
+
+test('a heading inside a closed <details> never becomes the current heading', async ({ page }) => {
+  await openViewer(page);
+  const lines = Array.from({ length: 30 }, (_, i) => `Line ${i + 1} of the section.`).join('\n\n');
+  await render(page, `# Doc\n\n## Before\n\n${lines}\n\n<details><summary>More options</summary>\n\n### Hidden option\n\nHidden text.\n\n</details>\n\n${'Text after the details.\n\n'.repeat(4)}## After\n\n${lines}\n`);
+  // The summary sits just above the reading line (270 px), and so does the box Chrome reports for the
+  // hidden heading inside the closed element.
+  await page.evaluate(() => {
+    const s = document.querySelector('#mdBody summary');
+    window.scrollTo({ top: s.getBoundingClientRect().top + scrollY - 150, behavior: 'instant' });
+  });
+  await frames(page);
+  expect(await page.evaluate(() => document.querySelector('#mdBody details').open)).toBe(false);
+  expect(await activeEntry(page)).toBe('Before');
+  expect(await page.textContent('#breadcrumb')).toBe('Before');
+});
+
+test('a hidden outline is out of the Tab order, wide and narrow', async ({ page }) => {
+  await openViewer(page);
+  await render(page, '# Guide\n\n## One\n\nText.\n\n## Two\n\nText.\n');
+  const toc = page.locator('#tocSidebar');
+  const inert = () => toc.evaluate(t => t.inert);
+  // An inert link cannot take the focus.
+  const linkFocusable = () => page.evaluate(() => { const a = document.querySelector('#tocList a'); a.focus(); const ok = document.activeElement === a; a.blur(); return ok; });
+  expect(await inert()).toBe(false);
+  expect(await linkFocusable()).toBe(true);
+  await page.keyboard.press('Control+KeyB');
+  expect(await inert()).toBe(true);
+  expect(await linkFocusable()).toBe(false);
+  await page.keyboard.press('Control+KeyB');
+  expect(await inert()).toBe(false);
+  // At 800 px the outline is off-canvas until it slides in; Esc slides it out.
+  await page.setViewportSize({ width: 800, height: 900 });
+  await expect.poll(inert).toBe(true);
+  await page.keyboard.press('Control+KeyB');
+  expect(await inert()).toBe(false);
+  await page.keyboard.press('Escape');
+  expect(await inert()).toBe(true);
+});
+
+test('headings are named by their own words, and each fold button after its section', async ({ page }) => {
+  await openViewer(page);
+  await render(page, '# Notes\n\n## C# tips\n\nUse records.\n');
+  await expect(page.getByRole('heading', { level: 2, name: 'C# tips', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Toggle section: C# tips', exact: true })).toHaveCount(1);
+  // Chrome's own accessibility tree agrees.
+  const cdp = await page.context().newCDPSession(page);
+  const { result } = await cdp.send('Runtime.evaluate', { expression: 'document.querySelector("#mdBody h2")' });
+  const { node } = await cdp.send('DOM.describeNode', { objectId: result.objectId });
+  const { nodes } = await cdp.send('Accessibility.getPartialAXTree', { backendNodeId: node.backendNodeId, fetchRelatives: false });
+  expect(nodes[0].name.value).toBe('C# tips');
+});
+
+test('Tab from a heading never lands on its invisible "#" permalink', async ({ page }) => {
+  await openViewer(page);
+  await render(page, '# Long\n\n' + LONG);
+  await page.locator('#tocList .toc-link', { hasText: 'Part 3' }).click();
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('part-3');
+  await page.keyboard.press('Tab'); // the heading's fold button
+  expect(await page.evaluate(() => document.activeElement.getAttribute('aria-label'))).toBe('Toggle section: Part 3');
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => document.activeElement.className)).not.toContain('header-anchor');
+  const anchors = page.locator('#mdBody .header-anchor');
+  expect(await anchors.count()).toBeGreaterThan(10);
+  await expect(page.locator('#mdBody .header-anchor:not([tabindex="-1"])')).toHaveCount(0);
+});
+
 test('a "#" the author wrote stays in the outline, the breadcrumb, search and read-aloud', async ({ page }) => {
   await openViewer(page);
   await render(page, '# Notes\n\n## C# tips\n\nUse records.\n');
@@ -430,6 +515,44 @@ test('search shows a heading whose letters change length when lower-cased, witho
   // Either no highlight, or the right one: never part of a word ("otes").
   const marks = await item.locator('.search-match').allTextContents();
   expect(marks.every(m => m.toLowerCase() === 'notes'), JSON.stringify(marks)).toBe(true);
+});
+
+test('a search jump opens the closed <details> around its match', async ({ page }) => {
+  await openViewer(page);
+  await render(page, '# Doc\n\n## Options\n\n<details><summary>Advanced</summary>\n\nThe quetzal setting lives here.\n\n</details>\n');
+  await page.keyboard.press('Control+KeyK');
+  await page.keyboard.type('quetzal');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#mdBody details p', { hasText: 'quetzal' })).toBeVisible();
+  expect(await page.evaluate(() => document.querySelector('#mdBody details').open)).toBe(true);
+});
+
+test('a search jump flashes the block, then gives back the background colour its author set', async ({ page }) => {
+  await openViewer(page);
+  await render(page, '# Colours\n\n## Table\n\n<table><tr><td style="background: rgb(255, 0, 0)">Cardinal red cell</td></tr></table>\n');
+  await page.keyboard.press('Control+KeyK');
+  await page.keyboard.type('cardinal');
+  await page.keyboard.press('Enter');
+  const td = page.locator('#mdBody td', { hasText: 'Cardinal' });
+  expect(await td.evaluate(el => el.style.backgroundColor)).toBe('var(--bg-tts-highlight)');
+  await expect.poll(() => td.evaluate(el => el.style.background), { timeout: 5000 }).toBe('rgb(255, 0, 0)');
+});
+
+test('a comment chip on a heading stays out of its words: read-aloud, the breadcrumb and search', async ({ page }) => {
+  await openViewer(page);
+  const payload = { version: 1, generator: 'mdv-viewer', comments: [{ id: 'cm_h1', parent_id: null,
+    anchor: { id: 'c_head', blockKind: 'h2', blockHash: '0', sibIdx: 0, quote: null },
+    author: { name: 'Reviewer', kind: 'human' }, body_md: 'Rename this?', created_at: '2026-10-01T00:00:00Z',
+    updated_at: '2026-10-01T00:00:00Z', status: 'open' }] };
+  await render(page, `# Plan\n\nFirst paragraph.\n\n<!-- MDV-ANCHOR id="c_head" -->\n## Steps\n\n${'Step text. '.repeat(300)}\n\n## Next\n\nAfter.\n\n<!-- MDV-COMMENTS:v1\n${JSON.stringify(payload)}\nMDV-COMMENTS:end -->\n`);
+  await page.waitForSelector('#mdBody h2 .mdv-chip', { timeout: 10_000 });
+  expect(await page.evaluate(() => { ttsToggle(); return ttsSections.map(s => s.heading); })).toContain('Steps');
+  await page.evaluate(() => window.scrollTo({ top: document.getElementById('steps').getBoundingClientRect().top + scrollY - 100, behavior: 'instant' }));
+  await frames(page);
+  expect(await page.textContent('#breadcrumb')).toBe('Steps');
+  await page.keyboard.press('Control+KeyK');
+  await page.keyboard.type('steps');
+  await expect(page.locator('#searchResults .search-result-item').first()).toHaveText('## Steps');
 });
 
 test('the shortcuts sheet traps the focus and gives it back on Esc', async ({ page }) => {

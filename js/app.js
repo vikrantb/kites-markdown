@@ -116,7 +116,7 @@ document.addEventListener('keydown', e => {
   if (e.isComposing || e.keyCode === 229) return; // an input method is composing a character
   if (e.key === 'Escape') {
     if (mdvModal) { e.preventDefault(); mdvCloseModal(mdvModal.el); }
-    else document.getElementById('tocSidebar').classList.remove('mobile-show');
+    else mdvHideMobileToc();
     return;
   }
   // While a dialog is open only its own toggle works: Mod+K closes search, ? closes the help sheet.

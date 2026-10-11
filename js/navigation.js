@@ -46,17 +46,28 @@ const chevronSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 // alone left those comments behind the wrapper, where nothing could find them (roadmap issue 12). It
 // also stranded thousands of whitespace nodes side by side, which made replacing a large document
 // slow. Comment and text nodes after a section's last element stay put: they belong to what follows.
+//
+// The heading's controls are labelled for screen readers and the keyboard here as well:
+// - A heading's name is its content, so with the chevron inside it every heading was announced as
+//   "Toggle section C# tips". The heading is named by its own words (aria-label), and the chevron after
+//   its section ("Toggle section: C# tips") instead of one name shared by every chevron.
+// - The "#" permalink is a mouse affordance that markdown-it-anchor already hides from screen readers. It is
+//   invisible until hovered, so it leaves the Tab order too: tabbing on from a heading (an outline jump puts
+//   the focus there) landed on nothing the reader could see.
 function addSectionToggles() {
   const body = document.getElementById('mdBody');
+  body.querySelectorAll('.header-anchor').forEach(a => { a.tabIndex = -1; });
   let n = 0;
   body.querySelectorAll('h1,h2,h3,h4').forEach(heading => {
     const level = parseInt(heading.tagName[1]);
+    const text = mdvHeadingText(heading);
+    if (text) heading.setAttribute('aria-label', text);
 
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'section-toggle';
     btn.innerHTML = chevronSvg;
-    btn.setAttribute('aria-label', 'Toggle section');
+    btn.setAttribute('aria-label', text ? `Toggle section: ${text}` : 'Toggle section');
     btn.setAttribute('aria-expanded', 'true');
     btn.onclick = (e) => { e.stopPropagation(); toggleSection(heading, btn); };
     heading.prepend(btn);
@@ -149,11 +160,25 @@ function mdvGoTo(el, { flash = false } = {}) {
   mdvReveal(el);
   el.scrollIntoView({ behavior: 'smooth', block: flash ? 'center' : 'start' });
   mdvFocusInDocument(el);
-  if (flash) {
-    clearTimeout(el._mdvFlash);
-    el.style.background = 'var(--bg-tts-highlight)';
-    el._mdvFlash = setTimeout(() => { el.style.background = ''; }, 2000);
+  if (flash) mdvFlash(el);
+}
+
+// Highlights an element's background for two seconds, then gives back the author's own inline background
+// colour (raw HTML can set one, as in <td style="background: …">); clearing it erased the author's colour.
+function mdvFlash(el) {
+  if (!el._mdvFlash) {
+    el._mdvFlash = { had: el.hasAttribute('style'), color: el.style.getPropertyValue('background-color'),
+                     priority: el.style.getPropertyPriority('background-color'), timer: 0 };
   }
+  const f = el._mdvFlash;
+  clearTimeout(f.timer);
+  el.style.setProperty('background-color', 'var(--bg-tts-highlight)');
+  f.timer = setTimeout(() => {
+    el._mdvFlash = null;
+    if (f.color) el.style.setProperty('background-color', f.color, f.priority);
+    else el.style.removeProperty('background-color');
+    if (!f.had && !el.getAttribute('style')) el.removeAttribute('style');
+  }, 2000);
 }
 
 // ============================================
@@ -170,12 +195,14 @@ function buildToc() {
   if (headings.length === 0) {
     sidebar.classList.add('hidden');
     wrapper.classList.add('full-width');
+    mdvSyncTocInert();
     return;
   }
   // A heading-less document hides the outline without changing the reader's choice; the next document
   // with headings shows it again as the reader left it.
   sidebar.classList.toggle('hidden', !tocVisible);
   wrapper.classList.toggle('full-width', !tocVisible);
+  mdvSyncTocInert();
 
   const frag = document.createDocumentFragment();
   headings.forEach((h, i) => {
@@ -199,21 +226,40 @@ document.getElementById('tocList').addEventListener('click', (e) => {
   if (!a) return;
   e.preventDefault();
   mdvGoTo(document.getElementById(a.dataset.target));
-  document.getElementById('tocSidebar').classList.remove('mobile-show');
+  mdvHideMobileToc();
 });
 document.getElementById('tocSidebar').setAttribute('aria-label', 'Table of contents');
+
+// At 900 px or less (the stylesheet's breakpoint) the outline is off-canvas and slides in over the page.
+const mdvNarrow = window.matchMedia('(max-width: 900px)');
 
 function toggleToc() {
   const sb = document.getElementById('tocSidebar');
   const wr = document.getElementById('contentWrapper');
-  if (window.innerWidth <= 900) {
+  if (mdvNarrow.matches) {
     sb.classList.toggle('mobile-show');
   } else {
     tocVisible = !tocVisible;
     sb.classList.toggle('hidden', !tocVisible);
     wr.classList.toggle('full-width', !tocVisible);
   }
+  mdvSyncTocInert();
 }
+
+function mdvHideMobileToc() {
+  document.getElementById('tocSidebar').classList.remove('mobile-show');
+  mdvSyncTocInert();
+}
+
+// An outline that cannot be seen is inert: out of the Tab order and away from screen readers. It is hidden
+// by its toggle (or for a heading-less document) when wide, and off-canvas unless slid in when narrow.
+// Before, its links stayed tab stops while hidden, where the focus could not be seen: one per heading.
+function mdvSyncTocInert() {
+  const sb = document.getElementById('tocSidebar');
+  const shown = mdvNarrow.matches ? sb.classList.contains('mobile-show') : !sb.classList.contains('hidden');
+  if (sb.inert !== !shown) sb.inert = !shown;
+}
+mdvNarrow.addEventListener('change', mdvSyncTocInert);
 
 // ============================================
 // Scroll spy + breadcrumb
@@ -251,10 +297,17 @@ function mdvScrollSpyInvalidate() {
   mdvScrollSpySchedule();
 }
 
+// A heading the reader can see: not in a folded section (display: none) and not in a closed <details>.
+// Chrome hides a closed <details> with content-visibility, and getClientRects() still reports a box for a
+// heading in there; checkVisibility() does not.
+function mdvHeadingVisible(h) {
+  return h.checkVisibility ? h.checkVisibility() : h.getClientRects().length > 0;
+}
+
 function mdvScrollSpyUpdate() {
   mdvSpy.frame = 0;
   if (!mdvSpy.headings.length || !mdvSpy.headings[0].isConnected) return;
-  if (!mdvSpy.visible) mdvSpy.visible = mdvSpy.headings.filter(h => h.getClientRects().length > 0);
+  if (!mdvSpy.visible) mdvSpy.visible = mdvSpy.headings.filter(mdvHeadingVisible);
   const list = mdvSpy.visible;
   const line = Math.max(80, window.innerHeight * 0.3);
   let lo = 0, hi = list.length - 1, found = -1;
@@ -263,7 +316,10 @@ function mdvScrollSpyUpdate() {
     if (list[mid].getBoundingClientRect().top <= line) { found = mid; lo = mid + 1; } else hi = mid - 1;
   }
   // At the very bottom, short last sections can never reach the line: take the last heading on screen.
-  if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
+  // Only on a page that scrolls: one too short to scroll is at its top as much as at its bottom, and the
+  // reader starts at the top.
+  const page = document.documentElement;
+  if (page.scrollHeight > window.innerHeight + 2 && window.innerHeight + window.scrollY >= page.scrollHeight - 2) {
     for (let i = list.length - 1; i > found; i--) {
       if (list[i].getBoundingClientRect().top < window.innerHeight) { found = i; break; }
     }
