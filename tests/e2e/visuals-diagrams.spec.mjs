@@ -157,3 +157,17 @@ test('sequence notes, frames, class boxes, titles and the Gantt today line are f
   expect(r.worstPeriod).toBeLessThan(3);
   expect(r.todayBehind).toBe(true);
 });
+
+test("an entity's attribute rows stay inside its rounded corners", async ({ page }) => {
+  await open(page, 'diagram-gallery.md');
+  const corner = await page.evaluate(() => {
+    const box = document.querySelector('#mdBody .mermaid-wrapper[data-diagram-type="er"] rect.entityBox');
+    box.scrollIntoView({ block: 'center', behavior: 'instant' });
+    const r = box.getBoundingClientRect();
+    // Half a pixel inside the bottom-left corner of the entity's box: outside its rounded outline.
+    const hit = document.elementFromPoint(r.left + 0.5, r.bottom - 0.5);
+    return { hit: hit ? `${hit.tagName}.${[...hit.classList].join('.')}` : null, rx: getComputedStyle(box).rx };
+  });
+  expect(corner.rx).toBe('8px');
+  expect(corner.hit).not.toMatch(/attributeBox/);
+});

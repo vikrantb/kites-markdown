@@ -232,6 +232,7 @@ function mdvFinishDiagram(svg, type, palette) {
   if (type === 'pie') mdvPieLabelColours(svg, palette);
   mdvTrimCompositeStates(svg);
   if (type === 'class' || type === 'classDiagram') mdvRoundClassBoxes(svg);
+  if (type === 'er') mdvRoundEntities(svg);
   if (type === 'journey' || type === 'timeline') mdvCentreTitle(svg);
   if (type === 'timeline') mdvCentreTimelineText(svg);
   if (type === 'gantt') mdvTodayBehindTasks(svg);
@@ -320,6 +321,15 @@ function mdvRoundClassBoxes(svg) {
     const d = `M${x0 + r} ${y0} H${x1 - r} Q${x1} ${y0} ${x1} ${y0 + r} V${y1 - r} Q${x1} ${y1} ${x1 - r} ${y1} ` +
       `H${x0 + r} Q${x0} ${y1} ${x0} ${y1 - r} V${y0 + r} Q${x0} ${y0} ${x0 + r} ${y0} Z`;
     for (const p of paths) p.setAttribute('d', d);
+  }
+}
+
+// An entity's box is rounded, but its attribute rows are square and drawn over its corners. Clip each entity to
+// its rounded outline (1 px outside, so its border stays whole).
+function mdvRoundEntities(svg) {
+  for (const box of svg.querySelectorAll('rect.entityBox')) {
+    const g = box.parentElement;
+    if (g && g !== svg) g.style.clipPath = 'inset(-1px round 9px)';
   }
 }
 

@@ -189,3 +189,15 @@ for (const width of [1366, 390]) {
     expect(d.repo).not.toContain('★');
   });
 }
+
+test('link-type marks are drawn icons, not stray characters', async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  const marks = await page.evaluate(() => [...document.querySelectorAll('#mdBody a[data-link-type]:not([data-link-type="anchor"])')]
+    .filter((a) => !a.closest('.fm-dashboard, .link-chip'))
+    .map((a) => { const cs = getComputedStyle(a, '::after'); return { type: a.dataset.linkType, content: cs.content, mask: cs.maskImage || cs.webkitMaskImage }; }));
+  expect(marks.length).toBeGreaterThan(0);
+  for (const m of marks) {
+    expect(m.content, m.type).toBe('""');
+    expect(m.mask, m.type).toContain('url(');
+  }
+});
