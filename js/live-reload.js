@@ -266,6 +266,7 @@ mdvOnDocumentOpened((event) => {
   mdvLive.key = null;
   mdvLive.seen = null;
   mdvLive.candidate = null;
+  mdvLive.soon = false;
   mdvLive.validators = null;
   mdvLive.base = typeof doc.fetchedText === 'string' ? doc.fetchedText : doc.text;
   mdvLiveHidePrompt();

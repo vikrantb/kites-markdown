@@ -58,7 +58,7 @@ function mdvHistoryUrl(doc, { first = false, fragment = null } = {}) {
   if (doc.kind === 'http' && doc.path) url.searchParams.set('file', doc.path);
   else if (doc.kind === 'file') url.searchParams.set('file', doc.name);
   else if (doc.kind === 'pasted') url.searchParams.set('file', 'pasted');
-  else if (doc.kind === 'handle') url.searchParams.delete('file');
+  else if (doc.kind === 'handle' || doc.kind === 'folder') url.searchParams.delete('file');
   return url.href;
 }
 
@@ -126,6 +126,12 @@ mdvOnDocumentOpened((event) => {
     const entry = mdvHistoryCurrent();
     if (entry) entry.doc = event.doc;
   }
+  // A link's tooltip (js/links.js) names a link of the document that was replaced: the pointer that rested on
+  // the link that was followed never left it, so nothing else would hide it
+  if (event.kind === 'open' || event.kind === 'history') {
+    const tip = document.getElementById('linkTooltip');
+    if (tip) tip.classList.remove('visible');
+  }
   mdvHistoryTrim();
   mdvHistoryButtons();
 });
@@ -141,7 +147,7 @@ function mdvHistoryTrim() {
   for (const [id, entry] of mdvHistory.entries) {
     const d = entry.doc;
     if (near.has(id) || !d || typeof d.text !== 'string') continue;
-    const readable = !!d.handle || (!!d.path && (d.kind === 'http' || d.kind === 'desktop'));
+    const readable = !!d.handle || (!!d.path && (d.kind === 'http' || d.kind === 'desktop' || d.kind === 'folder'));
     if (readable) entry.doc = Object.assign({}, d, { text: undefined });
   }
 }
@@ -177,10 +183,20 @@ async function mdvHistoryShow(st) {
   }
   if (!doc) {
     mdvHistoryProblem(st.name || 'That document', 'it can no longer be opened from here');
+    mdvHistoryReturn(st);
     return;
   }
   const shown = await mdvOpenDocument(doc, { push: false, history: { id: st.id, n: st.n }, position: entry ? entry.position : null });
-  if (!shown) mdvHistoryProblem(doc.name, 'it could not be read');
+  if (shown || mdvHistory.going !== going) return;
+  mdvHistoryProblem(doc.name, 'it could not be read');
+  mdvHistoryReturn(st);
+}
+
+// The browser moved to an entry whose document could not be shown: it moves back to the one on screen, so the
+// address and the buttons never name a document the page does not show (that popstate names the current entry)
+function mdvHistoryReturn(st) {
+  const here = mdvHistory.index;
+  if (here >= 0 && Number.isInteger(st.n) && st.n !== here) history.go(here - st.n);
 }
 
 // Reads a document again from where it came from: {kind, path, name}

@@ -162,7 +162,8 @@ async function loadFromUrl() {
 //                 in the open folder; none for pasted text. The document's links are resolved against it.
 //   doc.handle    the FileSystemFileHandle it was read from (browser), or none
 //   doc.mtimeMs   when the file last changed, when known
-//   doc.kind      optional: 'http', 'file' (chosen or dropped), 'pasted', 'handle', 'desktop'; inferred if absent
+//   doc.kind      optional: 'http' (fetched from a server), 'file' (chosen or dropped), 'pasted', 'handle',
+//                 'folder', 'desktop'; inferred when absent (only an http loader says 'http')
 //   doc.title     optional: what the toolbar shows (a relative path shows as the breadcrumb)
 //   opts.push     true (the default): a new place in Back/Forward. false: the current place shows it instead.
 //   opts.fragment open at this id (a link's #fragment) instead of at the top
@@ -242,6 +243,9 @@ async function mdvOpenDocument(doc, opts) {
   if (opts.fragment && mdvOpenAtFragment(opts.fragment)) return true;
   const place = opts.position || (keepPlace ? position : null);
   if (place) mdvRestoreReadingPosition(place);
+  // Any other document opens at its top at once. (The stylesheet scrolls smoothly, so renderMarkdown's own scroll
+  // to the top glides through the new document from where the old one was read, and may stop part-way.)
+  else window.scrollTo({ top: 0, behavior: 'instant' });
   return true;
 }
 
@@ -251,9 +255,10 @@ function mdvNormalizeDocument(doc) {
   d.path = d.path == null || d.path === '' ? null : String(d.path);
   d.name = String(d.name || (d.handle && d.handle.name) || (d.path && d.path.split(/[\\/]/).pop()) || 'Untitled');
   d.mtimeMs = Number.isFinite(d.mtimeMs) ? d.mtimeMs : null;
+  // The http loaders say 'http'; any other path with no handle is a file of the open folder
   if (!d.kind) {
     if (mdvInDesktopApp()) d.kind = d.path ? 'desktop' : 'pasted';
-    else d.kind = d.handle ? 'handle' : d.path && /^https?:$/.test(location.protocol) ? 'http' : 'text';
+    else d.kind = d.handle ? 'handle' : d.path ? 'folder' : 'text';
   }
   return d;
 }

@@ -36,10 +36,11 @@ body.mdv-sidebar-open .mdv-live-toast { right: calc(min(360px, 92vw) + 16px); } 
   fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;
 }
 
-/* "Changed on disk: reload?": the document has comment changes that are not saved, so the reader decides */
+/* "Changed on disk: reload?": the document has comment changes that are not saved, so the reader decides. At the
+   bottom, where the app's other notices with a choice appear (js/host.js), clear of the text being read. */
 .mdv-live-prompt {
   position: fixed; z-index: 110;
-  top: calc(var(--toolbar-height) + 10px); left: 50%;
+  bottom: calc(var(--tts-height, 0px) + 22px); left: 50%;
   display: flex; align-items: center; gap: 12px;
   width: max-content; max-width: min(640px, calc(100vw - 32px)); box-sizing: border-box;
   padding: 10px 10px 10px 14px;
@@ -51,7 +52,7 @@ body.mdv-sidebar-open .mdv-live-toast { right: calc(min(360px, 92vw) + 16px); } 
   font: 400 0.82rem/1.4 var(--font-ui);
   box-shadow: var(--shadow-md);
   opacity: 0;
-  transform: translate(-50%, -6px);
+  transform: translate(-50%, 6px);
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .mdv-live-prompt[hidden] { display: none; }
