@@ -28,6 +28,7 @@ const MDV_EXPAND_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentCol
 let mdvMermaidQueue = Promise.resolve(); // render passes run one after another
 let mdvMermaidGeneration = 0;            // the newest requested pass; an older pass stops at its next diagram
 let mdvMermaidSeq = 0;                   // render ids are never reused: mermaid.render removes any element that has the id
+let mdvDiagramFontEpoch = 0;             // bumped when the web font arrives late, so every diagram is drawn again
 
 // By default Mermaid draws every .mermaid element itself on window load, in its own theme. This file draws them,
 // so switch that off before the load event can fire.
@@ -146,14 +147,25 @@ function mdvDiagramContentWidth() {
   return undefined;
 }
 
-// Inter is a web font: measuring labels before it loads would size every box for the fallback font.
+// Inter is a web font: measuring labels before it loads would size every box for the fallback font. Wait for it
+// (check() is also true when no Inter face is declared, for example offline), but at most 1.5 s; if it arrives
+// later than that, draw every diagram again in it.
+const MDV_DIAGRAM_FONTS = ['400 14px Inter', '600 14px Inter'];
 async function mdvDiagramFontsReady() {
   if (!document.fonts || !document.fonts.load) return;
-  const loads = Promise.all([document.fonts.load('400 14px Inter'), document.fonts.load('600 14px Inter')]).catch(() => {});
+  if (MDV_DIAGRAM_FONTS.every((f) => document.fonts.check(f))) return;
+  const loads = Promise.all(MDV_DIAGRAM_FONTS.map((f) => document.fonts.load(f))).catch(() => {});
   let timer = 0;
-  const giveUp = new Promise((resolve) => { timer = setTimeout(resolve, 1500); }); // offline: draw with the fallback font
+  let late = false;
+  const giveUp = new Promise((resolve) => { timer = setTimeout(() => { late = true; resolve(); }, 1500); });
   await Promise.race([loads, giveUp]);
   clearTimeout(timer);
+  if (late) {
+    loads.then(() => {
+      mdvDiagramFontEpoch++; // part of the palette key: every diagram is now out of date, even one being drawn
+      renderMermaidDiagrams();
+    });
+  }
 }
 
 // ---------- Palette: the current theme's --diagram-* tokens, as hex ----------
@@ -178,7 +190,7 @@ function mdvDiagramPalette() {
     p.seriesSoft.push(mdvColorHex(cs.getPropertyValue('--diagram-series-soft-' + i)) || p.node);
   }
   const { series, seriesSoft, dark, ...rest } = p;
-  p.key = [dark ? 'dark' : 'light', ...Object.values(rest), ...series, ...seriesSoft].join('|');
+  p.key = [dark ? 'dark' : 'light', 'font' + mdvDiagramFontEpoch, ...Object.values(rest), ...series, ...seriesSoft].join('|');
   return p;
 }
 

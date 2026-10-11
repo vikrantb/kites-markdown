@@ -107,6 +107,36 @@ test("Mermaid's own load-time pass never redraws the viewer's diagrams", async (
   expect(errors, errors.join('\n')).toEqual([]);
 });
 
+test('diagrams do not wait long for a slow web font, and are redrawn in it when it arrives', async ({ page, baseURL }) => {
+  // Stand in for Google Fonts: "Inter" is a vendored font file, served by the test server, that takes 5 s to
+  // arrive (no network needed), well past the viewer's 1.5 s wait. The URL is absolute: relative to the stand-in stylesheet it would name Google's host.
+  const fontUrl = new URL('vendor/fonts/KaTeX_SansSerif-Regular.woff2', baseURL).href;
+  await page.route('https://fonts.googleapis.com/**', (route) => route.fulfill({
+    contentType: 'text/css',
+    body: `@font-face { font-family: "Inter"; font-weight: 100 900; src: url(${fontUrl}) format("woff2"); }`,
+  }));
+  await page.route(fontUrl, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await route.continue();
+  });
+  const errors = collectErrors(page);
+  const start = Date.now();
+  // Not 'load': Chrome holds the load event until pending fonts arrive.
+  await page.goto('markdown-viewer.html?file=samples/kitchen-sink.md', { waitUntil: 'domcontentloaded' });
+  await waitForDiagrams(page);
+  const drawnAfter = Date.now() - start;
+  const first = await page.$$eval('#mdBody .mermaid svg', (svgs) => svgs.map((s) => s.id));
+  expect(await page.evaluate(() => document.fonts.check('400 14px Inter'))).toBe(false); // drawn before the font
+  // Once the font is in, every diagram is drawn again, so its labels are measured in the font they are shown in.
+  await page.waitForFunction(() => document.fonts.check('400 14px Inter'), null, { timeout: 15_000 });
+  await page.waitForFunction((ids) => {
+    const now = [...document.querySelectorAll('#mdBody .mermaid svg')].map((s) => s.id);
+    return now.length === ids.length && now.every((id, i) => id !== ids[i]);
+  }, first, { timeout: 15_000 });
+  expect(drawnAfter).toBeLessThan(5000); // the diagrams did not wait for the font
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
 test('an open expanded view follows a theme change', async ({ page }) => {
   await open(page, 'kitchen-sink.md', 'light');
   await page.evaluate(() => openDiagramOverlay(document.querySelector('#mdBody .mermaid-wrapper')));
