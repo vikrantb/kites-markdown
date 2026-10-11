@@ -54,6 +54,7 @@ Before a document is loaded, the body shows a welcome screen with a drop zone, a
 | **Search** | Search (Ctrl+K) | Opens the search overlay. | `openSearch` |
 | Link icon | All links | Opens the links panel. Shown after a document loads. | `toggleLinksPanel` |
 | **Listen** | Read aloud | Opens the read-aloud player. Shown after a document loads. | `ttsToggle` |
+| Share icon | Export and copy | A menu: **Export HTML**, **Print / Save as PDF**, **Copy as rich text**, **Copy link to this section** (see [Export and copy](#export-and-copy)). Shown after a document loads. | `mdvExportHtml`, `mdvPrintDocument`, `mdvCopyRichText`, `mdvSectionLinkAction` |
 | Speech-bubble icon with a badge | Comments (Ctrl+Shift+C) | Opens the comments sidebar. The badge counts open (unresolved) threads. Shown after a document loads. | `mdvToggleSidebar`, `mdvRenderSidebar` |
 | File-plus icon | Open .md / set save location (Chromium) | Opens a file with write access. If a file is already loaded without a save location, links it to its file (an Open dialog; a Save dialog for pasted text) instead. | `mdvOpenOrSetSaveLocation` |
 | Folder icon | Set workspace folder | Asks once for a folder. Files from that folder can then be saved without further prompts. | `mdvPickWorkspace` |
@@ -364,13 +365,16 @@ The viewer also renders task lists, footnotes, definition lists, `==highlight==`
 
 ### Printing
 
-The print stylesheet (`@media print`) hides the toolbar, table of contents, minimap, scroll buttons, progress bar, search and shortcuts overlays, read-aloud player, settings panel, comments sidebar, lightbox, copy buttons and fold toggles, and sets the body text to 11pt.
+Two stylesheets print a document: the print block of `css/viewer.css` (the palette, the tables) and `css/print.css` (what prints, and where pages break). They apply however printing starts: the Export menu's **Print / Save as PDF** or `Ctrl/Cmd+P`, the browser's own Print menu command, or printing an exported page. What [Print / Save as PDF](#print--save-as-pdf) adds is described there.
 
+- Only the document prints. Everything around the reading column is hidden, not a list of known controls, so the toolbar, outline, section rail, menus, toasts, notices, sidebars and players stay off the paper, and so would a panel a later feature adds. Folded sections print unfolded; the "#" permalinks, comment chips, Copy buttons and fold chevrons do not print.
+- A title header opens the first page: the document's title (its first heading), the document as the toolbar names it (its `?file=` path, else its file name, so ten agents' `STATUS.md` reports print apart) and the date (`#mdvPrintHeader`, made by `js/export.js` before any document renders, so a document's own `id="mdvPrintHeader"` is dropped by the sanitizer instead of being taken for it). While printing, the page's title is the document's, so a saved PDF is named after it.
 - Paper always gets the light palette, all of it (text, code, callouts, links), even from Sepia or Dark: the sepia and dark page tokens apply on screen only. Text prints in #111.
-- A table that scrolls inside its own box on screen is a plain table on paper: every row prints, across as many pages as it needs, with its header repeated and no row split.
-- Code blocks, diagrams, callouts and figures are kept whole across pages.
-- A diagram keeps the palette it was drawn in, and its card is printed with it (`print-color-adjust: exact`) even when the browser's "background graphics" option is off, so a diagram drawn in the dark theme prints as a dark card, readable. To print it light, switch to the light theme first.
-- `tests/e2e/visuals-print.spec.mjs` checks each theme under print media and a 60-row table in a real PDF.
+- Each `h1` after the first starts a new page. No heading ends a page, and neither does a line that introduces a list, a callout or display math ("The steps:"). A line before a diagram, a code block or a table is not held with it: those are kept whole and can be as tall as a page, and holding the line with one pushed it after the block or split it around a near-blank page (1 or 2 more sheets in 26 of 30 measured layouts; `tests/e2e/export.spec.mjs` checks that the rule never adds a page). A diagram taller than a page is drawn smaller (at most 200 mm tall) so it prints whole on one page, on A4 and US Letter; cut between pages it lost the nodes on the cut.
+- Tables, code blocks, diagrams, callouts, quotes, figures, display math and link cards are kept whole when they fit on a page. A table that does not fit flows across pages, as a plain table: every row prints, with its header repeated and no row split. Long code lines wrap instead of running off the paper.
+- A web link prints its address after its words, and a mail link its address (`data-mdv-print-url`, set after each render), unless the words already are the address.
+- A diagram keeps the palette it was drawn in, and its card is printed with it (`print-color-adjust: exact`) even when the browser's "background graphics" option is off, so a diagram drawn in the dark theme prints as a dark card, readable. **Print / Save as PDF** from the menu, and `Ctrl/Cmd+P`, draw diagrams in the light palette first; the browser's own Print menu command prints them as drawn.
+- `tests/e2e/visuals-print.spec.mjs` checks each theme under print media and a 60-row table in a real PDF; `tests/e2e/export.spec.mjs` checks, in each theme, that only the document and its title header print and where pages break.
 
 ### Narrow screens
 
@@ -378,6 +382,47 @@ The print stylesheet (`@media print`) hides the toolbar, table of contents, mini
 - At 760 px or less, the fold toggles sit at the end of the heading's first line instead of in the left margin, so a wrapped heading's lines keep the text's left edge.
 - At 600 px or less, padding and heading sizes shrink, and the toolbar keeps its essentials: page width, focus mode, fold-all and the two save-location buttons (which need the File System Access API that phone browsers lack) are hidden, and so is the file name (the title heading names the document). The text-size control stays, without its size label. The floating scroll buttons are not shown. At 390 px nothing scrolls sideways (`tests/e2e/visuals.spec.mjs`, `tests/e2e/visuals-layout.spec.mjs`).
 - When the comments sidebar is open on a screen 1100 px wide or less, it overlays the content instead of pushing it aside.
+
+---
+
+## Export and copy
+
+The share icon in the toolbar opens the Export menu, which holds four actions (`js/export.js`, `js/copy.js`, `js/section-links.js`). Each starts from the document as you see it (`js/snapshot.js`): diagrams already drawn, math already typeset, nothing rendered again. The menu, like the Theme menu, works as a menu does from the keyboard: `↓`/`↑` (and `Home`/`End`) move through its items, `↓` on its button opens it, `Esc` closes it and gives the focus back to its button, it closes when the focus leaves it, and its button's `aria-expanded` says whether it is open. Its confirmations stay long enough to read: 3.5 s, and a quarter of a second more for each word past ten (`mdvShowToast`). `tests/e2e/export.spec.mjs`, `export-links.spec.mjs` and `export-safety.spec.mjs` cover each action, in a browser and with the desktop app's stand-in shell.
+
+### Export HTML
+
+Saves the document as **one HTML file that needs nothing else**, named after the source file (`kitchen-sink.md` becomes `kitchen-sink.html`; pasted text is named after its title). In the browser it is a download; in the desktop app on a Mac a Save panel asks where it goes (on Windows, WebView2's own download flow saves it).
+
+- **Styles:** the viewer's own stylesheets, inlined, in the theme on screen, at the reading size you chose. The web fonts are left out (the page falls back to system fonts, as the desktop app does); KaTeX's fonts are embedded, only the faces the document's math uses.
+- **Diagrams** are the SVG already drawn; a node that goes to a section is still a link. **Math** is KaTeX's HTML, with its MathML.
+- **Images:** a local image becomes a data: URI, read next to the document (its `?file=` address over http, while the page shows the document that address opens; the open folder in the browser; or the image the desktop window shows). An image on the web keeps its address. Only an image is embedded: a file whose type is not an image, or whose bytes do not decode as one, is not, whatever the document calls it (`secret.txt#.png`, `secret.txt?.png`, a text file named `.png`). An image that cannot be read is replaced by a visible note that names it, and the confirmation says how many there were.
+- **Links:** a web or mail link stays, and a link to a place in the document stays a link within the page. A link to another file is written relative to the document, which means nothing where an exported file is saved, so it is resolved against the document's address when the page was opened by it (`?file=` over http): a Markdown file opens in this viewer (`markdown-viewer.html?file=notes/status.md#blockers`), any other file at its own address. Those links open on this computer only, and the confirmation counts them. With no address to resolve from (a file opened from disk, pasted text, the desktop app) a link is kept as written, which works next to the document only, and the confirmation counts those too. No absolute path of your folders is written into the file.
+- **What you see:** a task box you ticked is ticked in the export, a folded section is unfolded, and everything is read from the page at the moment the export starts, so a document opened while its images are read does not mix in.
+- **Nothing runs:** no script, no `on…` attribute and no `javascript:` link (removed even if one slipped past the sanitizer), and a Content Security Policy that would refuse a script anyway. The viewer's controls (fold chevrons, Copy buttons, the section rail, comment chips) and every HTML comment (comment threads, anchors, narration) are left out. The title is the document's first heading.
+- **From a page opened as a file (`file://`)** the browser does not let the page read its own stylesheets, so the export carries portable inline styles instead (the ones rich-text copy uses), shows math as MathML, draws callouts without their icon, the frontmatter card as a line and a list, and shows each heading's "#" only while the pointer is on the heading. The confirmation says so. *(Tested in Chrome.)*
+
+### Print / Save as PDF
+
+Opens the browser's print dialog, where **Save as PDF** is one of the destinations (`mdvPrintDocument`); `Ctrl/Cmd+P` does the same once a document is open. From Sepia or Dark, it first draws the diagrams again in the light palette, so the whole page prints light, and puts your theme back when the dialog closes. What prints and where pages break is described under [Printing](#printing). In the desktop app the page's `window.print()` reaches the native print panel through Tauri's webview print command (on a Mac; WebView2 prints by itself on Windows); the app's capability file allows it. *(The desktop print panel was not exercised by an automated test.)*
+
+### Copy as rich text
+
+Copies the selection, or the whole document when nothing in it is selected, as both HTML and plain text, so it pastes formatted into email and document editors and as clean text everywhere else (`mdvCopyRichText`).
+
+- **HTML** carries its styles inline, in the light palette whatever the theme (mail and document editors are white and ignore stylesheets): code keeps a monospace font and its colours, tables their borders, callouts their colour bar. Colours are plain hex.
+- **A selection inside a block** keeps what made it one: a word copied from a code block is still code, a cell is still in a table.
+- **Diagrams** become PNG images, in Chrome and in the desktop app's WebKit alike (checked in the real app on a Mac); a browser that will not let a page draw a diagram on a canvas gets SVG images instead. The off-screen drawing they are made in is a document container, so a label there cannot run one of the viewer's actions. Formulas become MathML. Local images are embedded as data: URIs, each read by the path the document wrote, as Export HTML reads it. Link cards become plain links, checkboxes ☐/☑, and a `<details>` block its summary in bold and its content. The viewer's controls, comment chips and HTML comments are left out. A table's cells all draw their border in one colour.
+- **Links** are resolved as Export HTML resolves them. A link to a place in the document (a footnote mark, a section) becomes its words, and a footnote's way back is left out: a paste has no such place. With no address to resolve from, a link to another file becomes its words, and the confirmation counts them.
+- **Plain text** keeps the shape: a copy of more than one block reads as Markdown does, with `#` before each heading and a ` ``` ` fence, with its language, around each code block, so it pastes into an agent's prompt, a terminal, an issue or a chat as written (a copy inside one block, such as a word of code, is only its text). Also `- ` and `1. ` list markers, `[x]` task items, `> ` quotes, tab-separated table cells (they paste into a spreadsheet as cells), `$TeX$` for math, `2^10` for superscripts, the address of a web link after its words, `[Diagram: Flowchart]` where a diagram was, and an image's alt text once (a caption that repeats it is left out).
+- It uses the asynchronous clipboard (`navigator.clipboard.write`), which needs a secure context; elsewhere it falls back to the copy command, with diagrams as SVG images.
+
+### Copy link to this section
+
+Each heading's **#** (shown when you hover the heading) copies the address of its section instead of jumping there; the address bar shows it too, so Back returns. The Export menu's item copies the section you are reading (the outline's current heading), for the keyboard, and names it as the menu opens (**Copy link to “Risks”**): in a short document several sections are on screen at once.
+
+- **In a browser** the address is the page's own with the section as its fragment: `markdown-viewer.html?file=notes/plan.md#risks`, and only while the page's address opens the document on screen: the page loaded it from that `?file=` over http (`mdvDocumentAddress`). A document opened another way (the Open button, a drop, a file handle, pasted text, a page opened as a file) has no address that opens it, and the address bar may name another file; nothing is copied, and a notice says so. Opened, an address loads the document and goes to that section: folded sections around it unfold, a closed `<details>` opens, and the section stays at the top while the diagrams above it are drawn, until you scroll (`mdvGoToFragmentAfterRender`). A fragment goes only to the document the address names: `markdown-viewer.html#timeline` is no section of a file opened later.
+- **In the desktop app** the address is the document's path with the fragment, percent-encoded (`/home/me/notes/plan.md#risks`): written as a link in a document, the app follows it, to that section when it is the same document, unfolding its section or opening its `<details>` as an in-document link does. A `file:` URL cannot be such a link (markdown-it and the sanitizer drop `file:` links), so a Windows document, whose drive-letter paths are dropped the same way, gets its `file:` URL, for other programs. A link to a section of *another* document opens that document at its top for now: the desktop's link handling (`js/host.js`) opens a new window without the fragment.
+- Only the permalinks the viewer made for this render copy anything: a "#" that a document writes in its own HTML stays a plain link.
 
 ---
 
@@ -453,6 +498,7 @@ The global shortcuts come from one table, `MDV_SHORTCUTS` in `js/app.js`, which 
 | `Ctrl/Cmd+Shift+F` | Fold or unfold all sections | anywhere except text fields | → `toggleAllSections` |
 | `Ctrl/Cmd+Shift+R` | Open or close the read-aloud player | anywhere except text fields | → `ttsToggle` |
 | `Ctrl/Cmd+O` | Open a file (read-only picker) | anywhere except text fields | → clicks the hidden file input |
+| `Ctrl/Cmd+P` | Print or save as PDF, as the Export menu does (light diagrams from any theme) | anywhere except text fields, with a document open | → `mdvPrintDocument`, a row `js/export.js` adds to `MDV_SHORTCUTS` |
 | `?` | Show or hide the shortcuts sheet | anywhere except text fields | global `keydown` listener → `toggleShortcuts` |
 | `Esc` | Close the open dialog (search, the shortcuts sheet or the image lightbox), giving the focus back; with none open, close the slide-in outline on narrow screens | anywhere | global `keydown` listener |
 | `Esc` | Close the diagram overlay | while it is open | separate `keydown` listener |
@@ -488,6 +534,8 @@ All reading features use standard web APIs. Saving to disk is the one area that 
 | Saving comments | as above | In place, with a check that the file did not change on disk | Downloads a copy when you press `Ctrl/Cmd+S` (`mdvDownloadFallback`); a change never downloads by itself | Same as Firefox |
 | Read aloud | Web Speech API `speechSynthesis` | Yes, with a 12-second pause/resume keep-alive for a Chrome cut-off bug (`ttsStartKeepAlive`) | Yes *(not tested)* | Yes *(not tested)* |
 | Copy buttons | `navigator.clipboard.writeText` | Yes in a secure context | *(not tested)* | *(not tested)* |
+| Export HTML | `Blob`, a download link; `CSSStyleSheet.cssRules` | Yes; from `file://` with portable styles | *(not tested)* | *(not tested)* |
+| Copy as rich text | `navigator.clipboard.write` with `ClipboardItem`; else `document.execCommand('copy')` | Yes in a secure context, with PNG diagrams | *(not tested)* | *(not tested in Safari)*; the desktop app's WebKit draws PNG diagrams |
 
 Notes:
 

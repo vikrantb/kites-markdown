@@ -458,7 +458,14 @@
   // ---------------------------------------------------------------
   // Links: the page never navigates away
   // ---------------------------------------------------------------
+  // A link to a place in this document (its own path with a #fragment) goes there as an in-document link does
+  // (mdvLinkTarget and mdvGoTo, js/links.js and js/navigation.js): a folded section around the target unfolds and a
+  // closed <details> opens. Scrolling alone did nothing for a target folded away, which has no box.
   function scrollToFragment(fragment) {
+    if (typeof mdvLinkTarget === 'function' && typeof mdvGoTo === 'function') {
+      const target = mdvLinkTarget('#' + fragment);
+      if (target) { mdvGoTo(target); return; }
+    }
     let id = fragment;
     try { id = decodeURIComponent(fragment); } catch (_) { /* as written */ }
     const el = document.getElementById(id) || document.getElementsByName(id)[0];

@@ -13,16 +13,16 @@ keep it that way: no product names, private paths or project-specific examples.
 | Path | What it is |
 |---|---|
 | `markdown-viewer.html` | The app's markup. It loads `css/viewer.css` and the classic scripts in `js/` in a fixed order. No build step. |
-| `css/viewer.css` | All of the viewer's own styles. |
-| `js/*.js` | The app, as 15 classic scripts sharing one global scope, loaded in the order `markdown-viewer.html` lists them: `core`, `actions`, `math`, `display`, `files`, `render`, `mermaid`, `navigation`, `diagram-overlay`, `links`, `enhancements`, `read-aloud`, `comments`, `host`, `app`. `host.js` is the desktop bridge (`window.mdvHost`, a no-op in a browser); it follows `comments` because it wraps the final `renderMarkdown`. `app` starts the viewer, so it loads last. Classic scripts (not ES modules) still load from `file://`. |
+| `css/viewer.css` | The viewer's own styles. `css/print.css`, loaded after it, decides what prints and where pages break. |
+| `js/*.js` | The app, as classic scripts sharing one global scope, loaded in the order `markdown-viewer.html` lists them: `core`, `actions`, `math`, `display`, `files`, `render`, `mermaid`, `navigation`, `diagram-overlay`, `links`, `enhancements`, `read-aloud`, `comments`, `host`, `snapshot`, `export`, `copy`, `section-links`, `app`. `host.js` is the desktop bridge (`window.mdvHost`, a no-op in a browser); it follows `comments` because it wraps the final `renderMarkdown`. `snapshot`, `export`, `copy` and `section-links` are the Export menu (export as one HTML file, print, copy as rich text, links to sections); they watch for renders, so they load before `app`. `app` starts the viewer, so it loads last. Classic scripts (not ES modules) still load from `file://`. |
 | `desktop/` | The Mac and Windows app (Tauri 2): it hosts `markdown-viewer.html` in a window per document, so a double-clicked `.md` opens in the viewer. Guide and internals: `docs/desktop.md`. Its CI is `.github/workflows/desktop.yml`, which builds both platforms and runs the app's self-test. |
-| `tests/` | Browser tests (`pnpm test`): every sample in both themes, file:// loading, security (`security.spec.mjs`), every control (`controls.spec.mjs`), render correctness (`render-correctness.spec.mjs`) and the desktop bridge (`desktop.spec.mjs`). `tests/fixtures/` holds their documents; `tests/serve.mjs` is their static server. |
+| `tests/` | Browser tests (`pnpm test`): every sample in both themes, file:// loading, security (`security.spec.mjs`), every control (`controls.spec.mjs`), render correctness (`render-correctness.spec.mjs`), the desktop bridge (`desktop.spec.mjs`) and the Export menu (`export*.spec.mjs`). `tests/fixtures/` holds their documents; `tests/serve.mjs` is their static server. |
 | `vendor/` | Third-party libraries, vendored unmodified and loaded by relative tags. No CDN. Licenses are in `THIRD_PARTY_NOTICES.md`. |
 | `extensions/github-html-viewer/` | Chrome extension that renders `.html` blobs on GitHub. Read its security model before changing the iframe sandbox. |
 | `legacy/` | The superseded first viewer. Reference only; do not develop it. |
 | `docs/` | The documentation. Start with `docs/architecture.md`; the plan is `docs/roadmap.md`. |
 | `samples/` | Fixtures: `kitchen-sink.md` exercises every supported syntax, `diagram-gallery.md` every Mermaid diagram type, `commented.md` the comment format, and `repro-*.md` files reproduce open bugs. |
-| `scripts/check-js.mjs` | $0 syntax check of every `js/` script, parsed as a classic script (`pnpm check`). `scripts/check-inline-js.py` now only checks the legacy viewer. |
+| `scripts/check-js.mjs` | $0 syntax check of every `js/` script, parsed as a classic script, and a check that no two scripts declare the same top-level name (they share one global scope, so one would replace the other) (`pnpm check`). `scripts/check-inline-js.py` now only checks the legacy viewer. |
 
 ## Run
 
@@ -42,7 +42,7 @@ keep it that way: no product names, private paths or project-specific examples.
 
 ## Verify a change
 
-1. `pnpm check` must pass: every `js/` script parses. It checks syntax only.
+1. `pnpm check` must pass: every `js/` script parses, and no top-level name is declared by two scripts. It checks nothing else.
 1. `pnpm test` must pass: every sample renders in both themes with no page or console errors, every Mermaid
    block becomes an SVG, math has no errors, and the viewer works from `file://`. Screenshots land in `test-results/`.
 2. Open `samples/kitchen-sink.md` and `samples/commented.md` in Chrome, in **both themes**:

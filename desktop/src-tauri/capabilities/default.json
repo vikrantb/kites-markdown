@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "What a viewer window may call: Tauri's core defaults (including events) and the viewer's own mdv_* commands. No file system, shell, opener or dialog API: the shell reads, saves and opens files itself, after checking each request.",
+  "description": "What a viewer window may call: Tauri's core defaults (including events), printing its own page (window.print on macOS goes through Tauri's webview print command) and the viewer's own mdv_* commands. No file system, shell, opener or dialog API: the shell reads, saves and opens files itself, after checking each request.",
   "windows": ["doc-*"],
   "permissions": [
     "core:default",
     "core:event:default",
+    "core:webview:allow-print",
     "allow-mdv-initial-document",
     "allow-mdv-read-document",
     "allow-mdv-save-document",

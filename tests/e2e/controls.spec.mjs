@@ -55,7 +55,7 @@ test('toolbar: text size, width, contents, folding, focus, theme and settings', 
 
   // Theme: the dropdown opens, each item applies its theme and closes it.
   for (const theme of ['dark', 'sepia', 'light']) {
-    await page.locator('.dropdown-wrap > button').click();
+    await page.locator('.dropdown-wrap > button[data-arg="themeDD"]').click();
     await expect(page.locator('#themeDD')).toHaveClass(/show/);
     await page.locator(`#themeDD [data-theme="${theme}"]`).click();
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme);

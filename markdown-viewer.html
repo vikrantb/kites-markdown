@@ -37,6 +37,7 @@
 <script src="vendor/katex.min.js"></script>
 
 <link rel="stylesheet" href="css/viewer.css">
+<link rel="stylesheet" href="css/print.css">
 </head>
 <body>
 
@@ -100,6 +101,19 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>
       <span class="lbl">Listen</span>
     </button>
+
+    <!-- Export and copy (js/export.js, js/copy.js, js/section-links.js): shown once a document has rendered -->
+    <div class="dropdown-wrap" id="mdvExportWrap" style="display:none">
+      <button class="btn btn-icon" id="mdvExportBtn" data-action="toggle-dropdown" data-arg="mdvExportDD" title="Export and copy" aria-label="Export and copy" aria-haspopup="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="m7.5 7.5 4.5-4.5 4.5 4.5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>
+      </button>
+      <div class="dropdown" id="mdvExportDD" style="width:max-content">
+        <button class="dropdown-item" data-action="export-html"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m10 13-2 2 2 2"/><path d="m14 13 2 2-2 2"/></svg>Export HTML</button>
+        <button class="dropdown-item" data-action="print-document"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>Print / Save as PDF</button>
+        <button class="dropdown-item" data-action="copy-rich-text"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/></svg>Copy as rich text</button>
+        <button class="dropdown-item" data-action="copy-section-link"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Copy link to this section</button>
+      </div>
+    </div>
 
     <!-- MDV Comments toggle -->
     <button class="btn btn-icon" id="mdvToggleBtn" data-action="toggle-comments" title="Comments (Ctrl+Shift+C)" aria-label="Comments" style="display:none">
@@ -318,6 +332,12 @@
 <!-- host.js (the desktop bridge) wraps the comment wrapper around renderMarkdown, so it follows
      comments.js; its own start waits for DOMContentLoaded. -->
 <script src="js/host.js"></script>
+<!-- Export and copy. snapshot.js (the rendered document and copies of it) comes first: export.js (Export HTML, Print),
+     copy.js (rich text) and section-links.js use it. They watch for renders, so they load before app.js starts one. -->
+<script src="js/snapshot.js"></script>
+<script src="js/export.js"></script>
+<script src="js/copy.js"></script>
+<script src="js/section-links.js"></script>
 <!-- app.js starts the viewer (theme, font size, ?file=), so it loads last: every subsystem, the
      comment wrapper around renderMarkdown included, is in place before the first render. -->
 <script src="js/app.js"></script>
