@@ -62,10 +62,27 @@ export async function setTheme(page, theme) {
   }, theme);
 }
 
-// Open a document by ?file= and wait until it, and every Mermaid diagram in it, has rendered.
+// Wait until the page has stopped moving: its web fonts have loaded (the Google Fonts stylesheet uses
+// display=swap, so a late font reflows the text) and the document's box has kept the same position and
+// size across two reads 150 ms apart. A test that hovers or clicks a point on the page before this can
+// land on whatever moved under the pointer (seen on CI: the tooltip copied the link above the hovered one).
+export async function waitForLayoutSettled(page) {
+  await page.evaluate(() => document.fonts.ready.then(() => true));
+  await page.waitForFunction(() => {
+    const r = document.getElementById('mdBody')?.getBoundingClientRect();
+    const now = r ? `${r.top},${r.height},${r.width}` : '';
+    const same = now !== '' && window.__mdvTestLastBox === now;
+    window.__mdvTestLastBox = now;
+    return same;
+  }, null, { polling: 150, timeout: 10_000 });
+}
+
+// Open a document by ?file= and wait until it, and every Mermaid diagram in it, has rendered and the
+// layout has settled.
 export async function openDocument(page, path) {
   await page.goto(`markdown-viewer.html?file=${path}`);
   await page.waitForSelector('#mdBody > *', { timeout: 30_000 });
   await page.waitForFunction(() => [...document.querySelectorAll('#mdBody .mermaid')]
     .every((el) => el.querySelector('svg') || /Mermaid error/.test(el.textContent)), null, { timeout: 30_000 });
+  await waitForLayoutSettled(page);
 }
