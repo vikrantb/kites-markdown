@@ -158,9 +158,16 @@ test('links and code: tooltip copy, the links panel and copy-code', async ({ pag
 
   // The tooltip opens below the link; keep the link mid-screen so the tooltip is on screen too.
   const link = page.locator('#mdBody a[href="https://example.com/"]').first();
-  await link.evaluate((a) => a.scrollIntoView({ block: 'center' }));
-  await link.hover();
-  await expect(page.locator('#linkTooltip')).toHaveClass(/visible/);
+  const tooltip = page.locator('#linkTooltip');
+  // The tooltip follows the link under the pointer. A late layout shift (an image loading, the section
+  // rail fitting itself) can put another link there between the hover and the click, and the copy then
+  // copies that link (seen on CI: the sync-engine URL). Hover until the tooltip names THIS link.
+  await expect(async () => {
+    await link.evaluate((a) => a.scrollIntoView({ block: 'center' }));
+    await link.hover();
+    await expect(tooltip).toHaveClass(/visible/, { timeout: 1_000 });
+    await expect(page.locator('#linkTooltipText')).toHaveText('example.com', { timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
   await page.locator('#linkTooltipCopy').click();
   await expect(page.locator('#linkTooltipCopy')).toHaveText('Copied!');
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('https://example.com/');
