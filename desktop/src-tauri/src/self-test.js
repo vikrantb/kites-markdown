@@ -108,6 +108,17 @@
     return attempt;
   }
 
+  // alert() and confirm() must reach a dialog. WebKit answers confirm() false by itself unless the shell
+  // handles it, which would make "Delete this thread?" impossible to confirm. In self-test mode the shell
+  // answers OK without showing anything (macOS only: on Windows, WebView2 shows its own dialogs, which
+  // would wait for a click).
+  function probeDialogs() {
+    const started = performance.now();
+    const confirmed = confirm('kites-self-test: confirm probe');
+    alert('kites-self-test: alert probe');
+    return { probed: true, confirmReturned: confirmed, ms: Math.round(performance.now() - started) };
+  }
+
   function waitForChange(host, test, ms) {
     return new Promise((resolve) => {
       const stop = host.onDocumentChanged((doc) => { if (test(doc)) { stop(); clearTimeout(timer); resolve(doc); } });
@@ -209,6 +220,7 @@
       };
       report.log = before;
       report.bridge = await probeBridge(host);
+      report.dialogs = options.dialogProbe ? probeDialogs() : { probed: false };
       report.save = options.saveProbe ? await probeSave(host) : null;
       report.sanitization = await probeSanitization();
       report.cspViolationsDuringProbes = log.cspViolations.slice(before.cspViolations.length);
@@ -234,6 +246,7 @@
       const wrong = Object.entries(report.bridge).filter(([k, v]) => k !== 'allRefused' && !v.refused);
       f.push('the bridge did not refuse as it must: ' + wrong.map(([k, v]) => `${k} (${v.missing || `${v.code || 'accepted'}, expected ${v.expected}`})`).join(', '));
     }
+    if (report.dialogs && report.dialogs.probed && report.dialogs.confirmReturned !== true) f.push('confirm() did not reach a dialog');
     if (report.save && !report.save.ok) f.push('saving or live reload failed: ' + Object.entries(report.save.checks).filter(([, v]) => !v).map(([k]) => k).join(', '));
     if (report.sanitization) {
       if (report.sanitization.executed) f.push('script in a document ran');

@@ -221,12 +221,17 @@ pub fn mdv_self_test_requested(state: State<'_, AppState>) -> bool {
 #[serde(rename_all = "camelCase")]
 pub struct SelfTestOptions {
   pub save_probe: bool,
+  /// The shell answers alert() and confirm() itself in self-test mode (macOS), so the page may call them.
+  pub dialog_probe: bool,
 }
 
 /// Extra options for self-test mode; `None` outside it.
 #[tauri::command]
 pub fn mdv_self_test_options(state: State<'_, AppState>) -> Option<SelfTestOptions> {
-  state.self_test.as_ref().map(|t| SelfTestOptions { save_probe: t.save_probe })
+  state.self_test.as_ref().map(|t| SelfTestOptions {
+    save_probe: t.save_probe,
+    dialog_probe: cfg!(target_os = "macos"),
+  })
 }
 
 /// Self-test with the save probe only: changes the window's document as another program would.

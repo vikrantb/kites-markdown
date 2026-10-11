@@ -19,7 +19,8 @@
 //                    app the automatic handler for a type nobody chose a default for, so a build folder
 //                    would otherwise start opening the person's .md files.
 //
-// Checks (--expect): render (no errors, every diagram drawn, the bridge refused what it must), kitchen-sink (the sample's features all rendered), assets (images in the
+// Checks (--expect): render (no errors, every diagram drawn, the bridge refused what it must, and on macOS
+// confirm() reached a dialog), kitchen-sink (the sample's features all rendered), assets (images in the
 // document's folder load, one in a dot-folder included; one outside the folder does not), save (the save
 // probe passed), no-inline-handlers (none left for the app's CSP to block).
 import { spawn, execFileSync } from 'node:child_process';
@@ -157,6 +158,9 @@ function verify(report, exitCode) {
       want(c.mermaidSvgs === c.mermaidBlocks, `${c.mermaidSvgs} of ${c.mermaidBlocks} diagrams drawn`);
       want(v.sanitization && v.sanitization.executed === false && v.sanitization.rawErrorFired === true, 'the script probe did not prove that document script is blocked');
       want(v.bridge && v.bridge.allRefused === true, 'the bridge did not refuse a request as it must');
+      if (report.app && report.app.os === 'macos') {
+        want(v.dialogs && v.dialogs.probed === true && v.dialogs.confirmReturned === true && report.dialogs && report.dialogs.ok === true, "confirm() did not reach the shell's dialog");
+      }
       want(report.document && report.document.windowTitle === report.document.expectedTitle, 'the window title is not the file name');
       const scope = (report.document && report.document.assetScope) || {};
       want(scope.documentFolder === true && scope.dotFolder === true && scope.parentFolder === false, `the asset scope is not exactly the document folder and below: ${JSON.stringify(scope)}`);
@@ -193,6 +197,7 @@ function summary(report) {
     `images: ${v.images ? `${v.images.loaded}/${v.images.total} loaded, ${v.images.viaAssetProtocol} via the asset protocol` : '-'}`,
     `script probe: ran ${v.sanitization ? v.sanitization.viaRawHtml + v.sanitization.viaRender : '?'} times (raw ${v.sanitization && v.sanitization.viaRawHtml}, render ${v.sanitization && v.sanitization.viaRender}); CSP violations during probes ${(v.cspViolationsDuringProbes || []).length}`,
     `bridge refusals: ${v.bridge ? Object.entries(v.bridge).filter(([k]) => k !== 'allRefused').map(([k, r]) => `${k}=${r.refused ? r.code : `WRONG (${r.missing || r.code || 'accepted'}, expected ${r.expected})`}`).join(', ') : '-'}`,
+    `dialogs: ${v.dialogs && v.dialogs.probed ? `confirm() returned ${v.dialogs.confirmReturned}; the shell answered ${(report.dialogs && report.dialogs.answeredByShell || []).length}` : 'not probed on this platform'}`,
     `save probe: ${v.save ? JSON.stringify(v.save.checks) : 'not run'}`,
     `inline handlers left: ${v.inlineHandlers ? v.inlineHandlers.count : '?'}`,
     `console errors ${(v.log && v.log.consoleErrors.length) ?? '?'}, page errors ${(v.log && v.log.pageErrors.length) ?? '?'}, CSP violations while rendering ${(v.log && v.log.cspViolations.length) ?? '?'}`,

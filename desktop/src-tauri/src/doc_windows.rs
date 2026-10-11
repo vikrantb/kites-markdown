@@ -250,5 +250,8 @@ fn create_window(app: &AppHandle, label: &str, title: &str) -> tauri::Result<Web
       .initialization_script(selftest::CAPTURE_SCRIPT)
       .initialization_script(selftest::PAGE_SCRIPT);
   }
-  builder.build()
+  let window = builder.build()?;
+  #[cfg(target_os = "macos")]
+  crate::js_dialogs::install(&window);
+  Ok(window)
 }

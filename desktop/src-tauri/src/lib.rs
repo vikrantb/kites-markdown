@@ -15,6 +15,8 @@ mod doc_windows;
 mod error;
 mod fsio;
 mod host;
+#[cfg(target_os = "macos")]
+mod js_dialogs;
 mod menu;
 mod paths;
 mod prefs;
@@ -52,6 +54,10 @@ pub fn run() {
     }
   }
   let in_self_test = self_test.is_some();
+  #[cfg(target_os = "macos")]
+  if in_self_test {
+    js_dialogs::answer_without_asking();
+  }
 
   #[allow(unused_mut)]
   let mut builder = tauri::Builder::default();

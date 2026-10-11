@@ -23,6 +23,8 @@ const SAVE_PROBE_FLAG: &str = "--self-test-save-probe";
 const ENV_OUT: &str = "KITES_MARKDOWN_SELF_TEST_OUT";
 const ENV_SAVE_PROBE: &str = "KITES_MARKDOWN_SELF_TEST_SAVE_PROBE";
 const TIMEOUT: Duration = Duration::from_secs(60);
+/// The message self-test.js passes to confirm(); the shell must have answered it (macOS).
+const CONFIRM_PROBE: &str = "kites-self-test: confirm probe";
 
 pub struct SelfTest {
   /// The document to open, when given by `--self-test`. Otherwise the first document that arrives.
@@ -183,7 +185,15 @@ pub fn finish(app: &AppHandle, label: &str, viewer: Value) -> Result<(), String>
     None => (false, false, false),
   };
   let viewer_ok = viewer.get("ok").and_then(Value::as_bool).unwrap_or(false);
-  let shell_ok = path.is_some() && title == expected_title && folder_allowed && dot_folder_allowed && !parent_allowed;
+  // When the page called confirm(), the shell must have answered it: WebKit answers false on its own.
+  let dialogs = dialogs_answered();
+  let dialog_probed = viewer.pointer("/dialogs/probed").and_then(Value::as_bool).unwrap_or(false);
+  let dialogs_ok = !dialog_probed
+    || dialogs
+      .iter()
+      .any(|d| d["kind"] == "confirm" && d["message"] == CONFIRM_PROBE);
+  let shell_ok =
+    path.is_some() && title == expected_title && folder_allowed && dot_folder_allowed && !parent_allowed && dialogs_ok;
   let ok = viewer_ok && shell_ok;
   let report = json!({
     "ok": ok,
@@ -195,6 +205,7 @@ pub fn finish(app: &AppHandle, label: &str, viewer: Value) -> Result<(), String>
       "expectedTitle": expected_title,
       "assetScope": { "documentFolder": folder_allowed, "dotFolder": dot_folder_allowed, "parentFolder": parent_allowed },
     },
+    "dialogs": { "answeredByShell": dialogs, "ok": dialogs_ok },
     "defaultHandler": crate::default_app::current_handler(),
     "elapsedMs": test.started.elapsed().as_millis() as u64,
     "viewer": viewer,
@@ -203,6 +214,16 @@ pub fn finish(app: &AppHandle, label: &str, viewer: Value) -> Result<(), String>
   println!("self-test: {} ({})", if ok { "PASS" } else { "FAIL" }, test.out.display());
   exit(app, if ok { 0 } else { 1 });
   Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn dialogs_answered() -> Vec<Value> {
+  crate::js_dialogs::answered()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn dialogs_answered() -> Vec<Value> {
+  Vec::new()
 }
 
 fn app_info(app: &AppHandle, test: &SelfTest) -> Value {
