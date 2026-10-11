@@ -377,10 +377,16 @@ document.getElementById('mdBody').addEventListener('toggle', mdvScrollSpyInvalid
 // ============================================
 // Modal overlays: search, keyboard shortcuts, image lightbox
 // ============================================
-// One open at a time. Opening one marks the rest of the page inert (no focus, no clicks, hidden from
-// screen readers), keeps Tab inside it and moves the focus in; closing it gives the focus back to
-// whatever had it before. Esc closes it (the key handler is in app.js).
-let mdvModal = null; // { el, returnTo, inerted }
+// One open at a time. Opening one takes the rest of the page away from the reader (no focus, no clicks,
+// hidden from screen readers), keeps Tab inside it and moves the focus in; closing it gives the focus back
+// to whatever had it before. Esc closes it (the key handler is in app.js).
+//
+// How the rest of the page is taken away: the small parts (toolbar, panels, player) are made inert. The
+// document area (.layout: the outline and the document) is not, because making it inert restyles every
+// node in it: over 100 ms each way on a 3,000-section document in Chrome. It is hidden from screen readers
+// with aria-hidden instead, which restyles nothing; the dialog's backdrop takes the pointer, and the Tab
+// trap and the focus guard below keep the keyboard focus in the dialog.
+let mdvModal = null; // { el, returnTo, tabStart, inerted, hidden }
 
 function mdvOpenModal(el, { label, labelledBy, focus } = {}) {
   if (mdvModal && mdvModal.el === el) return;
@@ -391,9 +397,19 @@ function mdvOpenModal(el, { label, labelledBy, focus } = {}) {
   else if (label) el.setAttribute('aria-label', label);
   if (!el.hasAttribute('tabindex')) el.tabIndex = -1;
   const returnTo = document.activeElement;
-  const inerted = [...document.body.children].filter(c => !c.contains(el) && !c.inert && c.tagName !== 'SCRIPT');
-  inerted.forEach(c => { c.inert = true; });
-  mdvModal = { el, returnTo, inerted };
+  // Nothing had the focus: remember where the reader last clicked, which is where Tab would continue from.
+  const tabStart = !returnTo || returnTo === document.body ? mdvSelectionElement() : null;
+  const inerted = [], hidden = [];
+  for (const c of document.body.children) {
+    if (c.contains(el) || c.tagName === 'SCRIPT') continue;
+    if (c.classList.contains('layout')) {
+      if (c.getAttribute('aria-hidden') !== 'true') { c.setAttribute('aria-hidden', 'true'); hidden.push(c); }
+    } else if (!c.inert) {
+      c.inert = true;
+      inerted.push(c);
+    }
+  }
+  mdvModal = { el, returnTo, tabStart, inerted, hidden };
   el.classList.add('show');
   (focus || mdvFocusables(el)[0] || el).focus({ preventScroll: true });
 }
@@ -401,14 +417,39 @@ function mdvOpenModal(el, { label, labelledBy, focus } = {}) {
 function mdvCloseModal(el, { restoreFocus = true } = {}) {
   el.classList.remove('show');
   if (!mdvModal || mdvModal.el !== el) return;
-  const { returnTo, inerted } = mdvModal;
+  const { returnTo, tabStart, inerted, hidden } = mdvModal;
   mdvModal = null;
   inerted.forEach(c => { c.inert = false; });
+  hidden.forEach(c => c.removeAttribute('aria-hidden'));
   // Never leave the focus on a control that just disappeared: keys would keep going to it.
   if (el.contains(document.activeElement)) document.activeElement.blur();
-  if (restoreFocus && returnTo && returnTo !== document.body && returnTo.isConnected && typeof returnTo.focus === 'function') {
+  if (!restoreFocus) return;
+  if (returnTo && returnTo !== document.body && returnTo.isConnected && typeof returnTo.focus === 'function') {
     returnTo.focus({ preventScroll: true });
+  } else {
+    // Nothing had the focus: Tab continues from where the reader last clicked, or from the top of the page.
+    // Left alone, it continued from the dialog's own markup: an invisible tooltip button at the top.
+    mdvSetTabStart(tabStart && tabStart.isConnected ? tabStart : document.body.firstElementChild);
   }
+}
+
+// The element holding the reader's last click: a click in the page leaves a collapsed selection there.
+function mdvSelectionElement() {
+  const sel = window.getSelection ? window.getSelection() : null;
+  const node = sel && sel.rangeCount ? sel.anchorNode : null;
+  const el = node && (node.nodeType === 1 ? node : node.parentElement);
+  return el && el.isConnected ? el : null;
+}
+
+// Makes the next Tab continue after `el`, without a focus ring: focusing an element and blurring it at
+// once leaves the browser's Tab starting point there.
+function mdvSetTabStart(el) {
+  if (!el) return;
+  const temporary = !el.hasAttribute('tabindex');
+  if (temporary) el.setAttribute('tabindex', '-1');
+  el.focus({ preventScroll: true });
+  el.blur();
+  if (temporary) el.removeAttribute('tabindex');
 }
 
 function mdvFocusables(root) {
@@ -426,6 +467,13 @@ document.addEventListener('keydown', (e) => {
   if (e.shiftKey && (at === first || at === mdvModal.el || !mdvModal.el.contains(at))) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && (at === last || !mdvModal.el.contains(at))) { e.preventDefault(); first.focus(); }
 }, true);
+
+// The focus guard: focus that reaches the page behind the open dialog anyway (Shift+Tab in from the
+// browser's own toolbar, a script) goes back into the dialog.
+document.addEventListener('focusin', (e) => {
+  if (!mdvModal || mdvModal.el.contains(e.target)) return;
+  (mdvFocusables(mdvModal.el)[0] || mdvModal.el).focus({ preventScroll: true });
+});
 
 // ============================================
 // Search
@@ -456,6 +504,11 @@ let mdvSearchStale = true;
 function buildSearchIndex() {
   searchIndex = [];
   mdvSearchStale = true;
+  // The result list points at the previous document's elements, and kept that whole document alive after
+  // a re-render. Drop it; if search is open, run the query again on the new document.
+  const res = document.getElementById('searchResults');
+  if (mdvModal && mdvModal.el.id === 'searchOverlay') handleSearch(document.getElementById('searchInput').value);
+  else if (res._matches && res._matches.length) { res.replaceChildren(); res._matches = []; }
 }
 
 function mdvSearchIndex() {

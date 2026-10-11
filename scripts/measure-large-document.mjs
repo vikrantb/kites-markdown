@@ -1,8 +1,9 @@
 // Measures the viewer on a generated large document: render time, IntersectionObservers left alive,
-// DOM nodes and event listeners retained after garbage collection, and the main-thread cost of scrolling.
+// DOM nodes and event listeners retained after garbage collection, the main-thread cost of scrolling, and
+// how long a key takes to show its result (search, the shortcuts sheet, the outline).
 // It opens the viewer from file:// in Chrome (Playwright), so it needs no server.
 //
-// Usage: node scripts/measure-large-document.mjs [viewer-dir] [--sections 3000] [--renders 5] [--scroll-steps 60]
+// Usage: node scripts/measure-large-document.mjs [viewer-dir] [--sections 3000] [--renders 5] [--scroll-steps 60] [--keys 3]
 //   viewer-dir defaults to this checkout. Point it at another checkout (for example an extracted copy of
 //   main) to measure the other arm of a comparison with the same command on the same machine.
 // Prints one JSON object. Timings vary between runs and machines; compare arms measured back to back.
@@ -18,6 +19,7 @@ const viewerDir = resolve(positional[0] || fileURLToPath(new URL('..', import.me
 const SECTIONS = opt('--sections', 3000);
 const RENDERS = opt('--renders', 5);
 const SCROLL_STEPS = opt('--scroll-steps', 60);
+const KEYS = opt('--keys', 3);
 
 // Counts IntersectionObservers by wrapping the constructor before any viewer script runs. "live" is
 // created minus disconnected: an observer nobody disconnected keeps its callback and target list.
@@ -83,11 +85,39 @@ try {
   const scroll = { steps: SCROLL_STEPS * 2, wallMs: Math.round(wall), scriptMs: d('ScriptDuration'), layoutMs: d('LayoutDuration'),
                    styleMs: d('RecalcStyleDuration'), taskMs: d('TaskDuration') };
 
+  // Keys: milliseconds from the key event to the second animation frame after it, the frame that shows the
+  // result. Each press starts with nothing focused, as after a click in the page. An "open" sample whose
+  // dialog did not open is recorded as null rather than timed.
+  await page.evaluate(() => {
+    window.__mdvKeyMs = [];
+    window.addEventListener('keydown', (e) => {
+      if (['Control', 'Shift', 'Meta', 'Alt'].includes(e.key)) return;
+      const t0 = e.timeStamp;
+      requestAnimationFrame(() => requestAnimationFrame(() => window.__mdvKeyMs.push(performance.now() - t0)));
+    }, true);
+  });
+  // [name, key, the dialog an "open" press should show]. Esc goes to whatever the dialog focused.
+  const presses = [['searchOpen', 'Control+KeyK', '#searchOverlay'], ['searchClose', 'Escape'],
+                   ['sheetOpen', 'Shift+Slash', '#shortcutsOverlay'], ['sheetClose', 'Escape'],
+                   ['outlineHide', 'Control+KeyB'], ['outlineShow', 'Control+KeyB']];
+  const keys = Object.fromEntries(presses.map(([name]) => [name, []]));
+  for (let i = 0; i < KEYS; i++) {
+    for (const [name, combo, dialog] of presses) {
+      if (combo !== 'Escape') await page.evaluate(() => document.activeElement && document.activeElement.blur());
+      const before = await page.evaluate(() => window.__mdvKeyMs.length);
+      await page.keyboard.press(combo);
+      await page.waitForFunction((n) => window.__mdvKeyMs.length > n, before);
+      const shown = dialog ? await page.evaluate((sel) => document.querySelector(sel).classList.contains('show'), dialog) : true;
+      keys[name].push(shown ? Math.round(await page.evaluate(() => window.__mdvKeyMs[window.__mdvKeyMs.length - 1])) : null);
+      await page.waitForTimeout(150);
+    }
+  }
+
   const counts = await page.evaluate(() => ({
     headings: document.querySelectorAll('#mdBody h1,#mdBody h2,#mdBody h3,#mdBody h4,#mdBody h5,#mdBody h6').length,
     tocLinks: document.querySelectorAll('#tocList a').length,
   }));
-  console.log(JSON.stringify({ viewerDir: viewerDir.split('/').slice(-2).join('/'), sections: SECTIONS, ...counts, renders, scroll, errors }, null, 1));
+  console.log(JSON.stringify({ viewerDir: viewerDir.split('/').slice(-2).join('/'), sections: SECTIONS, ...counts, renders, scroll, keys, errors }, null, 1));
 } finally {
   await browser.close();
 }

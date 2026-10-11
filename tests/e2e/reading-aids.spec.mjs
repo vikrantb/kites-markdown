@@ -538,6 +538,23 @@ test('a search jump flashes the block, then gives back the background colour its
   await expect.poll(() => td.evaluate(el => el.style.background), { timeout: 5000 }).toBe('rgb(255, 0, 0)');
 });
 
+test('after a search, a re-render keeps nothing of the previous document', async ({ page }) => {
+  await openViewer(page);
+  await render(page, '# Guide\n\n## Backups\n\nNightly backups.\n');
+  await page.keyboard.press('Control+KeyK');
+  await page.keyboard.type('backup');
+  await expect(page.locator('#searchResults [role=option]')).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await render(page, '# Other\n\nSomething else.\n', 'other.md');
+  expect(await page.evaluate(() => (document.getElementById('searchResults')._matches || []).filter(m => !m.element.isConnected).length)).toBe(0);
+  // With search open, a re-render runs the query again on the new document.
+  await page.keyboard.press('Control+KeyK');
+  await page.keyboard.type('backup');
+  await expect(page.locator('#mdvSearchStatus')).toHaveText('No matches');
+  await page.evaluate(() => renderMarkdown('# Guide\n\n## Backups\n\nNightly backups.\n', 'guide.md'));
+  await expect(page.locator('#mdvSearchStatus')).toHaveText('2 matches');
+});
+
 test('a comment chip on a heading stays out of its words: read-aloud, the breadcrumb and search', async ({ page }) => {
   await openViewer(page);
   const payload = { version: 1, generator: 'mdv-viewer', comments: [{ id: 'cm_h1', parent_id: null,
@@ -553,6 +570,92 @@ test('a comment chip on a heading stays out of its words: read-aloud, the breadc
   await page.keyboard.press('Control+KeyK');
   await page.keyboard.type('steps');
   await expect(page.locator('#searchResults .search-result-item').first()).toHaveText('## Steps');
+});
+
+test('a dialog hides the page behind it from screen readers without restyling it, and keeps the focus', async ({ page }) => {
+  await openViewer(page);
+  await render(page, '# Guide\n\n## Links\n\nSee [the reference](#links) for more.\n');
+  await page.keyboard.press('Control+KeyK');
+  const layout = page.locator('.layout');
+  await expect(layout).toHaveAttribute('aria-hidden', 'true');
+  // Not inert: on a 3,000-section document, making it inert took over 100 ms each way.
+  expect(await layout.evaluate(l => l.inert)).toBe(false);
+  const cdp = await page.context().newCDPSession(page);
+  const { result } = await cdp.send('Runtime.evaluate', { expression: 'document.querySelector("#mdBody h2")' });
+  const { node } = await cdp.send('DOM.describeNode', { objectId: result.objectId });
+  const { nodes } = await cdp.send('Accessibility.getPartialAXTree', { backendNodeId: node.backendNodeId, fetchRelatives: false });
+  expect(nodes[0].ignored).toBe(true);
+  // Focus that reaches the page behind the dialog goes back into it.
+  await page.evaluate(() => document.querySelector('#mdBody p a').focus());
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('searchInput');
+  await page.keyboard.press('Escape');
+  await expect(layout).not.toHaveAttribute('aria-hidden', 'true');
+});
+
+test('after a dialog opened while nothing had the focus, Tab continues where the reader was', async ({ page }) => {
+  await openViewer(page);
+  await render(page, '# Guide\n\nA paragraph to click in, with no link in it.\n\n## Next part\n\nText.\n');
+  // Nothing clicked yet: Tab after the dialog starts at the top of the page, as it does on a fresh page.
+  await page.keyboard.press('Control+KeyK');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => !!document.activeElement.closest('.toolbar'))).toBe(true);
+  // After a click in the document, Tab continues from the click, with or without a dialog in between.
+  const p = page.locator('#mdBody p').first();
+  await p.click();
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => document.activeElement.getAttribute('aria-label'))).toBe('Toggle section: Next part');
+  await p.click();
+  await page.keyboard.press('Control+KeyK');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Tab');
+  expect(await page.evaluate(() => document.activeElement.getAttribute('aria-label'))).toBe('Toggle section: Next part');
+});
+
+test('with a dialog open, the other shortcuts do nothing and are kept from the browser', async ({ page }) => {
+  await openViewer(page);
+  await render(page, `# Pictures\n\n![A small square](${PNG})\n\n## Notes\n\nText.\n`);
+  const opened = { sheet: 'shortcutsOverlay', lightbox: 'lightbox', search: 'searchOverlay' };
+  for (const [name, id] of Object.entries(opened)) {
+    if (name === 'sheet') await page.keyboard.press('Shift+Slash');
+    if (name === 'lightbox') { await page.locator('#mdBody img[role=button]').focus(); await page.keyboard.press('Enter'); }
+    if (name === 'search') await page.keyboard.press('Control+KeyK');
+    await expect(page.locator(`#${id}`)).toHaveClass(/show/);
+    // Ctrl+Shift+R is the browser's hard reload, Ctrl+O its Open dialog.
+    expect(await key(page, { key: 'R', code: 'KeyR', ctrlKey: true, shiftKey: true }), `${name}: Ctrl+Shift+R`).toBe(true);
+    expect(await key(page, { key: 'o', code: 'KeyO', ctrlKey: true }), `${name}: Ctrl+O`).toBe(true);
+    expect(await page.evaluate(() => document.getElementById('ttsPlayer').classList.contains('show'))).toBe(false);
+    // The comments sidebar does not open underneath.
+    await key(page, { key: 'C', code: 'KeyC', ctrlKey: true, shiftKey: true });
+    expect(await page.evaluate(() => document.getElementById('mdvSidebar').classList.contains('open')), `${name}: Ctrl+Shift+C`).toBe(false);
+    await page.keyboard.press('Escape');
+    await expect(page.locator(`#${id}`)).not.toHaveClass(/show/);
+  }
+  // A "?" typed into search is text, not the help sheet.
+  await page.keyboard.press('Control+KeyK');
+  await page.keyboard.type('a?');
+  await expect(page.locator('#searchInput')).toHaveValue('a?');
+  await expect(page.locator('#shortcutsOverlay')).not.toHaveClass(/show/);
+});
+
+test('over the expanded diagram, shortcuts do nothing and its buttons keep working', async ({ page }) => {
+  await openViewer(page);
+  await page.goto('markdown-viewer.html?file=samples/kitchen-sink.md');
+  await page.waitForFunction(() => document.querySelector('#mdBody .mermaid-wrapper .mermaid svg'), null, { timeout: 30_000 });
+  await page.locator('#mdBody .mermaid-wrapper').first().click();
+  const overlay = page.locator('#diagramOverlay');
+  await expect(overlay).toHaveClass(/show/);
+  await page.keyboard.press('Control+KeyK');
+  await page.keyboard.type('sync');
+  await page.keyboard.press('Shift+Slash');
+  await expect(page.locator('#searchOverlay')).not.toHaveClass(/show/);
+  await expect(page.locator('#shortcutsOverlay')).not.toHaveClass(/show/);
+  expect(await overlay.evaluate(o => o.inert)).toBe(false);
+  await expect(page.locator('#diagramZoomLabel')).toHaveText('Fit');
+  await page.locator('#diagramFitBtn').click();
+  await expect(page.locator('#diagramZoomLabel')).toHaveText('100%');
+  await page.keyboard.press('Escape');
+  await expect(overlay).not.toHaveClass(/show/);
 });
 
 test('the shortcuts sheet traps the focus and gives it back on Esc', async ({ page }) => {

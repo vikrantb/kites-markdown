@@ -20,7 +20,9 @@ window.addEventListener('scroll', () => {
 // case-insensitively, so Caps Lock does not matter. shift: the shortcut needs Shift; checked for letters
 // only, because some layouts need Shift just to type a punctuation key. code: the physical key, also
 // accepted, for punctuation that other layouts move (Mod+\ on a German keyboard). Rows without `run` are
-// handled elsewhere (comments.js, the dialogs) and are listed so the sheet is complete.
+// handled elsewhere (comments.js, the dialogs) and are listed so the sheet is complete. modal: the dialog
+// the shortcut opens and closes. inDialog: it still works while a dialog is open (saving changes nothing
+// on screen).
 const MDV_IS_MAC = /mac|iphone|ipad|ipod/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '');
 
 const MDV_SHORTCUTS = [
@@ -34,7 +36,7 @@ const MDV_SHORTCUTS = [
   { mod: true, key: 'o', label: 'Open a file', run: () => document.getElementById('fileInput').click() },
   { key: '?', label: 'Shortcuts help', modal: 'shortcutsOverlay', run: () => toggleShortcuts() },
   { mod: true, shift: true, key: 'c', label: 'Comments' },
-  { mod: true, key: 's', label: 'Save comments into the file' },
+  { mod: true, key: 's', label: 'Save comments into the file', inDialog: true },
   { key: 'Esc', label: 'Close dialog' },
 ];
 
@@ -51,7 +53,7 @@ function mdvTypedKey(e) {
 }
 
 function mdvShortcutMatches(e, s) {
-  if (!s.run || !!s.mod !== (e.ctrlKey || e.metaKey) || e.altKey) return false;
+  if (!!s.mod !== (e.ctrlKey || e.metaKey) || e.altKey) return false;
   if (/^[a-z]$/.test(s.key) && !!s.shift !== e.shiftKey) return false;
   return mdvTypedKey(e) === s.key || (!!s.code && e.code === s.code);
 }
@@ -112,6 +114,14 @@ function mdvRenderShortcutSheet() {
   box.replaceChildren(title, ...rows, foot);
 }
 
+// The dialog in front of the page: one of ours (mdvModal), or the expanded diagram, which diagram-overlay.js
+// opens and closes (Esc included) on its own.
+function mdvFrontDialog() {
+  if (mdvModal) return mdvModal.el;
+  const diagram = document.getElementById('diagramOverlay');
+  return diagram && diagram.classList.contains('show') ? diagram : null;
+}
+
 document.addEventListener('keydown', e => {
   if (e.isComposing || e.keyCode === 229) return; // an input method is composing a character
   if (e.key === 'Escape') {
@@ -119,15 +129,23 @@ document.addEventListener('keydown', e => {
     else mdvHideMobileToc();
     return;
   }
-  // While a dialog is open only its own toggle works: Mod+K closes search, ? closes the help sheet.
-  if (mdvModal) {
-    const own = MDV_SHORTCUTS.find(s => s.modal === mdvModal.el.id && mdvShortcutMatches(e, s));
-    if (own) { e.preventDefault(); own.run(); }
+  const s = MDV_SHORTCUTS.find(x => mdvShortcutMatches(e, x));
+  const dialog = mdvFrontDialog();
+  if (dialog) {
+    // While a dialog is open only its own toggle works: Mod+K closes search, ? closes the help sheet. Every
+    // other shortcut does nothing, and is kept from the browser too (Ctrl+Shift+R is its hard reload, Ctrl+O
+    // its Open dialog) and from the later listener in comments.js (Ctrl+Shift+C). Over the expanded diagram,
+    // a shortcut used to open a dialog underneath it, out of sight, and leave the diagram's buttons dead.
+    // A key typed into a text field is text, and saving still works.
+    if (!s || s.inDialog || (!s.mod && mdvIsTextEntry(e.target))) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (s.modal === dialog.id) s.run();
     return;
   }
-  if (mdvIsTextEntry(e.target)) return;
-  const s = MDV_SHORTCUTS.find(x => mdvShortcutMatches(e, x));
-  if (s) { e.preventDefault(); s.run(); }
+  if (!s || !s.run || mdvIsTextEntry(e.target)) return;
+  e.preventDefault();
+  s.run();
 });
 
 // ============================================
