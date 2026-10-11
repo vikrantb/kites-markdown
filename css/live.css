@@ -1,0 +1,152 @@
+/* ==========================================================================
+   Live reload and Back/Forward between documents (js/live-reload.js, js/history.js)
+   Tokens only (css/viewer.css), so all three themes follow. Above the toolbar's level (100) and the
+   sidebars, below the dialogs (300 and up): an open dialog is never covered.
+   ========================================================================== */
+
+/* Back and forward, at the start of the toolbar, shown once there is somewhere to go */
+.mdv-history-nav { margin-right: 6px; flex-shrink: 0; }
+/* Where the toolbar has no room for both, they take the room of the reading time (words and minutes), so the
+   document's name and the Open button keep theirs. js/history.js marks the toolbar while they show: a :has() rule here
+   made every diagram drawing restyle the page (a 1.4 s long task on kitchen-sink.md in headless Chromium). */
+@media (max-width: 1440px) {
+  .toolbar.mdv-history-shown .toolbar-meta { display: none; }
+}
+.mdv-history-nav[hidden] { display: none; }
+.mdv-history-nav .btn:disabled,
+.mdv-history-nav .btn:disabled:hover { opacity: 0.38; cursor: default; background: transparent; color: var(--text-secondary); }
+
+/* "Updated": a quiet note under the toolbar, at the right, that fades */
+.mdv-live-toast {
+  position: fixed; z-index: 110;
+  top: calc(var(--toolbar-height) + 10px); right: 16px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px 5px 9px;
+  border: 1px solid var(--border-primary);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font: 500 0.78rem/1.2 var(--font-ui);
+  box-shadow: var(--shadow-sm);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  pointer-events: none;
+}
+.mdv-live-toast.show { opacity: 1; transform: none; }
+.mdv-live-toast { max-width: min(280px, calc(100vw - 32px)); box-sizing: border-box; }
+.mdv-live-toast-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.mdv-sidebar-open .mdv-live-toast { right: calc(min(360px, 92vw) + 16px); } /* beside the comments sidebar */
+
+.mdv-live-toast svg,
+.mdv-live-prompt > svg {
+  width: 14px; height: 14px; flex-shrink: 0;
+  fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* The mark under the toolbar at the right, while it is true: a newer version waits (the reader said "Not now", or a
+   comment box is open), or the file is not on disk. The "Updated" note shows under it. */
+.mdv-live-chip {
+  position: fixed; z-index: 110;
+  top: calc(var(--toolbar-height) + 10px); right: 16px;
+  display: inline-flex; align-items: center; gap: 8px;
+  max-width: min(300px, calc(100vw - 32px)); box-sizing: border-box;
+  min-height: 30px; padding: 3px 4px 3px 10px;
+  border: 1px solid var(--border-primary);
+  border-left: 3px solid var(--accent-warn);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: 500 0.78rem/1.3 var(--font-ui);
+  box-shadow: var(--shadow-sm);
+}
+.mdv-live-chip[hidden] { display: none; }
+.mdv-live-chip-plain { padding-right: 12px; }
+.mdv-live-chip[data-state="copy"] { border-left-color: var(--border-primary); color: var(--text-secondary); }
+.mdv-live-chip[data-state="copy"] > svg { stroke: var(--text-tertiary); }
+.mdv-live-chip > svg {
+  width: 14px; height: 14px; flex-shrink: 0;
+  fill: none; stroke: var(--accent-warn); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round;
+}
+.mdv-live-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The whole sentence, for screen readers: the chip shows a few words of it */
+.mdv-live-sr {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
+  overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+.mdv-live-chip-btn {
+  flex-shrink: 0;
+  height: 24px; padding: 0 9px;
+  border: 1px solid var(--accent); border-radius: 999px;
+  background: var(--accent); color: var(--text-on-accent);
+  font: 600 0.74rem/1 var(--font-ui);
+  cursor: pointer;
+}
+.mdv-live-chip-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+body.mdv-live-chip-shown .mdv-live-toast { top: calc(var(--toolbar-height) + 50px); }
+body.mdv-sidebar-open .mdv-live-chip { right: calc(min(360px, 92vw) + 16px); }
+
+/* The blocks a new version changed, marked for a moment */
+.md-body .mdv-live-changed { animation: mdv-live-changed 3.6s ease-out; }
+@keyframes mdv-live-changed {
+  from { background-color: var(--accent-soft); box-shadow: -8px 0 0 var(--accent-soft); }
+  to { background-color: transparent; box-shadow: -8px 0 0 transparent; }
+}
+
+/* "Changed on disk: reload?": the document has comment changes that are not saved, so the reader decides. At the
+   bottom, where the app's other notices with a choice appear (js/host.js), clear of the text being read. */
+.mdv-live-prompt {
+  position: fixed; z-index: 110;
+  bottom: calc(var(--tts-height, 0px) + 22px); left: 50%;
+  display: flex; align-items: center; gap: 12px;
+  width: max-content; max-width: min(640px, calc(100vw - 32px)); box-sizing: border-box;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid var(--border-primary);
+  border-left: 3px solid var(--accent-warn);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: 400 0.82rem/1.4 var(--font-ui);
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  transform: translate(-50%, 6px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.mdv-live-prompt[hidden] { display: none; }
+.mdv-live-prompt.show { opacity: 1; transform: translate(-50%, 0); }
+.mdv-live-prompt > svg { stroke: var(--accent-warn); }
+.mdv-live-prompt-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mdv-live-prompt-title { font-weight: 600; }
+.mdv-live-prompt-detail { color: var(--text-secondary); font-size: 0.76rem; }
+
+.mdv-live-btn {
+  flex-shrink: 0;
+  height: 30px; padding: 0 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: 500 0.78rem/1 var(--font-ui);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.mdv-live-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.mdv-live-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--text-on-accent); }
+.mdv-live-btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--text-on-accent); }
+
+@media (max-width: 600px) {
+  .mdv-history-nav { margin-right: 2px; }
+  /* No room for a button that does nothing yet */
+  .mdv-history-nav .btn:disabled { display: none; }
+  .mdv-live-prompt { flex-wrap: wrap; width: calc(100vw - 32px); }
+  .mdv-live-prompt-text { flex: 1 1 calc(100% - 30px); }
+  .mdv-live-toast, body.mdv-sidebar-open .mdv-live-toast { right: 12px; }
+  .mdv-live-chip, body.mdv-sidebar-open .mdv-live-chip { right: 12px; max-width: calc(100vw - 24px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mdv-live-toast, .mdv-live-prompt { transition: none; }
+}
+@media print {
+  .mdv-live-toast, .mdv-live-prompt, .mdv-live-chip { display: none !important; }
+  .md-body .mdv-live-changed { animation: none; }
+}

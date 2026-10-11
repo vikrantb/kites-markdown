@@ -9,9 +9,12 @@
 // In the desktop app (Tauri), the window's document comes from the shell, which also saves it, follows
 // its links and watches it for changes. This script:
 //   - renders the window's document at start, and live-reloads it when another program changes it,
-//     keeping the reading position;
-//   - follows links: Markdown files open in their own window, web and mail links in the default app,
-//     and the page itself never navigates away;
+//     keeping the reading place (js/reading-place.js);
+//   - follows links: a Markdown file opens in the same window (js/document-links.js), or in a window of its own
+//     with Cmd/Ctrl-click; web and mail links open in the default app, and the page itself never navigates away;
+//   - View → Reload reloads the document on screen, a document opened from a link included; opening the window's
+//     own file again (a double-click in the Finder, File → Open) brings it back on screen, with the linked
+//     document one step Back; the Go menu's Back and Forward are the page's own (js/history.js);
 //   - shows images from the document's folder (and below), through the asset protocol;
 //   - routes the Open button to the native Open panel, and keeps every other way of loading a
 //     different document (paste, File System Access) from linking it to this window's file.
@@ -161,7 +164,7 @@
   const subscribers = new Set();
   let savesInFlight = 0;
   let pendingChange = null;
-  let documentName = '';
+  let windowPath = null; // the file the shell opened in this window; the page may show another one from a link
   let holdsText = false;
 
   // Versions. Each document the shell sends carries a token naming its exact bytes, and a save names the
@@ -191,9 +194,10 @@
 
     initialDocument: () => call('mdv_initial_document'),
 
-    // Rejects with {code, message} for a missing or non-Markdown file.
+    // Rejects with {code, message} for a missing or non-Markdown file. The versions of the window's own file
+    // are remembered whatever is on screen: Back to it reads it before showing it, and a save names its version.
     readDocument: (path) => call('mdv_read_document', { path }).then((doc) => {
-      if (doc && samePath(doc.path, host.currentPath)) remember(doc.mtimeMs, doc.version);
+      if (doc && (samePath(doc.path, host.currentPath) || samePath(doc.path, windowPath))) remember(doc.mtimeMs, doc.version);
       return doc;
     }),
 
@@ -282,21 +286,23 @@
   // Showing a document
   // ---------------------------------------------------------------
   function showDocument(doc, keepPosition) {
-    const anchor = keepPosition ? captureReadingPosition() : null;
-    if (!samePath(doc.path, host.currentPath)) versions.length = 0;
+    const place = keepPosition ? mdvReadingPosition() : null;
+    if (!samePath(doc.path, host.currentPath) && !samePath(doc.path, windowPath)) versions.length = 0;
     host.currentPath = doc.path;
     current = { mtimeMs: doc.mtimeMs, version: doc.version || null };
     remember(doc.mtimeMs, doc.version);
-    documentName = doc.name;
     // The window's document is the file the shell read; no File System Access handle belongs to it.
     if (typeof mdvFileHandle !== 'undefined') mdvFileHandle = null;
     rawMarkdown = doc.text;
     currentFileName = doc.name;
     renderMarkdown(doc.text, doc.name);
     document.title = doc.name;
-    if (anchor) restoreReadingPosition(anchor);
+    if (place) mdvRestoreReadingPosition(place);
     if (doc.readOnly && !keepPosition) notice(doc.readOnly);
   }
+
+  // The name of the document on screen (a document opened from a link names itself, not the window's file)
+  const shownName = () => (host.currentPath ? baseName(host.currentPath) : 'This document');
 
   // Comment changes that are not in the file yet: a save in flight, or a change the save seam has not
   // written (it keeps a refused save's edit in memory). The comment code's own answer wins when it has one.
@@ -311,7 +317,13 @@
   }
 
   function onDocumentChanged(doc) {
-    if (!doc || !samePath(doc.path, host.currentPath)) return;
+    if (!doc) return;
+    if (!samePath(doc.path, host.currentPath)) {
+      // The shell names the window's own file. While a document opened from a link is on screen, its changes wait
+      // for Back (which reads it again); View → Reload reloads what is on screen.
+      if (doc.reason === 'reload' && host.currentPath) reloadShown();
+      return;
+    }
     for (const cb of subscribers) {
       try { cb({ path: doc.path, text: doc.text, mtimeMs: doc.mtimeMs }); } catch (e) { console.warn('onDocumentChanged:', e); }
     }
@@ -327,8 +339,8 @@
       // so the shell refuses it rather than write over the other program's change.
       pendingChange = doc;
       const message = asked
-        ? `Reloading shows ${documentName} as it is on disk, without the comment changes not saved into it.`
-        : `${documentName} changed on disk.`;
+        ? `Reloading shows ${shownName()} as it is on disk, without the comment changes not saved into it.`
+        : `${shownName()} changed on disk.`;
       notice(message, 'info', { label: 'Reload', run: () => applyChange(pendingChange) }, true);
       return;
     }
@@ -342,64 +354,40 @@
     showDocument(doc, true);
   }
 
+  // View → Reload while a document opened from a link is on screen: that document, read again
+  async function reloadShown() {
+    const path = host.currentPath;
+    let doc;
+    try {
+      doc = await host.readDocument(path);
+    } catch (e) {
+      notice(`${baseName(path)} could not be read: ${errorText(e)}`, 'error');
+      return;
+    }
+    if (doc && samePath(doc.path, host.currentPath)) onDocumentChanged(Object.assign({}, doc, { reason: 'reload' }));
+  }
+
   // The shell gives an empty window its document: File → Open, a dropped file, or a later launch. The
   // page may also have asked for it (initialDocument) in the meantime; it is shown once.
+  // reason 'focus': the window's own file was opened again (a double-click in the Finder, File → Open) and the shell
+  // brought this window to the front. If a document opened from a link is on screen, the window's file comes back,
+  // as a new place in Back/Forward, so Back returns to the linked document.
   function onDocumentOpened(doc) {
-    if (!doc || (host.currentPath && !samePath(doc.path, host.currentPath))) return;
+    if (!doc) return;
+    if (doc.reason === 'focus') {
+      if (windowPath && samePath(doc.path, windowPath) && !samePath(host.currentPath, windowPath)) showWindowFile(doc);
+      return;
+    }
+    if (host.currentPath && !samePath(doc.path, host.currentPath)) return;
     if (host.currentPath && doc.version === current.version) return; // already showing it
+    windowPath = doc.path;
     showDocument(doc, false);
   }
 
-  // The reading position, by the heading at the top of the window (or by proportion when there is none).
-  function captureReadingPosition() {
-    const body = document.getElementById('mdBody');
-    const max = document.documentElement.scrollHeight - window.innerHeight;
-    const position = { ratio: max > 0 ? window.scrollY / max : 0, atTop: window.scrollY < 4, id: null, offset: 0 };
-    if (!body) return position;
-    const toolbar = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--toolbar-height')) || 52;
-    let chosen = null;
-    for (const h of body.querySelectorAll('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]')) {
-      if (h.getBoundingClientRect().top <= toolbar + 8) chosen = h;
-      else break;
-    }
-    if (chosen) { position.id = chosen.id; position.offset = chosen.getBoundingClientRect().top; }
-    return position;
-  }
-
-  let stopRestoring = () => {};
-
-  function restoreReadingPosition(position) {
-    stopRestoring();
-    const place = () => {
-      if (position.atTop) { window.scrollTo({ top: 0, behavior: 'instant' }); return; }
-      const el = position.id && document.getElementById(position.id);
-      if (el) {
-        window.scrollTo({ top: window.scrollY + el.getBoundingClientRect().top - position.offset, behavior: 'instant' });
-      } else {
-        const max = document.documentElement.scrollHeight - window.innerHeight;
-        window.scrollTo({ top: Math.max(0, position.ratio * max), behavior: 'instant' });
-      }
-    };
-    place();
-    // Diagrams and images change the layout after the first paint: hold the position until they settle
-    // or the person scrolls.
-    const body = document.getElementById('mdBody');
-    if (!body || typeof ResizeObserver === 'undefined') return;
-    const inputs = ['wheel', 'touchstart', 'keydown', 'mousedown'];
-    let done = false;
-    let timer = 0;
-    const stop = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      observer.disconnect();
-      for (const t of inputs) window.removeEventListener(t, stop, true);
-    };
-    const observer = new ResizeObserver(() => { if (!done) place(); });
-    observer.observe(body);
-    for (const t of inputs) window.addEventListener(t, stop, true);
-    timer = setTimeout(stop, 2500);
-    stopRestoring = stop;
+  function showWindowFile(doc) {
+    remember(doc.mtimeMs, doc.version);
+    if (typeof mdvOpenDocument !== 'function') { showDocument(doc, false); return; }
+    mdvOpenDocument({ name: doc.name, text: doc.text, path: doc.path, mtimeMs: doc.mtimeMs, kind: 'desktop' }, { push: true });
   }
 
   // ---------------------------------------------------------------
@@ -634,7 +622,7 @@
       const t = e.target;
       if (t && (t.isContentEditable || (t.closest && t.closest('input, textarea, select')))) return;
       e.stopImmediatePropagation();
-      notice(`This window shows ${documentName}. To read pasted Markdown, open a new window (File → New Window) and paste there.`);
+      notice(`This window shows ${shownName()}. To read pasted Markdown, open a new window (File → New Window) and paste there.`);
     }, true);
     // Files dropped on the window are opened by the shell, which knows their paths.
     window.addEventListener('drop', (e) => {
@@ -662,13 +650,21 @@
       listen('mdv://document-changed', onDocumentChanged),
       listen('mdv://open-document', onDocumentOpened),
       listen('mdv://notice', (p) => notice(p && p.message)),
+      // The Go menu: Back and Forward between the documents of this window
+      listen('mdv://go', (dir) => {
+        const go = dir === 'forward' ? window.mdvHistoryForward : window.mdvHistoryBack;
+        if (typeof go === 'function') go();
+      }),
       listen('tauri://drag-enter', () => showDragging(true)),
       listen('tauri://drag-leave', () => showDragging(false)),
       listen('tauri://drag-drop', () => showDragging(false)),
     ]);
     // A file the shell cannot read (too large, unreadable, deleted) says why, instead of a blank window.
     const doc = await host.initialDocument().catch((e) => { notice(errorText(e), 'error', null, true); return null; });
-    if (doc && !host.currentPath) showDocument(doc, false);
+    if (doc && !host.currentPath) {
+      windowPath = doc.path;
+      showDocument(doc, false);
+    }
   }
 
   const start = () => boot().catch((e) => console.error('Kites Markdown could not start:', e));

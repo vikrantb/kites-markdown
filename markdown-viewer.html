@@ -37,6 +37,7 @@
 <script src="vendor/katex.min.js"></script>
 
 <link rel="stylesheet" href="css/viewer.css">
+<link rel="stylesheet" href="css/live.css">
 <link rel="stylesheet" href="css/folder.css">
 </head>
 <body>
@@ -54,6 +55,15 @@
       </button>
       <div class="mdv-recent-menu" id="mdvRecentMenu" role="menu" aria-label="Recent documents"></div>
     </div>
+  </div>
+  <!-- Back and forward between documents (js/history.js): shown once there is somewhere to go -->
+  <div class="toolbar-group mdv-history-nav" id="mdvHistoryNav" hidden>
+    <button class="btn btn-icon" id="mdvBackBtn" data-action="history-back" title="Back (Alt+←)" aria-label="Back" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <button class="btn btn-icon" id="mdvForwardBtn" data-action="history-forward" title="Forward (Alt+→)" aria-label="Forward" disabled>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>
   </div>
   <span class="toolbar-title" id="toolbarTitle">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
@@ -331,6 +341,13 @@
 <!-- host.js (the desktop bridge) wraps the comment wrapper around renderMarkdown, so it follows
      comments.js; its own start waits for DOMContentLoaded. -->
 <script src="js/host.js"></script>
+<!-- Live reload, Back/Forward and links between documents follow the document through the load seam in files.js;
+     reading-place.js keeps the reader's place. Their shortcuts are registered once app.js has loaded. -->
+<script src="js/reading-place.js"></script>
+<script src="js/live-reload.js"></script>
+<script src="js/live-notes.js"></script>
+<script src="js/history.js"></script>
+<script src="js/document-links.js"></script>
 <!-- A folder of documents: the folder (window.mdvFolder), its sidebar, recent documents, quick open, search in
      files and link previews. They show documents only through mdvOpenDocument (js/files.js). -->
 <script src="js/folder-paths.js"></script>

@@ -16,7 +16,8 @@ use crate::selftest;
 use crate::state::AppState;
 use crate::watch;
 
-/// Sent to an empty window that has just been given a document.
+/// Sent to an empty window that has just been given a document, and (reason `focus`) to a window whose own
+/// document was opened again: it may show a document opened from a link, and shows its own file again.
 pub const OPEN_DOCUMENT: &str = "mdv://open-document";
 /// A short message for the page to show.
 pub const NOTICE: &str = "mdv://notice";
@@ -41,7 +42,19 @@ pub fn open_path(app: &AppHandle, raw: &Path, prefer: Option<String>) -> Result<
   let path = paths::markdown_file(raw)?;
   let state = app.state::<AppState>();
 
-  if let Some(label) = state.registry().label_for(&path) {
+  // The registry's lock is released at the end of this statement (a guard held by an `if let` scrutinee would live
+  // through the block below, and locking the registry again there would deadlock).
+  let existing = state.registry().label_for(&path);
+  if let Some(label) = existing {
+    // The page may show a document opened from one of its links: it is told, and shows its own file again.
+    match fsio::read_document(&path) {
+      Ok(loaded) => {
+        state.registry().note_version(&label, loaded.fingerprint);
+        let payload = DocumentPayload::new(&path, &loaded, "focus");
+        let _ = app.emit_to(EventTarget::webview_window(&label), OPEN_DOCUMENT, payload);
+      }
+      Err(e) => notify_page(app, &label, &e.message),
+    }
     focus(app, &label);
     return Ok(label);
   }

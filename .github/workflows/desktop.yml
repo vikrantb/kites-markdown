@@ -94,7 +94,7 @@ jobs:
         run: |
           APP="${{ matrix.bundle }}/macos/Kites Markdown.app"
           node desktop/scripts/run-self-test.mjs --app "$APP" --doc samples/kitchen-sink.md --save-probe --expect render,kitchen-sink,save --out self-test/macos-kitchen-sink.json
-          node desktop/scripts/run-self-test.mjs --app "$APP" --doc desktop/tests/fixtures/linked/doc.md --expect render,assets --out self-test/macos-assets.json
+          node desktop/scripts/run-self-test.mjs --app "$APP" --doc desktop/tests/fixtures/linked/doc.md --expect render,assets,links --out self-test/macos-assets.json
           # The folder sidebar: the shell lists the document's folder (mdv_list_directory) and the sidebar draws it.
           node desktop/scripts/run-self-test.mjs --app "$APP" --doc tests/fixtures/folder/README.md --expect render,folder --out self-test/macos-folder.json
           # The way Finder opens a double-clicked file: Launch Services hands the app the file.
@@ -138,7 +138,7 @@ jobs:
           # PowerShell does not stop on a failing program by itself; check each one.
           node desktop/scripts/run-self-test.mjs --app "$env:KITES_EXE" --doc samples/kitchen-sink.md --save-probe --expect render,kitchen-sink,save --out self-test/windows-kitchen-sink.json
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          node desktop/scripts/run-self-test.mjs --app "$env:KITES_EXE" --doc desktop/tests/fixtures/linked/doc.md --expect render,assets --out self-test/windows-assets.json
+          node desktop/scripts/run-self-test.mjs --app "$env:KITES_EXE" --doc desktop/tests/fixtures/linked/doc.md --expect render,assets,links --out self-test/windows-assets.json
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node desktop/scripts/run-self-test.mjs --app "$env:KITES_EXE" --doc tests/fixtures/folder/README.md --expect render,folder --out self-test/windows-folder.json
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

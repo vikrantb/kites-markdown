@@ -24,7 +24,8 @@ pub struct DocumentPayload {
   pub version: String,
   /// Why saving into this file is refused, when it is.
   pub read_only: Option<String>,
-  /// `initial`, `opened`, `changed` (another program wrote it) or `reload` (the person asked).
+  /// `initial`, `opened`, `changed` (another program wrote it), `reload` (the person asked) or `focus` (its
+  /// window was brought to the front because the file was opened again).
   pub reason: &'static str,
 }
 
