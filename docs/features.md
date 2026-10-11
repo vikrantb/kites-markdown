@@ -145,9 +145,11 @@ The commenting layer wraps `renderMarkdown`. It reads the `MDV-COMMENTS` block f
 
 `buildSectionMinimap` adds a row of buttons, one per H2, but **only when the document has three or more H2 headings**.
 
-- It sits directly after the frontmatter dashboard if there is one. Otherwise it sits after the first H1, or at the top.
+- It sits directly after the frontmatter dashboard if there is one. Otherwise it sits under the first H1, at the top of that heading's section (so the H1's fold toggle still works), or at the top of the document.
+- Each segment shows its section's title, cut with an ellipsis when it does not fit. Hovering a segment, or reaching it with Tab, shows the full title in a tooltip. The labels are drawn by CSS from `data-label` and named for screen readers with `aria-label`, so they are not document text: search, read-aloud and copy never pick them up.
+- When a segment is too narrow for a readable label (about 60 px, for example 17 sections in the reading column), the row becomes a section track: sections already read, the current one (larger, in the accent colour) and the ones ahead. The tooltip still names each segment.
 - Clicking a segment scrolls to that H2.
-- The segment for the H2 currently in view is highlighted, using the same observer band as the scroll spy.
+- The segment for the H2 currently in view is highlighted, using the same observer band as the scroll spy, and the observer of the previous render is disconnected first.
 
 ### Collapsing and expanding sections
 
@@ -187,8 +189,11 @@ The choice is stored in `localStorage` under `mdv-fontsize`.
 
 `setTheme` sets `data-theme` on `<html>` to `light`, `sepia` or `dark`, and stores the choice in `localStorage` under `mdv-theme`. The default is `light`. The operating system's light or dark preference is not consulted *(inferred: no `prefers-color-scheme` rule exists)*.
 
-- Code highlighting uses the highlight.js `github` stylesheet for Light and Sepia, and `github-dark` for Dark.
-- Mermaid diagrams use Mermaid's `dark` theme when the viewer is Dark, and `default` otherwise. The theme is chosen when a diagram renders, so diagrams already on screen keep their old colours until the document is opened again (see [limitations](#current-limitations)).
+- Each theme is one set of design tokens in `css/viewer.css`: surfaces, text, accent, callout, syntax and diagram colours. Every text colour meets WCAG AA (4.5:1) on the surfaces it is used on; `tests/e2e/visuals.spec.mjs` measures the pairs in all three themes.
+- Code highlighting uses each theme's own syntax colours (the vendored highlight.js stylesheets still load, and the viewer's colours override them).
+- Mermaid diagrams are drawn in the theme's palette: Mermaid's `base` theme, fed from the `--diagram-*` tokens. A theme change redraws every diagram already on the page from its saved source, and an open expanded view follows.
+
+![One flowchart in the light, sepia and dark themes](images/visuals-diagram-themes.png)
 
 ### Reading progress and scroll buttons
 
@@ -235,7 +240,7 @@ Open with the **Search** button or `Ctrl/Cmd+K` (`openSearch`). `Ctrl/Cmd+K` whi
 ### Abbreviation tooltips
 
 - **Markdown syntax** (works). The vendored `markdown-it-abbr` plugin turns `*[HTML]: Hyper Text Markup Language` definitions into `<abbr title="…">` elements, and the browser shows its native tooltip on hover.
-- **Frontmatter `abbreviations:`** (currently has no effect). `applyAbbreviationTooltips` is meant to wrap every occurrence of a key from a frontmatter `abbreviations` map in a dotted-underline `<abbr class="abbr-tooltip">`, skipping code, `pre`, and callout titles. But `parseFrontmatter` never produces a map for that key: indented `KEY: value` lines are dropped, and `- KEY: value` items become a list. `applyAbbreviationTooltips` returns early for lists and strings. I confirmed this by running `parseFrontmatter` on its own in Node.
+- **Frontmatter `abbreviations:`** (works). `applyAbbreviationTooltips` wraps every whole-word occurrence of a key in a dotted-underline `<abbr class="abbr-tooltip" title="…">`, longest key first, skipping code, `pre`, `kbd`, math, diagrams, callout titles, the dashboard, the minimap and anything already inside an `<abbr>`. Both YAML shapes work: an indented map (`  API: Application programming interface`) and a list (`  - API: Application programming interface`). `parseFrontmatter` turns the indented map into an empty list, so `mdvFrontmatterAbbreviations` reads those lines from the document's own frontmatter, and only when that frontmatter parses to the one being rendered.
 
 ### Image lightbox
 
@@ -243,34 +248,41 @@ Open with the **Search** button or `Ctrl/Cmd+K` (`openSearch`). `Ctrl/Cmd+K` whi
 
 ### Diagrams: expand, zoom and fit
 
-Fenced code blocks tagged `mermaid` are rendered by `renderMermaidDiagrams`. If a diagram fails to render, the error message appears in its place as `Mermaid error: …`.
+Fenced code blocks tagged `mermaid` are drawn by `renderMermaidDiagrams` in the current theme's palette, each on a card labelled with its type (Flowchart, Sequence diagram, Pie chart…). [`samples/diagram-gallery.md`](../samples/diagram-gallery.md) shows every type in one file ([dark theme screenshot](images/visuals-diagram-gallery-dark.png); [the expanded view](images/visuals-overlay.png)). If a diagram cannot be drawn, its card says so, gives Mermaid's reason, and keeps the source readable underneath.
 
-Once a diagram has rendered:
+Once a diagram is drawn:
 
-- an **expand** button appears in its top-right corner while the pointer is over the diagram, and clicking anywhere on the diagram also opens the overlay (`openDiagramOverlay`);
-- the overlay shows a copy of the SVG, titled by type: Sequence Diagram, Flowchart (`graph TD|TB|LR|RL|BT` only), Class Diagram, Gantt Chart, Pie Chart, ER Diagram, State Diagram, or "Diagram".
+- an **expand** button appears in its top-right corner while the pointer is over the diagram (always, on touch screens), and clicking anywhere on the diagram also opens the expanded view (`openDiagramOverlay`);
+- the expanded view shows a copy of the SVG, titled by the type Mermaid reports for it, plus the diagram's own title when it has one ("Pie chart · Estimated effort by area").
 
-| Overlay control | Effect | Function |
+| In the expanded view | Effect | Function |
 |---|---|---|
-| `−` / `+` | Zoom out / in by 25%, between 25% and 400% | `diagramZoom` |
-| Mouse wheel over the diagram | Zoom in (scroll up) / out (scroll down) by the same steps | `diagramBody` `wheel` listener |
-| **Fit** | Switch between fit-to-screen and 100% | `diagramFitToggle` |
-| **× Close** or `Esc` | Close the overlay | `closeDiagramOverlay` |
+| Drag | Pan | pointer listeners on `#diagramBody` |
+| Mouse wheel, trackpad pinch (ctrl + wheel), two-finger touch pinch | Zoom around the pointer, between 10% and 1000% | `mdvZoomAt` |
+| `−` / `+`, or the keys `-` / `+` (`=`) | Zoom out / in by 25% around the centre | `diagramZoom` |
+| **Fit**, or `0` | Fit the diagram to the screen; pressed again, actual size | `diagramFitToggle`, `mdvDiagramFit` |
+| **1:1**, or `1` | Actual size | `mdvDiagramActualSize` |
+| Arrow keys (with Shift: further) | Pan | keyboard listener |
+| A click on a node that links to a section | Close the view and go to that section | `mdvJumpToSection` |
+| **× Close** or `Esc` | Close, and give focus back to what opened it | `closeDiagramOverlay` |
 
-Every time the overlay opens, it starts in fit mode.
+The view opens fitted, re-fits when the window is resized in fit mode, keeps focus inside itself while open, and stays sharp at every zoom: the SVG is redrawn at its scaled size instead of being magnified. The zoom label shows the scale in percent. A theme change while the view is open redraws the diagram in the new palette and keeps the zoom and position.
 
 ### Clicking a diagram node to jump to a section
 
-`setupMermaidClickToSection` is meant to make Mermaid nodes clickable. It matches a node's text against heading slugs, and against single heading words longer than 3 characters. A match scrolls to that heading and highlights it for 2 seconds.
+A node whose label is exactly the text of a heading in the document links to that heading (`mdvLinkDiagramNodes`). The match is on the label's slug, so case and punctuation do not matter, but the whole label must match: a node called "Merge" links to a heading "Merge", and a node called "Merge logic" does not.
 
-> [!NOTE]
-> As of the initial import this does not take effect *(inferred)*. `renderMarkdown` calls it right after starting the asynchronous `renderMermaidDiagrams` without waiting for it, so when it runs, no diagram SVG exists yet and nothing is wired. The setup is not repeated after rendering finishes.
+- Linked nodes are underlined, show "Go to section: …" on hover, and are focusable with Tab and announced as links.
+- A click, or Enter on a focused node, scrolls to the heading, unfolding any collapsed section around it, moves focus to it and flashes it (`mdvJumpToSection`). A click elsewhere on the diagram still opens the expanded view; in the expanded view, a click on a linked node closes it and goes to the section.
+- Linking runs after each diagram is drawn, so it works on the first render and after every theme change. `setupMermaidClickToSection`, which `renderMarkdown` calls, links any diagram already drawn.
 
 ### Code blocks
 
 For fenced code blocks, the markdown-it `highlight` option (set where `md` is created) adds a header with the language name (`text` if none is given) and a **Copy** button (`copyCode`). highlight.js colours the code only when it recognises the language. Otherwise the code is shown escaped and uncoloured. Indented code blocks do not get the header.
 
-The button shows "Copied!" for 1.5 seconds. As of the initial import, the copied text starts with the header text (language name and the word "Copy"). See [limitations](#current-limitations).
+The button copies exactly the code: not the language label, not the word "Copy", and not the fence's closing newline. It shows "Copied!" with a check mark for 1.6 seconds, or "Copy failed" if the browser refuses. Outside a secure context it falls back to the legacy copy command.
+
+Each code block has a header with a coloured dot for common languages, the language name and the copy button. Long lines scroll inside the block, with a soft edge on the side the line continues to. Ligatures are off, so `!=` reads as two characters, as typed.
 
 ### Callout blocks
 
@@ -281,18 +293,18 @@ The button shows "Copied!" for 1.5 seconds. As of the initial import, the copied
 > Press `?` to see the keyboard shortcuts.
 ```
 
-| Marker | Title | Accent colour |
-|---|---|---|
-| `[!NOTE]` | Note | blue |
-| `[!TIP]` | Tip | green |
-| `[!IMPORTANT]` | Important | violet (`#8B5CF6`) |
-| `[!WARNING]` | Warning | amber |
-| `[!CAUTION]` | Caution | red |
-| `[!TLDR]` | TL;DR | cyan |
-| `[!DECISION]` | Decision | deeper violet (`#7C3AED`) |
-| `[!COST]` | Cost | orange |
+| Marker | Title | Accent colour | Icon |
+|---|---|---|---|
+| `[!NOTE]` | Note | blue | circled "i" |
+| `[!TIP]` | Tip | green | light bulb |
+| `[!IMPORTANT]` | Important | violet | speech bubble with "!" |
+| `[!WARNING]` | Warning | amber | triangle with "!" |
+| `[!CAUTION]` | Caution | red | octagon with "!" |
+| `[!TLDR]` | TL;DR | teal | lightning bolt |
+| `[!DECISION]` | Decision | deep violet | circled check mark |
+| `[!COST]` | Cost | orange | price tag |
 
-Each title also has a fixed icon from `CALLOUT_TYPES`. An unknown type leaves the blockquote unchanged. Text after the marker on the same line stays in the body; there is no custom-title syntax.
+A callout has a tinted background, a strong left bar in its accent colour, and a title in that colour with its icon. Each theme sets the eight accent colours (`--callout-*` in `css/viewer.css`), and each title meets 4.5:1 on its own tint. The icons are drawn as inline SVG in the accent colour, so they look the same on every operating system. An unknown type leaves the blockquote unchanged. Text after the marker on the same line stays in the body; there is no custom-title syntax.
 
 ### Frontmatter dashboard
 
@@ -316,10 +328,10 @@ repos:
 | Field | Shape | How it renders |
 |---|---|---|
 | `status` | string | A pill that shows the original text. Its colour depends on the text: anything containing `ship` is green (shipped), `progress` is amber (in progress), `block` is red (blocked), and everything else is grey (draft). |
-| `date` | string | Plain text next to the status pill. Shown only when the dashboard itself is shown. |
-| `metrics` | list of `{label, value}` | A row of cards, each with a large value and a small label. |
-| `repos` | list of `{name, github}` | A badge per entry. With `github` set, the badge is a link that opens in a new tab and shows a star before the name. Without it, the badge is plain text. `name` defaults to `repo`. |
-| `abbreviations` | — | Parsed but currently has no effect. See [Abbreviation tooltips](#abbreviation-tooltips). |
+| `date` | string | Shown with a calendar icon next to the status pill. Shown only when the dashboard itself is shown. |
+| `metrics` | list of `{label, value}` | A grid of cards, each with a small label over a large value. |
+| `repos` | list of `{name, github}` | A rounded badge per entry. With `github` set, the badge is a link that opens in a new tab and shows a star before the name. Without it, the badge is plain text. `name` defaults to `repo`. |
+| `abbreviations` | map, or list of `KEY: value` | Every whole-word occurrence of a key gets a tooltip with its expansion. See [Abbreviation tooltips](#abbreviation-tooltips). |
 
 The section minimap, if present, goes directly below the dashboard.
 
@@ -327,14 +339,18 @@ The section minimap, if present, goes directly below the dashboard.
 
 The viewer also renders task lists, footnotes, definition lists, `==highlight==`, `~sub~`, `^sup^`, KaTeX math and HTML `<details>` blocks. These are covered in [rendering.md](rendering.md). Task-list checkboxes can be ticked, but the change is not written back to the file *(inferred: no handler exists)*.
 
+- **Figures.** An image alone in its paragraph (or a linked image alone in its paragraph) is centred, rounded and shadowed, with its title, or otherwise its alt text, as a caption underneath (`mdvCaptionImages`). Alt text that is only a file name is not shown. The paragraph stays a `<p>`, so comment anchors keep working, and a captioned linked image is no longer turned into a text-only link card (one with neither alt text nor a title still is).
+- **Numbers in tables.** A column whose every filled cell is a number (`1,234.5`, `-3`, `12%`, `$5`, `4.2k`) is right-aligned (`mdvAlignNumericColumns`), unless the markdown already set an alignment for it. Every table uses tabular figures, scrolls inside its own rounded box when it is wider or taller than the page allows, and keeps its header row in view while it scrolls.
+
 ### Printing
 
-The print stylesheet (`@media print`) hides the toolbar, table of contents, scroll buttons, progress bar, search and shortcuts overlays, read-aloud player, settings panel and lightbox, and sets the body text to 11pt.
+The print stylesheet (`@media print`) hides the toolbar, table of contents, minimap, scroll buttons, progress bar, search and shortcuts overlays, read-aloud player, settings panel, comments sidebar, lightbox, copy buttons and fold toggles, and sets the body text to 11pt. It always prints the light palette, even from Sepia or Dark, and keeps code blocks, diagrams, tables, callouts and figures whole across pages. Diagrams keep the colours they were drawn in.
 
 ### Narrow screens
 
 - At 900 px or less, the table of contents becomes an off-canvas overlay, toolbar button labels are hidden, and the breadcrumb and reading meta are hidden.
-- At 600 px or less, padding and heading sizes shrink.
+- At 760 px or less, the fold toggles sit before the heading text instead of in the left margin.
+- At 600 px or less, padding and heading sizes shrink, and the toolbar keeps its essentials: page width, focus mode, fold-all and the two save-location buttons (which need the File System Access API that phone browsers lack) are hidden. At 390 px nothing scrolls sideways (`tests/e2e/visuals.spec.mjs`).
 - When the comments sidebar is open on a screen 1100 px wide or less, it overlays the content instead of pushing it aside.
 
 ---
@@ -445,16 +461,10 @@ Notes:
 
 ## Current limitations
 
-These are behaviours of the code as of the initial import. Planned fixes belong in [roadmap.md](roadmap.md).
+These are behaviours of the code as of the initial import. Planned fixes belong in [roadmap.md](roadmap.md). Fixed since, and removed from this list: the copy button copying the header (roadmap issue 13), diagram nodes that never linked (14), frontmatter abbreviations (15), diagrams keeping their old colours after a theme change (9), the minimap stopping the title's fold toggle, and approximate expanded-view titles (16).
 
-- **Copy button copies extra text.** markdown-it wraps the `highlight` output in its own `<pre><code>`, so `copyCode` picks up the outer `<code>`, and its text starts with the language label and "Copy". I confirmed this by rendering a fence with the vendored markdown-it and the same wrapper in Node.
-- **Diagram click-to-section never attaches.** See [above](#clicking-a-diagram-node-to-jump-to-a-section).
-- **Frontmatter abbreviations do nothing.** See [Abbreviation tooltips](#abbreviation-tooltips).
-- **Changing theme does not recolour diagrams already on screen.** `setTheme` calls `renderMermaidDiagrams` again, but that only renders `.mermaid` elements not yet marked `.rendered`, and the original diagram source has already been replaced by the SVG.
 - **Paste opens pasted text as a new document.** Pasting more than 10 characters anywhere on the page outside a text field (and outside search) replaces the open document with the pasted text and unlinks the opened file, so a later comment save cannot write the pasted text over it. Pastes into text fields (comment boxes, settings) stay in the field. Until the initial import, a paste into a text field also replaced the document and kept the file linked; both were fixed and verified in Chrome.
-- **Collapsing an H1 can stop working.** When the minimap is inserted directly after the first H1 (three or more H2s, no dashboard), it sits between that H1 and its section container. `toggleSection` reads `heading.nextElementSibling` and returns without doing anything *(inferred)*. Fold-all is not affected.
 - **Math and dollar signs.** `renderMath` runs on the raw source before markdown-it, so two dollar signs on one line (including inside code) are treated as math *(inferred)*. Details are in [rendering.md](rendering.md).
-- **Diagram overlay titles are approximate.** Diagrams declared with `flowchart` are not titled "Flowchart", because the check only recognises `graph`. The checks run in a fixed order and `/pie/i` matches any source containing the letters "pie", so, for example, an ER or state diagram with a node named "Recipe" is titled "Pie Chart" (`openDiagramOverlay`).
 - **File-plus button outside Chromium.** With no document loaded, `mdvPickFile` shows a toast that mentions a "Download with comments" button that does not exist, then calls `document.getElementById('mdFile').click()`. The file input's id is `fileInput`, so this throws and no picker opens *(inferred)*.
 - **An empty `status:` or `date:` in frontmatter blanks the page.** `parseFrontmatter` turns a top-level key with no value into an empty list. `renderFrontmatterDashboard` then calls `status.toLowerCase()` (or `escapeHtml(date)`, when the dashboard is shown) on that list and throws a `TypeError`. The dashboard is built before `#mdBody.innerHTML` is assigned and outside the per-pass `try/catch` blocks, so `renderMarkdown` aborts and the document is not shown. I confirmed this by running `parseFrontmatter` and `renderFrontmatterDashboard` on their own in Node: `status: Draft` renders, while `status:` with no value throws `status.toLowerCase is not a function`.
 - **`#demo` loads without the commenting layer.** `loadFromUrl` calls `loadDemo` synchronously while the script is still running, before the commenting wrapper around `renderMarkdown` is installed near the end of the script. The comments button therefore stays hidden and right-click does not offer **Add comment** for the demo *(inferred)*.

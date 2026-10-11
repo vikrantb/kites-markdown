@@ -232,11 +232,57 @@ function buildLinksPanel(links) {
 // ============================================
 // Copy code
 // ============================================
-function copyCode(btn) {
-  const code = btn.closest('pre').querySelector('code');
-  navigator.clipboard.writeText(code.textContent).then(() => {
-    btn.textContent = 'Copied!'; btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+// Copies only the code (known issue 13). markdown-it wraps the highlight callback's output in its own
+// <pre><code>, so the block holds the header (language label and this button) and then the inner code element:
+// copy that inner element, never the outer one. Takes the button itself (what an inline handler used to pass) or finds it in
+// whatever a delegated listener passes (an element or an event, in any argument position).
+function copyCode(...args) {
+  let btn = null;
+  for (const a of args) {
+    if (a && a.nodeType === 1) { btn = a.closest('.copy-btn') || a; break; }
+    if (a && a.target && a.target.closest) { btn = a.target.closest('.copy-btn'); break; }
+  }
+  if (!btn || !btn.closest) return;
+  const block = btn.closest('pre') || btn.closest('.code-block');
+  if (!block) return;
+  const codes = [...block.querySelectorAll('code')].filter((c) => !c.contains(btn));
+  const code = block.querySelector('code.hljs') || codes[codes.length - 1];
+  if (!code) return;
+  const text = code.textContent.replace(/\n$/, ''); // the fence's closing newline is not part of the code
+  mdvCopyText(text).then(
+    () => mdvFlashCopyButton(btn, 'Copied!', 'copied'),
+    () => mdvFlashCopyButton(btn, 'Copy failed', 'copy-failed'),
+  );
+}
+
+const mdvCopyResetTimers = new WeakMap();
+function mdvFlashCopyButton(btn, text, cls) {
+  clearTimeout(mdvCopyResetTimers.get(btn));
+  btn.textContent = text;
+  btn.classList.remove('copied', 'copy-failed');
+  btn.classList.add(cls);
+  mdvCopyResetTimers.set(btn, setTimeout(() => {
+    btn.textContent = 'Copy';
+    btn.classList.remove('copied', 'copy-failed');
+  }, 1600));
+}
+
+// The async clipboard needs a secure context (http://localhost and file:// count); otherwise fall back to a
+// hidden textarea and the legacy copy command.
+function mdvCopyText(text) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    ta.remove();
+    if (ok) resolve(); else reject(new Error('copy refused'));
   });
 }
 

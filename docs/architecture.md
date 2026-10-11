@@ -93,6 +93,15 @@ the end of `<body>` runs. [dependencies.md](dependencies.md) lists the versions.
 
 ### 2.2 `<style>` (lines 34–1482)
 
+> [!NOTE]
+> Since the visual-system change (2026-10-10), `css/viewer.css` is organised in this order: tokens
+> for light, sepia and dark; reset and base (focus ring, scrollbars); toolbar; table of contents and
+> layout; welcome screen; settings; reading typography; code blocks and syntax colours; tables;
+> figures and lightbox; details, definition lists, footnotes and math; callouts; frontmatter
+> dashboard; minimap; diagrams and the expanded view; link cards, tooltip and panel; floating UI
+> (scroll buttons, search, shortcuts, read-aloud player); focus mode; motion; comments; print;
+> narrow screens. The table below is the pre-split layout, kept for orientation.
+
 | Lines | Region |
 |---|---|
 | 35–93 | `:root` design tokens: backgrounds, text, borders, accents, shadows, layout sizes (`--toc-width`, `--content-max-width`, `--toolbar-height`, `--tts-height`), font stacks, `--reading-size`/`--reading-lh`, radii, transitions |
@@ -256,7 +265,11 @@ Everything below runs in this order on page load.
 | `md` | 1772 | The markdown-it instance, used by `renderMarkdown` (`md.render`), the `highlight` callback and the fence override (`md.utils.escapeHtml`) |
 | `defaultFence` | 1798 | The fence override |
 | `chevronSvg` | 2270 | `addSectionToggles` |
-| `diagramZoomLevel`, `diagramFitMode` | 2481–2482 | `openDiagramOverlay`, `diagramZoom`, `diagramFitToggle` |
+| `diagramZoomLevel`, `diagramFitMode` | 2481–2482 | The expanded view's scale in percent (shown in `#diagramZoomLabel`) and whether it follows "fit to screen". Written by `mdvApplyView` and the fit, zoom and pan paths in `js/diagram-overlay.js` |
+| `mdvView` | `js/diagram-overlay.js` | The expanded view's state: the diagram shown, scale, translation, natural size, active pointers and gesture, animation frame, the element to give focus back to |
+| `mdvMermaidQueue`, `mdvMermaidGeneration`, `mdvMermaidSeq` | `js/mermaid.js` | Render passes run one after another; a newer request stops an older pass; render ids are never reused |
+| `MDV_DIAGRAM_TITLES`, `MDV_DIAGRAM_TOKENS` | `js/mermaid.js` | Mermaid's `diagramType` → title; palette name → `--diagram-*` custom property |
+| `mdvMinimapObserver` | `js/enhancements.js` | The minimap's `IntersectionObserver`, disconnected before the next render builds a new one |
 | `LINK_TYPES` | 2573 | `enhanceLinks`, `showLinkTooltip`, `buildLinksPanel` |
 | `tooltipHideTimer` | 2675 | `showLinkTooltip`, `hideLinkTooltip`, tooltip `mouseenter` |
 | `CALLOUT_TYPES` | 2817 | `transformCalloutBlocks` (NOTE, TIP, IMPORTANT, WARNING, CAUTION, TLDR, DECISION, COST) |
@@ -367,8 +380,8 @@ passes, and the code-block markup.
 | `#dropZone` `dragenter`/`dragover`/`dragleave`/`drop` | 1967–1970 | Toggles `.drag-over` |
 | `document.body` `drop` | 1972 | Reads the first file if its name matches `.md`, `.markdown`, `.mdx`, `.txt` or `.text`, via `readFile` |
 | `document` `paste` | 1979 | Ignored while the search overlay is open or when the paste target is an `input`, `textarea`, `select` or content-editable element. Otherwise pasted text longer than 10 characters becomes the document: `mdvFileHandle = null`, then `renderMarkdown(text, 'Pasted Content')` and `updateUrl('pasted')` |
-| `document` `keydown` | 2556 | Escape closes the diagram overlay |
-| `#diagramBody` `wheel` (not passive) | 2564 | Zooms the overlay by ±25% per wheel event |
+| `document` `keydown` (capture phase) | `js/diagram-overlay.js` | While the expanded view is open: Esc closes it, `+` `=` `-` `_` zoom, `0` fits, `1` shows actual size, the arrow keys pan, Tab stays inside the dialog. These keys do not reach the page's other shortcuts |
+| `#diagramBody` `wheel` (not passive), `pointerdown`/`move`/`up`/`cancel` | `js/diagram-overlay.js`, attached on first open | Wheel and ctrl+wheel (trackpad pinch) zoom around the pointer; one pointer pans; two pointers pinch-zoom; a click without a drag on a linked node goes to its section |
 | `#linkTooltip` `mouseenter`/`mouseleave` | 2717–2718 | Keeps the tooltip open while it is hovered |
 | `window` `beforeunload` | 3227 | Stops the keep-alive timer and cancels speech |
 | `window` `scroll` (passive) | 3280 | Progress bar width, FAB visibility |
@@ -381,15 +394,15 @@ passes, and the code-block markup.
 
 | Attached in | Element and event | Behaviour |
 |---|---|---|
-| `renderMermaidDiagrams` | expand button `onclick`, wrapper `click` | `openDiagramOverlay(wrapper)` |
+| `renderMermaidDiagrams` (`mdvMakeDiagramExpandable`, once per wrapper) | expand button `click`, wrapper `click` | `openDiagramOverlay(wrapper)`, except on a node that links to a section |
 | `addSectionToggles` | chevron `onclick` | `toggleSection` |
 | `buildToc` | TOC link `onclick` | Smooth-scrolls to the heading and closes the mobile TOC |
 | `setupScrollSpy` | `IntersectionObserver` on headings | Active TOC link and breadcrumb text |
-| `buildSectionMinimap` | segment `onclick`, `IntersectionObserver` on `h2` | Scroll to section, active segment |
+| `buildSectionMinimap` | segment `click`, `IntersectionObserver` on `h2` (the previous render's observer is disconnected) | Scroll to section; current and already-read segments |
 | `setupImageLightbox` | each `img` `click` | Opens the lightbox |
 | `enhanceLinks` | each link `mouseenter`/`mouseleave` | `showLinkTooltip` / `hideLinkTooltip` |
 | `buildLinksPanel` | anchor-type items `click` | Scrolls to the target and closes the panel |
-| `setupMermaidClickToSection` | matching SVG nodes `click` | Scrolls to and flashes the matching heading |
+| `mdvLinkDiagramNodes` (from `renderMermaidDiagrams` after each diagram is drawn, and `setupMermaidClickToSection`) | wrapper `click` and `keydown`, delegated to `[data-mdv-section]` nodes | Scrolls to the heading, unfolding collapsed sections, focuses and flashes it (`mdvJumpToSection`) |
 | `loadFromUrl` | `#dropZone2` drag events | `.drag-over` styling only (the body `drop` listener does the read) |
 | `mdvAttachContextMenu` | `#mdBody` `contextmenu` (once) | Custom "Add comment" menu. Shift+right-click keeps the native menu. |
 | `mdvShowContextMenu` | menu button `onclick`, a one-shot `document` `mousedown` named `close` | Opens the add popup, or dismisses the menu |
@@ -438,7 +451,11 @@ The table comes from all five `keydown` sites: the handlers at lines 2545, 3296 
 | `?` (no Mod) | Same | Toggle the shortcuts overlay | 3296 |
 | Escape | Outside inputs | Close search, shortcuts overlay and lightbox | 3296: `closeSearch`, `closeShortcuts`, `closeLightbox` |
 | Escape | Inside any input or textarea | Close search and shortcuts overlay | 3296 (early-return branch) |
-| Escape | Anywhere, while the diagram overlay is open | Close the diagram overlay | 2556: `closeDiagramOverlay` |
+| Escape | Anywhere, while the diagram overlay is open | Close the diagram overlay | `js/diagram-overlay.js`: `closeDiagramOverlay` |
+| `+` (`=`) / `-` (`_`) | While the diagram overlay is open | Zoom in / out by 25% around the centre | `js/diagram-overlay.js`: `diagramZoom` |
+| `0` / `1` | While the diagram overlay is open | Fit to screen / actual size | `js/diagram-overlay.js`: `mdvDiagramFit`, `mdvDiagramActualSize` |
+| Arrow keys (Shift: further) | While the diagram overlay is open | Pan | `js/diagram-overlay.js` |
+| Enter or Space | On a focused diagram node that links to a section | Go to that section | `js/enhancements.js`: `mdvJumpToSection` |
 | Mod+Shift+C | **Anywhere, including inputs** | Toggle the comment sidebar | 4169: `mdvToggleSidebar` |
 | Mod+S (also Mod+Shift+S) | Anywhere, once a document is loaded | Save now, prompting for a location if needed | 4169: `mdvSaveFile({ allowPrompt: true })` |
 | ArrowDown / ArrowUp | Search input | Move the result focus | `handleSearchKeys` |
@@ -448,7 +465,7 @@ The table comes from all five `keydown` sites: the handlers at lines 2545, 3296 
 | Mod+Enter | Add-comment popup textarea | Save the comment | `mdvShowAddPopup` (clicks `.mdv-add-save`) |
 | Escape | Add-comment popup textarea | Cancel the popup | `mdvShowAddPopup` |
 
-Mouse gestures: the wheel over the diagram overlay zooms (`diagramZoom`). Right-click on a block in
+Mouse gestures: in the diagram overlay, drag pans and the wheel (or a trackpad or touch pinch) zooms around the pointer (`mdvZoomAt`). Right-click on a block in
 `#mdBody` opens the comment menu (`mdvAttachContextMenu`), and Shift+right-click keeps the browser
 menu. Selecting 3 or more characters inside `#mdBody` shows the "Comment" popover
 (`mdvHandleSelection`).
@@ -510,29 +527,31 @@ directory handle used for saving.
 
 - **Attribute.** `setTheme(theme)` sets `document.documentElement` `data-theme` to `light`, `sepia`
   or `dark`, and persists it as `mdv-theme`. The markup default is `data-theme="light"` (line 2).
-- **Tokens.** All colours, shadows, fonts and sizes are CSS custom properties on `:root` (35–93).
-  `[data-theme="dark"]` (95–130) and `[data-theme="sepia"]` (132–162) override the colour and
-  shadow tokens only (dark overrides colours and shadows; sepia overrides colours only, so it keeps
-  the light shadows; neither overrides `--bg-tooltip`). A few components add their own `[data-theme="dark"] .x` rules: `mark` (819),
-  frontmatter status badges (932–934), callouts (998), comment chip (1234), anchor highlight
-  (1239), agent comments (1314). Sepia has no component-level overrides.
+- **Tokens.** All colours, shadows, fonts and sizes are CSS custom properties on `:root` (the light
+  theme). `:root[data-theme="sepia"]` and `:root[data-theme="dark"]` override every colour and
+  shadow token: surfaces, text, lines, accent, callout accents (`--callout-*`), status pills,
+  highlights, syntax colours (`--syntax-*`) and diagram colours (`--diagram-*`). The blocks are
+  scoped to the root because the theme menu's own buttons carry `data-theme` too. No component
+  has theme-specific rules: a theme is one token block. Text tokens meet WCAG AA on the surfaces
+  they are used on, which `tests/e2e/visuals.spec.mjs` measures in all three themes.
 - **No system preference.** The file contains no `prefers-color-scheme` query. The theme is always
   the stored value or `light`.
 - **Runtime tokens.** `applyFontSize` sets `--reading-size` and `--reading-lh`. `ttsToggle` and
   `ttsStop` set `--tts-height` (`64px` or `0px`), which `.layout` reserves as bottom padding.
 - **highlight.js stylesheets.** `setTheme` sets `#hljs-light.disabled = (theme === 'dark')` and
-  `#hljs-dark.disabled = (theme !== 'dark')`. Sepia therefore uses the light GitHub style.
-- **Mermaid.** `renderMermaidDiagrams` calls
-  `mermaid.initialize({ startOnLoad: false, theme: currentTheme === 'dark' ? 'dark' : 'default', securityLevel: 'loose' })`
-  on every call. `setTheme` schedules `renderMermaidDiagrams` 100 ms later when a document is
-  loaded. That function only selects `.mermaid:not(.rendered)`, and a rendered diagram's source
-  text has already been replaced by its SVG. **Already-rendered diagrams therefore keep their old
-  theme until the document is rendered again** (inferred). Sepia uses Mermaid's `default` theme.
+  `#hljs-dark.disabled = (theme !== 'dark')`. The viewer's `--syntax-*` colours override both, so
+  each theme, sepia included, has its own code palette.
+- **Mermaid.** Each render pass initialises Mermaid's `base` theme with `themeVariables` read from
+  the current theme's `--diagram-*` tokens (resolved to hex) and a `themeCSS`. `setTheme` schedules
+  `renderMermaidDiagrams` 100 ms later when a document is loaded, and every diagram whose palette
+  differs is redrawn from its saved source (`data-mdv-source`), including an open expanded view.
+  See [rendering.md](rendering.md#mermaid-diagrams).
 - **KaTeX** output takes its colour from the surrounding text and has no theme-specific code.
 
-To add a theme: add a `[data-theme="name"]` token block, a swatch button in `#themeDD` that calls
-`setTheme('name')`, decide which highlight.js stylesheet it uses (the `disabled` logic in
-`setTheme` is binary), and decide which Mermaid theme it maps to in `renderMermaidDiagrams`.
+To add a theme: add a `:root[data-theme="name"]` token block that sets every colour token (copy the
+dark or sepia block), a swatch button in `#themeDD` that calls `setTheme('name')` (and its swatch
+colours in `css/viewer.css`), and decide whether its `darkMode` flag for Mermaid is true
+(`mdvDiagramPalette` reads it from `currentTheme`). Diagrams, code and callouts follow the tokens.
 
 ---
 
@@ -548,19 +567,20 @@ how Mermaid is wired today. Math is wired differently (section 10.2), and that d
    returns `<div class="mermaid-wrapper"><pre class="mermaid" id="mermaid-<tokenIndex>">ESCAPED SOURCE</pre></div>`.
    Every other fence falls through to `defaultFence`, which calls the `highlight` callback and
    wraps its output in `<pre><code class="language-x">`.
-3. **Post-render pass.** `renderMermaidDiagrams` (2233) runs from `renderMarkdown`. It returns if the
-   library global is missing, selects `.mermaid:not(.rendered)`, calls `mermaid.render(id + '-svg', code)`,
-   swaps in the SVG, adds `.rendered`, and adds an expand button plus a wrapper click handler that
-   both call `openDiagramOverlay(wrapper)`. On error it writes an inline `Mermaid error: ...` block
-   built with `escapeHtml`.
+3. **Post-render pass.** `renderMermaidDiagrams` (`js/mermaid.js`) runs from `renderMarkdown`. It
+   returns if the library global is missing, saves each new diagram's source in `data-mdv-source`
+   synchronously, then queues a pass that draws every diagram not yet drawn in the current palette
+   with `mermaid.render` under a fresh id, swaps in the SVG, records `data-diagram-type`, and adds an
+   expand button plus a wrapper click handler that both call `openDiagramOverlay(wrapper)`. On error
+   it shows the reason and the source, built with `textContent`. [rendering.md](rendering.md#mermaid-diagrams)
+   has the whole lifecycle.
 4. **Overlay.** `openDiagramOverlay` clones `wrapper.querySelector('.mermaid svg') || wrapper.querySelector('pre svg')`
-   into the zoomable overlay. It also guesses a title (Flowchart, Sequence Diagram, and so on) by
-   running regular expressions over the `.mermaid` element's `textContent`. By then that element
-   holds the rendered SVG, not the source, so the regexes see label and embedded style text and the
-   title is unreliable (inferred).
+   into the pan-and-zoom view, giving the copy its own ids, and titles it from `data-diagram-type`
+   (the type Mermaid reported) plus the diagram's own title.
 5. **Integrations:** `buildTtsSections` treats `.mermaid-wrapper` as a diagram (it speaks a
-   `<!-- narrate: -->` comment if one precedes it, otherwise skips it), `setupMermaidClickToSection`
-   links node labels to headings, and `setTheme` re-calls the render pass.
+   `<!-- narrate: -->` comment if one precedes it, otherwise skips it), `mdvLinkDiagramNodes` links
+   node labels to headings after each diagram is drawn, and `setTheme` re-calls the render pass,
+   which redraws every diagram from its source.
 6. **CSS:** `.mermaid-wrapper` and the overlay styles (821–909).
 
 ### 10.2 How math is wired (and why it is not a fence renderer)
@@ -602,13 +622,13 @@ single-dollar spans (inline, within one line) with
    `typeof lib === 'undefined'`, select `.newlang:not(.rendered)`, render each element, add
    `.rendered`, and show errors inline with `escapeHtml`. **Keep the source** (for example in
    `el.dataset.source`) before replacing the element's content. Without it you cannot re-render on a
-   theme change, which is the gap Mermaid has today.
+   theme change; Mermaid keeps its source in `data-mdv-source`.
 4. **Call it from `renderMarkdown`** in its own `try { ... } catch (e) { console.warn(...) }` in the
    post-processing list. If it is async, remember the passes after it run before it finishes. Any
    pass that needs the rendered SVG must be called from inside your function after the `await`.
-   `setupMermaidClickToSection` is the cautionary example: it runs synchronously right after
-   `renderMermaidDiagrams` starts, before any SVG exists, so it probably never finds a node to wire
-   (inferred; the vendored Mermaid 11.4.1 `render` is async).
+   `setupMermaidClickToSection` was the cautionary example: it ran synchronously right after
+   `renderMermaidDiagrams` started, before any SVG existed, so it never linked a node (roadmap
+   issue 14). Node linking now runs from inside the Mermaid pass, as each diagram is drawn.
 5. **Theme.** If the library has themes, read `currentTheme` in your pass and call the pass from
    `setTheme`, re-rendering from the saved source rather than only `:not(.rendered)` elements.
 6. **Expand overlay (optional).** `openDiagramOverlay(wrapper)` works with any wrapper whose SVG sits
@@ -680,12 +700,28 @@ template string and is not code. Anonymous handlers follow the table.
 
 | Function | Line | One line |
 |---|---|---|
-| `renderMermaidDiagrams()` | 2233 | Async: renders unrendered `.mermaid` blocks and adds expand affordances |
-| `openDiagramOverlay(wrapper)` | 2484 | Clones the SVG into the overlay, resets zoom, guesses a title |
-| `closeDiagramOverlay()` | 2526 | Hides the overlay |
-| `diagramZoom(dir)` | 2530 | ±25% zoom, clamped to 25–400%, leaves fit mode |
-| `diagramFitToggle()` | 2538 | Switches between fit-to-screen and 100% |
-| `setupMermaidClickToSection()` | 2948 | Maps SVG node text to heading slugs or words and adds scroll-on-click |
+| `renderMermaidDiagrams()` | `js/mermaid.js` | Saves new sources, queues a pass that draws every diagram not drawn in the current palette; returns a promise |
+| `mdvRenderMermaidPass(generation)` | `js/mermaid.js` | One pass: palette, web font, `mermaid.initialize`, then each diagram in order |
+| `mdvRenderDiagram(el, palette)` | `js/mermaid.js` | Draws one diagram; on success records its type, makes it expandable, links its nodes, refreshes an open view |
+| `mdvShowDiagramError(el, err, source)` | `js/mermaid.js` | The "could not be drawn" box with the reason and the source |
+| `mdvMakeDiagramExpandable(wrapper)` | `js/mermaid.js` | Expand button and wrapper click, once per wrapper |
+| `mdvDiagramPalette()` | `js/mermaid.js` | The current theme's `--diagram-*` tokens as hex, with a key that changes with the palette |
+| `mdvColorHex(value)` | `js/mermaid.js` | Any CSS colour → `#rrggbb` (hex directly, anything else through a probe element and a one-pixel canvas) |
+| `mdvMermaidConfig(palette, width)` | `js/mermaid.js` | The `mermaid.initialize` options: `base` theme variables, per-diagram settings, `themeCSS` |
+| `mdvMermaidThemeCss(palette)` | `js/mermaid.js` | The CSS Mermaid embeds in each SVG (shapes, labels, section colours) |
+| `mdvDiagramContentWidth()` | `js/mermaid.js` | The column width a diagram gets, for Gantt charts |
+| `mdvDiagramTypeTitle(type)` | `js/mermaid.js` | `diagramType` → readable title |
+| `openDiagramOverlay(wrapper)` | `js/diagram-overlay.js` | Clones the SVG into the expanded view, titles it, fits it, moves focus into the dialog |
+| `mdvRefreshDiagramOverlay(wrapper)` | `js/diagram-overlay.js` | After a redraw: swaps the new drawing into an open view, keeping zoom and position |
+| `mdvZoomAt(factor, x, y, animate)` | `js/diagram-overlay.js` | Zooms keeping the point under (x, y) still |
+| `mdvDiagramFit(animate)`, `mdvDiagramActualSize(animate)` | `js/diagram-overlay.js` | Fit to the screen; 100% |
+| `mdvApplyView()` | `js/diagram-overlay.js` | Draws the view: the SVG at its scaled size, the container translated, the label |
+| `closeDiagramOverlay()` | `js/diagram-overlay.js` | Hides the view and gives focus back to what opened it |
+| `diagramZoom(dir)` | `js/diagram-overlay.js` | ±25% zoom around the centre, clamped to 10–1000%, leaves fit mode |
+| `diagramFitToggle()` | `js/diagram-overlay.js` | Fit to screen, or actual size when already fitted |
+| `setupMermaidClickToSection()` | `js/enhancements.js` | Links the nodes of every diagram already drawn (`mdvLinkDiagramNodes`) |
+| `mdvLinkDiagramNodes(wrapper)` | `js/enhancements.js` | A node whose label slug equals a heading's slug becomes a focusable link to it |
+| `mdvJumpToSection(id)` | `js/enhancements.js` | Unfolds, scrolls to, focuses and flashes a heading |
 
 ### 11.5 Structure and navigation
 
@@ -697,7 +733,7 @@ template string and is not code. Anonymous handlers follow the table.
 | `buildToc()` | 2321 | Fills `#tocList` from `h1`–`h6` and hides the TOC if there are no headings |
 | `toggleToc()` | 2353 | Mobile slide-in at 900px or less, otherwise hide/show plus full width |
 | `setupScrollSpy()` | 2368 | `IntersectionObserver` → active TOC link and breadcrumb |
-| `buildSectionMinimap()` | 2855 | A pill bar of `h2`s (only when there are 3 or more), inserted after the dashboard or first `h1` |
+| `buildSectionMinimap()` | `js/enhancements.js` | A bar of `h2` segments (only when there are 3 or more), after the dashboard or at the top of the first `h1`'s section; labels drawn by CSS from `data-label` |
 
 ### 11.6 Search
 
@@ -724,9 +760,14 @@ template string and is not code. Anonymous handlers follow the table.
 | `copyLinkUrl(e)` | 2720 | Copies the tooltip's href to the clipboard |
 | `toggleLinksPanel()` | 2731 | Shows or hides the links panel |
 | `buildLinksPanel(links)` | 2735 | Groups links by type, de-duplicates by href |
-| `copyCode(btn)` | 2804 | Copies `pre`'s first `code` element's text. That is the outer `code` markdown-it adds around the `highlight` output, so the copied text also includes the language label and the word "Copy" (see [rendering.md](rendering.md)). |
-| `transformCalloutBlocks()` | 2828 | `> [!TYPE]` blockquote → `.callout.callout-type` with a title |
-| `applyAbbreviationTooltips(meta)` | 2899 | Wraps frontmatter `abbreviations` keys in `<abbr title>`. This is effectively inert. `parseFrontmatter` turns an indented `abbreviations:` map into `[]` (checked by running it in Node), and this function returns early for arrays and strings. See [rendering.md](rendering.md). |
+| `copyCode(...args)` | `js/links.js` | Copies the inner `code.hljs` element's text (only the code), finding the button in whatever it is passed (the button, or an event) |
+| `mdvCopyText(text)`, `mdvFlashCopyButton(btn, text, cls)` | `js/links.js` | Clipboard with a legacy fallback; the button's "Copied" / "Copy failed" state |
+| `transformCalloutBlocks()` | `js/enhancements.js` | `> [!TYPE]` blockquote → `.callout.callout-type` with an icon and a title. The first post-processing pass, so it also runs `mdvCaptionImages` and `mdvAlignNumericColumns` |
+| `mdvCaptionImages(body)` | `js/enhancements.js` | An image alone in its paragraph becomes a captioned figure (`p.mdv-figure`) |
+| `mdvAlignNumericColumns(body)` | `js/enhancements.js` | Right-aligns table columns whose cells are all numbers (`.mdv-num`) |
+| `mdvHeadingText(h)` | `js/enhancements.js` | A heading's own words, without the fold toggle and the `#` permalink |
+| `applyAbbreviationTooltips(meta)` | `js/enhancements.js` | Wraps frontmatter `abbreviations` keys in `<abbr class="abbr-tooltip" title>`, outside code, math, diagrams and existing `<abbr>` |
+| `mdvFrontmatterAbbreviations(meta)` | `js/enhancements.js` | The abbreviation map from either YAML shape; the indented map is read from `rawMarkdown`'s frontmatter, only when it parses to the same meta |
 
 ### 11.8 Read-aloud
 

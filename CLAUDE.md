@@ -20,7 +20,7 @@ keep it that way: no product names, private paths or project-specific examples.
 | `extensions/github-html-viewer/` | Chrome extension that renders `.html` blobs on GitHub. Read its security model before changing the iframe sandbox. |
 | `legacy/` | The superseded first viewer. Reference only; do not develop it. |
 | `docs/` | The documentation. Start with `docs/architecture.md`; the plan is `docs/roadmap.md`. |
-| `samples/` | Fixtures: `kitchen-sink.md` exercises every supported syntax, `commented.md` the comment format, and `repro-*.md` files reproduce open bugs. |
+| `samples/` | Fixtures: `kitchen-sink.md` exercises every supported syntax, `diagram-gallery.md` every Mermaid diagram type, `commented.md` the comment format, and `repro-*.md` files reproduce open bugs. |
 | `scripts/check-js.mjs` | $0 syntax check of every `js/` script, parsed as a classic script (`pnpm check`). `scripts/check-inline-js.py` now only checks the legacy viewer. |
 
 ## Run

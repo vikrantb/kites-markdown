@@ -174,28 +174,30 @@ where `N` is the token index. ` ```Mermaid ` or ` ```mermaid title ` are not mat
 
 ### Mermaid diagrams
 
-**Function:** `renderMermaidDiagrams()`; library mermaid 11.4.1.
+**Functions:** `renderMermaidDiagrams()` and its helpers in `js/mermaid.js`; library mermaid 11.4.1.
 
-**Initialisation.** The function returns at once if the `mermaid` global is missing or if there is no unrendered diagram. Otherwise, on every call, before rendering, it calls:
+**Initialisation.** When `js/mermaid.js` loads it calls `mermaid.initialize({ startOnLoad: false, securityLevel: 'strict' })`. By default Mermaid draws every `.mermaid` element itself on the window `load` event, in its own theme; the viewer draws them instead. Each render pass then initialises Mermaid with:
 
-```js
-mermaid.initialize({ startOnLoad: false, theme: t, securityLevel: 'loose' });
-```
-
-where `t` is `'dark'` when the viewer theme is `dark` and `'default'` otherwise (so the `light` and `sepia` themes both use mermaid's default theme). `startOnLoad: false` means mermaid never scans the page by itself; the viewer drives every render.
+- `theme: 'base'` and `themeVariables` read from the current theme's `--diagram-*` custom properties in `css/viewer.css` (node, border, text, line, cluster, note, label background, accent, and an eight-colour series for pie slices, mind-map branches, timelines, journeys, git branches and charts). Mermaid's colour maths only accepts hex, so each token is resolved to hex first (`mdvColorHex`);
+- `themeCSS`, Mermaid's own per-SVG stylesheet, for what the variables cannot reach: rounded nodes, line caps, label backgrounds, section colours, title sizes. Anything that changes the size of text is set there, because Mermaid measures labels before the SVG reaches the page, with only its own styles applied;
+- `fontFamily` Inter, also for the sequence diagram's actor, message and note fonts, so text is measured in the font it is drawn in;
+- `flowchart: { curve: 'basis', padding: 18, nodeSpacing: 44, rankSpacing: 56 }`, `sequence: { wrap: true, mirrorActors: false, … }`, and a Gantt width equal to the page column (`gantt.useWidth`), because Mermaid otherwise sizes a Gantt chart to its hidden render container (the whole window) and the result is shrunk to the column with unreadably small text;
+- `securityLevel: 'strict'`: labels are sanitised and click directives are ignored;
+- `suppressErrorRendering: true`, so a syntax error does not leave Mermaid's own error graphic at the end of `<body>`.
 
 **Lifecycle.**
 
-1. Select every `.mermaid` element that does not yet have the class `rendered`. If there are none, stop.
-2. For each one, in document order, read the diagram source from `el.textContent` and `await mermaid.render(id + '-svg', code)`.
-3. On success: replace the element's content with the returned SVG, add the class `rendered`, and (once per wrapper) prepend an expand button and make the whole wrapper clickable. Both open the diagram overlay (`openDiagramOverlay`): a cloned SVG with zoom from 25% to 400% in 25% steps (`diagramZoom`), mouse-wheel zoom, a fit toggle (`diagramFitToggle`) and Escape to close.
-4. On failure: replace the element's content with a red `<pre>` reading `Mermaid error: <message>`. The class `rendered` is not added.
+1. When the pass is requested, every new `.mermaid` element's text is saved in `data-mdv-source`, synchronously, before anything else can draw it.
+2. Passes run one after another. A pass reads the palette, waits for the Inter web font when it is still loading (at most 1.5 s; if it arrives later, every diagram is drawn again in it; offline there is nothing to wait for), and draws every diagram whose `data-mdv-palette` differs from the current palette, in document order. A newer request (a theme change, a new document) stops an older pass at its next diagram.
+3. Each diagram is drawn with `mermaid.render` under a fresh id (`mdv-mermaid-N`). Mermaid removes any element that already has the id it is given, so reusing the old id would make the diagram on screen disappear while its replacement is drawn.
+4. On success the SVG replaces the element's content and gets the class `mdv-diagram`; the element gets `rendered`, and the wrapper gets `data-diagram-type` (the `diagramType` Mermaid returns) and `data-diagram-label` (its readable name, shown on the card). The first time, the wrapper also gets the expand button and its click handler (`mdvMakeDiagramExpandable`). Then nodes are linked to sections (`mdvLinkDiagramNodes`, in `js/enhancements.js`), and an open expanded view of the same diagram is redrawn (`mdvRefreshDiagramOverlay`).
+5. On failure the element gets the class `mermaid-error` and shows "This diagram could not be drawn", Mermaid's reason and the source, built with `textContent` only.
 
-The overlay title comes from a regex test on the diagram source, checked in this order: `sequenceDiagram` gives "Sequence Diagram", `graph TD|TB|LR|RL|BT` gives "Flowchart", then `classDiagram`, `gantt`, `pie`, `erDiagram`, `stateDiagram`; otherwise "Diagram". Diagrams that start with the newer `flowchart` keyword are titled "Diagram". Every test is a case-insensitive substring test, so a diagram not caught by an earlier test (for example a `flowchart`, `erDiagram` or `stateDiagram`) whose text contains the letters `pie` (as in the word "copied") is titled "Pie Chart" (inferred from the regex order).
+**Theme changes.** `setTheme` calls `renderMermaidDiagrams` 100 ms later. Every diagram's palette key now differs, so every diagram, including any that failed, is drawn again from its saved source in the new palette. The SVG on screen stays until its replacement is ready, so nothing jumps.
 
-**Re-render on theme change.** `setTheme` schedules `renderMermaidDiagrams` 100 ms later when a document is loaded. Because step 1 skips elements that already have `rendered`, diagrams that rendered successfully are **not** redrawn: after switching between light and dark, existing diagrams keep the old theme until the document is rendered again (inferred from the selector; not observed in a browser). Diagrams that failed are retried, but their text content is now the error message, so the retry fails with a new error about that text (inferred).
+**Titles.** The expanded view is titled from `data-diagram-type`: Flowchart, Sequence diagram, Class diagram, State diagram, Entity relationship diagram, Gantt chart, Pie chart, User journey, Mind map, Timeline, Git graph, Quadrant chart, XY chart, Requirement diagram, Sankey diagram, Block diagram, Packet diagram, Architecture diagram, Kanban board, C4 diagram; anything else is "Diagram". When the SVG carries its own title (a pie or Gantt `title`, or `accTitle`) it is added: "Pie chart · Estimated effort by area".
 
-**Timing.** `renderMarkdown` calls `renderMermaidDiagrams()` without awaiting it. The next post-processors run while the first diagram is still rendering. `setupMermaidClickToSection`, which looks for `.mermaid-wrapper svg .node` elements, therefore runs before any diagram SVG is in the page and binds nothing on the initial render (inferred from the control flow; not observed in a browser). The intended behaviour is: a node whose text, slugified, equals a heading's slug, or equals a single word longer than three letters from a heading, scrolls to that heading on click.
+**Linking nodes to sections.** `renderMarkdown` still calls `setupMermaidClickToSection` synchronously, before any diagram exists; it links whatever is already drawn. Linking for real happens in step 4, as each diagram is drawn: a node (`g.node`, `g.mindmap-node`) whose label, slugified, equals a heading's slugified text links to that heading. See [features.md](features.md#clicking-a-diagram-node-to-jump-to-a-section).
 
 ### Code highlighting
 
@@ -206,7 +208,9 @@ The overlay title comes from a regex test on the diagram source, checked in this
 3. Otherwise, or if highlighting throws, the code is HTML-escaped and shown without colouring. There is no automatic language detection (`highlightAuto` is never called).
 4. The hook returns a header (`<div class="code-header">` with the label and a Copy button) followed by `<code class="hljs language-...">`.
 
-Because the returned string does not start with `<pre`, markdown-it wraps it in its own `<pre><code class="language-...">`. The final markup is a `<code>` element nested inside another `<code>`, with the header `<div>` inside the outer one (checked offline). `copyCode` copies `btn.closest('pre').querySelector('code').textContent`, which is the **outer** element, so the copied text starts with the language label and the word "Copy" before the code (inferred from the DOM structure).
+Because the returned string does not start with `<pre`, markdown-it wraps it in its own `<pre><code class="language-...">`. The final markup is a `<code>` element nested inside another `<code>`, with the header `<div>` inside the outer one (checked offline). `copyCode` copies the **inner** `code.hljs` element's text, without the fence's closing newline, so the clipboard holds only the code (`tests/e2e/visuals.spec.mjs`). The stylesheet lays out the same markup as a header bar over a scrolling code area.
+
+The colours come from each theme's `--syntax-*` tokens in `css/viewer.css`, which override the vendored highlight.js stylesheets (those still load and still switch between `github` and `github-dark` with the theme).
 
 Languages in the vendored highlight.js build (from `hljs.listLanguages()`, checked offline): `bash`, `c`, `cpp`, `csharp`, `css`, `diff`, `go`, `graphql`, `ini`, `java`, `javascript`, `json`, `kotlin`, `less`, `lua`, `makefile`, `markdown`, `objectivec`, `perl`, `php`, `php-template`, `plaintext`, `python`, `python-repl`, `r`, `ruby`, `rust`, `scss`, `shell`, `sql`, `swift`, `typescript`, `vbnet`, `wasm`, `xml`, `yaml`. `toml` works as an alias of `ini`. Notably absent: `dockerfile`, `powershell`, `hcl` (checked offline with `hljs.getLanguage`).
 
@@ -246,9 +250,9 @@ There are two mechanisms:
 | Mechanism | Source syntax | Status |
 |---|---|---|
 | markdown-it-abbr plugin | a line `*[ABBR]: Full text` anywhere in the document | Works. Whole-word occurrences in text become `<abbr title="...">`. |
-| `applyAbbreviationTooltips(meta)` | an `abbreviations` map in the frontmatter | Does not work as written. `parseFrontmatter` turns `abbreviations:` into an empty list and ignores the indented `KEY: value` lines (there is no list object to attach them to), and `applyAbbreviationTooltips` returns early for any list. Writing the entries as `- KEY: value` also yields a list. (Checked offline.) |
+| `applyAbbreviationTooltips(meta)` | an `abbreviations` map in the frontmatter, indented `KEY: value` lines or `- KEY: value` items | Works. `parseFrontmatter` still turns the indented form into an empty list, so `mdvFrontmatterAbbreviations` reads those lines from the frontmatter of `rawMarkdown`, after checking that it parses to the same meta being rendered. |
 
-If the frontmatter path did receive a map, it would walk text nodes outside `code`, `pre`, `script`, `style` and callout titles and wrap each whole-word match, longest key first, in `<abbr class="abbr-tooltip" title="...">`. Use the plugin syntax.
+The frontmatter path walks text nodes outside `code`, `pre`, `kbd`, math, diagrams, buttons, callout titles, the dashboard, the minimap and existing `<abbr>` elements (so it never double-wraps a term the plugin already wrapped), and wraps each whole-word match, longest key first, in `<abbr class="abbr-tooltip" title="...">`.
 
 ### Heading ids and anchors
 
@@ -380,14 +384,10 @@ Each item is described in the section linked from it.
 |---|---|
 | Dollar-sign math is detected inside code spans, code blocks, comments and prose; escaping does not help | [Math (KaTeX)](#math-katex) |
 | Frontmatter must start at the first byte and the closing `---` needs a trailing newline | [Frontmatter](#frontmatter) |
-| Frontmatter `abbreviations` map never reaches the tooltip code; `title` and `repos[].branch` are not displayed | [Frontmatter](#frontmatter), [Abbreviations](#abbreviations) |
+| Frontmatter `title` and `repos[].branch` are not displayed | [Frontmatter](#frontmatter) |
 | An empty `status:` or `date:` value throws inside `renderFrontmatterDashboard` and the document does not render | [Frontmatter](#frontmatter) |
-| Mermaid diagrams are not redrawn on theme change; failed diagrams are retried with their error text | [Mermaid diagrams](#mermaid-diagrams) |
-| Mermaid click-to-section runs before diagrams exist (inferred) | [Mermaid diagrams](#mermaid-diagrams) |
-| Overlay title misses `flowchart` and matches `pie` as a substring | [Mermaid diagrams](#mermaid-diagrams) |
-| Copy button copies the language label and the word "Copy" as well (inferred) | [Code highlighting](#code-highlighting) |
 | `data:image/svg+xml` images are refused by markdown-it | [The markdown-it configuration](#the-markdown-it-configuration) |
 | Heading slugs drop non-ASCII letters; `#` characters vanish from TOC text | [Heading ids and anchors](#heading-ids-and-anchors) |
-| A linked image alone in a paragraph becomes a text-only card (inferred) | [Link enhancement](#link-enhancement) |
+| A linked image alone in a paragraph, with no alt text and no title, becomes a text-only card. With either, it becomes a captioned figure and stays an image | [Link enhancement](#link-enhancement) |
 | Section folding moves elements but leaves HTML comments behind, so narration and comment anchors lose their target under headings (checked offline with jsdom) | [read-aloud.md](read-aloud.md), [commenting.md](commenting.md) |
 | No output sanitization | [Security posture](#security-posture) |
