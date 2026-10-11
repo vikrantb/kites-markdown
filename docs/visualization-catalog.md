@@ -59,7 +59,7 @@ tiles.
 | Capability | How it works today | Implementing code |
 |---|---|---|
 | Mermaid diagrams | A ```` ```mermaid ```` fence becomes a placeholder; a post-render pass turns it into SVG. Mermaid **11.4.1** is vendored (2,571,900 bytes). | `md.renderer.rules.fence`, `renderMermaidDiagrams`, `openDiagramOverlay` |
-| Math | KaTeX **0.16.11**. A regular-expression pass over the raw markdown, before markdown-it runs, replaces double-dollar (display) and single-dollar (inline) spans with KaTeX HTML. | `renderMath` |
+| Math | KaTeX **0.16.11**. A markdown-it inline and block rule reads dollar math by Pandoc's rules and typesets each formula with KaTeX during the parse; code, code spans and HTML comments are never math. | `mdvMathInline`, `mdvMathBlock`, `mdvTypeset` (`js/math.js`) |
 | Code highlighting | highlight.js 11.10.0, 36 languages, light and dark GitHub themes | `md.options.highlight`, `setTheme` |
 | Reading time | Word count of the rendered body divided by 230, shown as "N words ~ M min read" | `renderMarkdown` |
 | Outline | Table of contents built from every heading, indented by level; scroll spy; section minimap of H2s when there are three or more | `buildToc`, `setupScrollSpy`, `buildSectionMinimap` |
@@ -83,12 +83,11 @@ mechanical steps; this section explains the constraints behind them.
 flowchart TD
   A[raw markdown] --> B[parseFrontmatter strips YAML]
   B --> C[extractNarrations collects narrate comments]
-  C --> D[renderMath: regex pass over the whole source]
-  D --> E[md.render]
+  C --> E[md.render, with the math rule]
   E --> F{fence info string<br/>exactly 'mermaid'?}
   F -- yes --> G["div.mermaid-wrapper > pre.mermaid (escaped source)"]
   F -- no --> H[defaultFence + highlight.js]
-  G --> I[body.innerHTML]
+  G --> I[mdvSanitize, then into #mdBody]
   H --> I
   I --> J[post-render passes in renderMarkdown]
   J --> K[renderMermaidDiagrams: mermaid.render → SVG]
@@ -102,18 +101,18 @@ flowchart TD
 renderer registry (section 13.1) should match on the first word of the info string and treat the
 rest as attributes.
 
-### 3.3 Math runs before markdown and is not fence-aware
+### 3.3 Math is a markdown-it rule, so fences are safe (fixed 2026-10-10)
 
-`renderMath` runs over the raw source, including the inside of fenced code blocks and code spans.
-Any two dollar signs on one line form an inline-math span. This matters for several candidates:
+Until 2026-10-10 a regular-expression pass (`renderMath`) ran over the raw source before markdown-it,
+including the inside of fenced code blocks and code spans, and any two dollar signs on one line formed
+an inline-math span. A CSV row with two currency amounts, a shell or Makefile example, or a Vega-Lite
+spec with its `"$schema"` key and a second dollar sign on the line would have been corrupted.
 
-- **CSV/TSV tables**: a row with two currency amounts would be partly turned into math.
-- **Shell or Makefile examples** inside other renderers' fences.
-- **Vega-Lite**: specs start with a `"$schema"` key. One dollar sign per line is safe; a second on
-  the same line is not.
-
-Fixing this (moving math into a markdown-it inline and block rule that never looks inside code) is a
-prerequisite for CSV tables and makes every other renderer safer. See section 8.1.
+Math is now a markdown-it inline and block rule (`js/math.js`) with Pandoc's dollar rules. markdown-it
+tokenizes fences and code spans before the inline rules run, so a renderer's fence content never holds
+math: rendered in Chrome, a shell fence with two variables on one line and a Mermaid label holding two
+amounts both reach their renderer unchanged. The prerequisite this section named for CSV tables is met.
+See section 8.1.
 
 ### 3.4 Theme changes do not re-render diagrams
 
@@ -495,8 +494,8 @@ objects becomes a table, anything else becomes a collapsible tree.
 **Integration.** Easy, and it benefits from existing code: `buildSearchIndex` already indexes `td`
 cells, and `extractText` in `ttsBuildSections` already treats `TABLE` elements specially (a narration
 comment, or the rows up to about 300 characters) — but only when the table is a direct child of the body or of
-a `.section-content`; a table inside a wrapper `div` falls into the generic branch. **Blocked by section 3.3**: currency columns would be
-corrupted by `renderMath` until math becomes fence-aware.
+a `.section-content`; a table inside a wrapper `div` falls into the generic branch. No longer blocked by section 3.3: math is a markdown-it rule now,
+so currency columns inside a fence are left alone.
 
 **Security.** Cell text must be inserted with `textContent`, never `innerHTML`.
 
@@ -565,12 +564,12 @@ by URI, which must be blocked.
 **Recommendation: stay on KaTeX.** It is already vendored, fast and small. Two improvements matter
 more than switching engines:
 
-1. **Make math fence-aware.** Replace the `renderMath` regular-expression pre-pass with markdown-it
-   inline and block rules, so dollar signs inside code, code spans and other fences are left alone.
-   This fixes the corruption described in section 3.3. (`markdown-it-texmath` 1.0.0 exists but was
-   last published 2022-05-28; a small hand-written rule is an option.)
+1. ~~**Make math fence-aware.**~~ **Done 2026-10-10.** The `renderMath` regular-expression pre-pass
+   was replaced with a small hand-written markdown-it inline and block rule (`js/math.js`), so dollar
+   signs inside code, code spans and other fences are left alone (section 3.3).
+   (`markdown-it-texmath` 1.0.0 was the alternative; it was last published 2022-05-28.)
 2. **Add a `math` fence.** GitHub and GitLab render ```` ```math ```` as display math. Today the
-   viewer shows it as code *(inferred: the fence override only special-cases `mermaid`)*.
+   viewer shows it as a code block labelled `math` (rendered in Chrome).
 
 **mhchem** (chemical equations such as `\ce{2H2 + O2 -> 2H2O}`) is a KaTeX extension:
 `dist/contrib/mhchem.min.js` is 33,706 bytes in 0.19.0, classic. It must match the KaTeX version, so
@@ -580,9 +579,9 @@ vendor the 0.16.11 copy or upgrade both together. KaTeX 0.19.0 lists a breaking 
 *(inferred)*. Release notes between 0.16.11 and 0.18.x were not reviewed here.
 
 **Security.** KaTeX's `trust` option defaults to off, which disables commands such as `\href` and
-`\includegraphics`; `renderMath` does not set it *(default behaviour per KaTeX documentation)*.
+`\includegraphics`; `mdvTypeset` (`js/math.js`) does not set it *(default behaviour per KaTeX documentation)*.
 
-**Rating.** Fence-aware math plus a `math` fence: value High, effort S to M. mhchem: value Medium,
+**Rating.** A `math` fence: value High, effort S (fence-aware math is done). mhchem: value Medium,
 effort S. MathJax: value Low here, effort M.
 
 ### 8.2 Chemistry: SMILES structures
@@ -726,7 +725,7 @@ enough. Value Medium, effort S.
 | CSV/TSV/JSON tables | `csv`, `tsv`, `json table` | none, or papaparse 5.7.0 | MIT | 0 or 18,874 | classic | yes | High | S |
 | GeoJSON/TopoJSON | `geojson`, `topojson` | leaflet 1.9.4 + topojson-client 3.1.0 | BSD-2 / ISC | 147,552 + 7,169 | classic | geometry yes, tiles no | Medium | M |
 | 3D (STL/glTF) | `stl` | three 0.186.1 | MIT | 662,772 + 1,458,113 | ESM | yes | Low | L |
-| Math fence + fence-aware math | `math` | KaTeX (vendored) | MIT | 0 | — | yes | High | S–M |
+| Math fence (fence-aware math done 2026-10-10) | `math` | KaTeX (vendored) | MIT | 0 | — | yes | High | S |
 | mhchem | inside math | KaTeX contrib | MIT | 33,706 | classic | yes | Medium | S |
 | MathJax | — | mathjax 4.1.3 | Apache-2.0 | 997,445 + fonts | classic | with fonts vendored | Low | M |
 | SMILES | `smiles` | smiles-drawer 2.4.1 | MIT | 197,128 | classic | yes | Low–Medium | S |

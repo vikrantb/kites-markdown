@@ -414,6 +414,7 @@ passes, and the code-block markup.
 | `document` `focusin` | `navigation.js` | The focus guard: focus that lands behind the open dialog goes back into it |
 | `document` `click`, `change`, `input`, `keydown` (capture) | `actions.js`, one per event type an action uses | `mdvDispatchAction` runs the `data-action` of the nearest control. Search results carry `data-action="go-search"`, so `#searchResults` has no listener of its own |
 | `#mdBody` `click`, `keydown` | `navigation.js` | Delegated: a click on, or Enter/Space on a focused, `img[role=button]` opens the lightbox |
+| `#mdBody` `click` | `links.js` | Delegated: an in-document link (`href="#…"`) goes to its target (`mdvLinkTarget`, then `mdvGoTo`) and adds a history entry with the fragment; a click with a modifier key and the `#` permalink are left to the browser |
 | `#ttsProgressBar` `keydown` | `read-aloud.js` | `ttsSliderKeys`: arrows, Page Up/Down, Home, End move between sections |
 | `document` `keydown` (capture phase) | `js/diagram-overlay.js` | While the expanded view is open: Esc closes it, `+` `=` `-` `_` zoom, `0` fits, `1` shows actual size, the arrow keys pan, Tab stays inside the dialog. These keys do not reach the page's other shortcuts |
 | `#diagramBody` `wheel` (not passive), `pointerdown`/`move`/`up`/`cancel` | `js/diagram-overlay.js`, attached on first open | Wheel and ctrl+wheel (trackpad pinch) zoom around the pointer; one pointer pans; two pointers pinch-zoom; a click without a drag on a linked node goes to its section |
@@ -436,7 +437,7 @@ passes, and the code-block markup.
 | `buildSectionMinimap` | segment `click`; a `ResizeObserver` on the rail (the previous render's is disconnected) | Go to the section as an outline link does (`mdvGoTo`); label or track mode |
 | `setupImageLightbox` | nothing: it gives each image outside a link `tabindex="0"`, `role="button"` and a name; `#mdBody` listeners are delegated | Opens the lightbox |
 | `enhanceLinks` | each link `mouseenter`/`mouseleave` | `showLinkTooltip` / `hideLinkTooltip` |
-| `buildLinksPanel` | anchor-type items `click` | Scrolls to the target and closes the panel |
+| `buildLinksPanel` | anchor-type items `click` | Closes the panel and goes to the target (`mdvLinkTarget`, `mdvGoTo`) |
 | `mdvLinkDiagramNodes` (from `renderMermaidDiagrams` after each diagram is drawn, and `setupMermaidClickToSection`) | wrapper `click` and `keydown`, delegated to `[data-mdv-section]` nodes | Goes to the heading as an outline link does (`mdvGoTo`: unfold, open `<details>`, scroll, focus), then flashes it (`mdvJumpToSection`) |
 | `loadFromUrl` | `#dropZone2` drag events | `.drag-over` styling only (the body `drop` listener does the read) |
 | `mdvAttachContextMenu` | `#mdBody` `contextmenu` (once) | Custom "Add comment" menu. Shift+right-click keeps the native menu. |
@@ -589,7 +590,7 @@ example when site data is blocked, the reads at lines 1750–1751 stop the whole
 |---|---|---|
 | `?file=<path>` | `loadFromUrl`: fetch over http(s), else the "Open: <name>" prompt | `updateUrl(name)` via `history.replaceState`, called from `readFile` (the bare file name) and the paste listener (the literal `pasted`). It also sets `document.title` to `<name> - Markdown Viewer`. |
 | `#demo` | `loadFromUrl`, only when `?file=` is absent | nobody. `updateUrl` clears the hash. |
-| `#<heading-id>` | The browser's native fragment navigation (anchor links in rendered content) | — |
+| `#<id>` | Nobody: when a page loads, the document is not rendered yet as the browser looks for the fragment, and `renderMarkdown` scrolls to the top (read from the code) | The in-document link listener in `links.js` (`history.pushState`), as the browser's own jump did |
 
 There is no `sessionStorage` use. The "workspace root path" setting is unrelated to the IndexedDB
 `workspace` handle. The first is a string prefix for `fetch`. The second is a File System Access
@@ -821,7 +822,7 @@ Functions marked with a file name instead of a line were added or rewritten afte
 | `mdvUnfold(el)` | `navigation.js` | Unfolds every folded section around an element through `mdvSetCollapsed`, so each chevron and the scroll spy follow (read-aloud, for each block it reads; `mdvReveal`) |
 | `mdvReveal(el)` | `navigation.js` | `mdvUnfold`, and opens every closed `<details>` around the element (the jumps that go through `mdvGoTo`) |
 | `mdvFocusInDocument(el)` | `navigation.js` | Focuses a document element without scrolling (temporary `tabindex="-1"`) |
-| `mdvGoTo(el, { flash })` | `navigation.js` | Reveal, smooth-scroll, focus, and optionally flash. Outline links, search results, section-rail segments and diagram-node links go through it; the links panel's section links (`buildLinksPanel`) and a comment card's quote still call `scrollIntoView` themselves, so they do not unfold a folded target |
+| `mdvGoTo(el, { flash })` | `navigation.js` | Reveal, smooth-scroll, focus, and optionally flash. Every jump to a place in the document goes through it: outline links, search results, section-rail segments, diagram-node links, in-document links, the links panel's section links and a thread card's quote. Read-aloud does not: it unfolds with `mdvUnfold` and keeps the focus on its player |
 | `mdvFlash(el)` | `navigation.js` | Two-second background highlight that gives back the author's own inline background colour |
 | `buildToc()` | `navigation.js` | Fills `#tocList` from `h1`–`h6`; hides the TOC when there are no headings and shows it again (per `tocVisible`) when there are |
 | `toggleToc()` | `navigation.js` | Mobile slide-in at 900px or less, otherwise hide/show plus full width; then `mdvSyncTocInert` |
@@ -869,6 +870,7 @@ Functions marked with a file name instead of a line were added or rewritten afte
 | `copyLinkUrl(e)` | 2720 | Copies the tooltip's href to the clipboard |
 | `toggleLinksPanel()` | 2731 | Shows or hides the links panel |
 | `buildLinksPanel(links)` | 2735 | Groups links by type, de-duplicates by href |
+| `mdvLinkTarget(href)` | `js/links.js` | The element an in-document link points at, found as the browser finds a fragment (an id, else an `<a name>`, as written and then percent-decoded), only inside the document |
 | `copyCode(...args)` | `js/links.js` | Copies the inner `code.hljs` element's text (only the code), finding the button in whatever it is passed (the button, or an event) |
 | `mdvCopyText(text)`, `mdvFlashCopyButton(btn, text, cls)` | `js/links.js` | Clipboard with a legacy fallback; the button's "Copied" / "Copy failed" state |
 | `transformCalloutBlocks()` | `js/enhancements.js` | `> [!TYPE]` blockquote → `.callout.callout-type` with an icon and a title. The first post-processing pass, so it also runs `mdvCaptionImages`, `mdvAlignNumericColumns`, `mdvTableScrollCues` and `mdvPolishDashboard` |

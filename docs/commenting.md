@@ -49,7 +49,7 @@ Contents:
    - right-click a paragraph, list item, heading, quote, code block, table cell or definition, then choose **Add comment** (or **Add comment on selection** if text is selected), or
    - select at least 3 characters inside the document and click the floating **Comment** button that appears above the selection.
 5. Type in the popup and click **Save** or press Cmd/Ctrl+Enter. If the document has no save location yet (Chromium), a dialog opens first: an **Open** dialog to pick the file the document was opened from (the first save checks it still holds that version), or a **Save** dialog for pasted text, which has no file of its own. The thread appears in the sidebar and a chip appears on the block; the page does not move.
-6. In the sidebar, each open thread has a reply box and **Reply**, **Resolve** and **Delete** buttons. Resolved threads show only **Reopen**. Every change is saved at once. Click a thread's quote to scroll to its block.
+6. In the sidebar, each open thread has a reply box and **Reply**, **Resolve** and **Delete** buttons. Resolved threads show only **Reopen**. Every change is saved at once. Click a thread's quote to show its block: a folded section or closed `<details>` around it opens, and the block is centred and briefly highlighted (`mdvGoTo`).
 7. Cmd/Ctrl+S saves immediately, and opens the same dialog if no save location is known (or downloads a copy in browsers without the File System Access API).
 
 ![A new thread on a paragraph inside a section: its chip at the end of the paragraph, its card in the comments sidebar, and "Saved" in the toolbar](images/comments-thread-light.png)
@@ -75,7 +75,7 @@ These are all the comment-related inputs the code handles. None of them is liste
 | Cmd/Ctrl+Enter | reply box | Post the reply | `mdvRenderSidebar` wires `mdvPostReply` |
 | Mouse-down outside the context menu | anywhere | Close the menu | `mdvShowContextMenu` |
 | Click a chip | on a commented block | Open the sidebar, scroll the thread card into view and outline it for 1.2 s | `mdvRenderChips`, `mdvFocusThread` |
-| Click a thread's quote | sidebar | Scroll the document to the thread's block | `mdvRenderSidebar` |
+| Click a thread's quote | sidebar | Show the thread's block: unfold what hides it, centre it and flash it (`mdvGoTo`). It used to only scroll, which did nothing inside a folded section | `mdvRenderSidebar` |
 
 "Recognised block" means the nearest ancestor whose tag is one of `MDV_BLOCK_TAGS`: `P`, `LI`, `H1`–`H6`, `BLOCKQUOTE`, `PRE`, `TD`, `TH`, `DT`, `DD` (`mdvFindBlock`). Because the walk goes upward from the click target, a paragraph inside a blockquote or list item is chosen before the enclosing `BLOCKQUOTE` or `LI`.
 

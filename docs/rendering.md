@@ -206,7 +206,7 @@ Languages in the vendored highlight.js build (from `hljs.listLanguages()`, check
 
 ### Link enhancement
 
-**Functions:** `detectLinkType`, `enhanceLinks`, `showLinkTooltip`, `buildLinksPanel`.
+**Functions:** `detectLinkType`, `enhanceLinks`, `showLinkTooltip`, `buildLinksPanel`, `mdvLinkTarget` (an in-document link's target; a click on one goes there through `mdvGoTo`, see [features.md](features.md)).
 
 Every `<a>` inside the document except heading permalinks (`a.header-anchor`) is classified by its `href`. The first matching rule wins:
 

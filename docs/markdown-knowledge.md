@@ -10,7 +10,7 @@ There are three kinds of statement here, and each is labelled.
 
 | Label | Meaning |
 |---|---|
-| **verified** | Checked by running the viewer's own markdown-it setup, its `renderMath` function and its `parseFrontmatter` function, copied unchanged out of `markdown-viewer.html`, under Node.js 22 against the libraries in `vendor/`. The output quoted is the HTML string that `renderMarkdown` assigns to `innerHTML`. |
+| **verified** | Checked by running the viewer's own markdown-it setup and its `parseFrontmatter` function, copied unchanged out of `markdown-viewer.html`, under Node.js 22 against the libraries in `vendor/`. The output quoted is the HTML string that `renderMarkdown` assigns to `innerHTML`. The math statements were checked again on 2026-10-10, after math became a markdown-it rule (`js/math.js`): each example was rendered through `renderMarkdown` in Chrome. |
 | **read** | Read from the code but not executed, usually because it needs a browser DOM (`transformCalloutBlocks`, `renderMermaidDiagrams`, `findNarrationFor`, the comment functions). |
 | **(inferred)** / **(unverified)** | A conclusion drawn from the code, or a statement that was not checked. |
 
@@ -19,7 +19,7 @@ Statements about **other tools** (GitHub, GitLab, VS Code, Obsidian, Typora, Pan
 Status words used for this viewer: **Supported**, **Partial** (works with caveats that are listed), **Not supported** (the syntax is shown as plain text or as a code block).
 
 > [!NOTE]
-> This page avoids literal dollar signs. Wherever one is needed it is written as the HTML entity `&#36;`, and code that contains dollar signs is written with HTML `<code>` or `<pre>` tags. The reason is the math pre-pass described in [Dollar signs: currency or math](#dollar-signs-currency-or-math): in this viewer, two dollar signs on one line become math even inside code.
+> This page writes dollar signs as the HTML entity `&#36;`, inside HTML `<code>` tags where an example needs code. An entity is never a math delimiter in this viewer: the math rule reads the source, where an entity is not a dollar. The habit dates from the old math pre-pass, which turned two dollar signs on one line into math even inside code; math is a markdown-it rule now (see [Math](#math)), and code spans are safe.
 
 ---
 
@@ -63,17 +63,13 @@ flowchart TD
   A["Raw file text"] --> B["mdvParseFile reads the comment JSON block"]
   B --> C["parseFrontmatter strips leading YAML"]
   C --> D["extractNarrations records narrate comments"]
-  D --> E["renderMath: regex pass turns dollar math into KaTeX HTML"]
-  E --> F["md.render: markdown-it with plugins"]
-  F --> G["innerHTML into the page"]
+  D --> F["md.render: markdown-it with plugins and the math rule (KaTeX)"]
+  F --> G["mdvSanitize (DOMPurify), then into the page"]
   G --> H["transformCalloutBlocks, section folding, TOC, search index"]
   H --> I["renderMermaidDiagrams, links, abbreviation tooltips"]
 ```
 
-Two facts about this order explain most of the pitfalls on this page:
-
-- `renderMath` runs on the **raw text**, before markdown-it knows where code spans, code blocks or HTML comments are.
-- Callouts are recognised **after** rendering, by looking at the HTML of each `<blockquote>`, not by a markdown-it rule.
+One fact about this order explains several pitfalls on this page: callouts are recognised **after** rendering, by looking at the HTML of each `<blockquote>`, not by a markdown-it rule. Math used to be the other: until 2026-10-10 a regular-expression pass (`renderMath`) ran on the raw text before markdown-it, without knowing where code spans, code blocks or HTML comments were. It is a markdown-it rule now (see [Math](#math)).
 
 ---
 
@@ -129,7 +125,7 @@ One small deviation from CommonMark was observed (verified): `&notanentity;` ren
 | Highlight | `==text==` | Pandoc (`mark`), Obsidian, Typora | **Supported** | markdown-it-mark, `<mark>`. Verified. |
 | Subscript, superscript | `H~2~O`, `x^2^` | Pandoc | **Supported** | markdown-it-sub and markdown-it-sup. Verified. The content cannot contain an unescaped space: `x^a b^` stays literal. |
 | Strikethrough | `~~text~~` | GFM | **Supported** | markdown-it core, `<s>`. |
-| Math | dollar-delimited TeX | Pandoc, GitHub, Obsidian, Typora, VS Code | **Partial** | `renderMath` regex pre-pass and KaTeX 0.16.11. See [Math](#math). |
+| Math | dollar-delimited TeX | Pandoc, GitHub, Obsidian, Typora, VS Code | **Supported** | A markdown-it rule (`js/math.js`) with Pandoc's dollar rules, and KaTeX 0.16.11. Code and HTML comments are never math. A bare bar inside math in a table cell still splits the cell. See [Math](#math). |
 | Math with `\(...\)` and `\[...\]` | `\(x^2\)` | LaTeX, MathJax defaults, Pandoc option | **Not supported** | Verified: markdown-it treats `\(` as an escaped parenthesis, so the output is `(x^2)` with the backslashes gone. |
 | Math fences | ` ```math ` | GitHub, GitLab | **Not supported** | Verified: a normal code block labelled `math`. |
 | Wiki-links | `[[Other Page]]`, `[[Page\|alias]]` | Obsidian, MediaWiki, GitHub and GitLab wikis | **Not supported** | Verified: literal text. |
@@ -165,45 +161,52 @@ Read from `transformCalloutBlocks` and `CALLOUT_TYPES`.
 | LaTeX brackets | `\(x\)` | `\[x\]` | LaTeX, MathJax defaults, Pandoc with an option |
 | GitHub backtick form | <code>&#36;`x`&#36;</code> | ` ```math ` fence | GitHub, GitLab |
 
-The hard problem is the dollar sign, which is also a currency symbol. Pandoc's rule (from its manual) is a good reference heuristic: the opening dollar must have a non-space character immediately to its right, the closing dollar must have a non-space character immediately to its left, and the closing dollar must not be followed by a digit. Under that rule "&#36;20,000 and &#36;30,000" is not math. GitHub uses a similar heuristic (unverified in detail).
+The hard problem is the dollar sign, which is also a currency symbol. Pandoc's rule (from its manual) is a good reference heuristic: the opening dollar must have a non-space character immediately to its right, the closing dollar must have a non-space character immediately to its left, and the closing dollar must not be followed by a digit. Under that rule "&#36;20,000 and &#36;30,000" is not math. GitHub uses a similar heuristic (unverified in detail). This viewer follows Pandoc's rule (below).
 
 ### What this viewer does
 
-Read from `renderMath`, verified by running it.
+Read from `js/math.js`. Every example in the table below was rendered through `renderMarkdown` in Chrome on 2026-10-10.
 
-1. If KaTeX is not loaded, the source is returned unchanged.
-2. Display pass: a regex for "two dollars, then one or more characters that are not a dollar (newlines allowed), then two dollars" is replaced with `katex.renderToString(..., { displayMode: true, throwOnError: false })`.
-3. Inline pass: a regex for "dollar, then one or more characters that are neither a dollar nor a newline, then dollar" is replaced with inline KaTeX output.
-4. The resulting text, now containing KaTeX HTML, is handed to markdown-it. Because `html: true`, the KaTeX tags pass through as inline HTML.
+Math is a markdown-it rule, added with `md.use(mdvMathPlugin)`:
 
-Consequences, each verified:
+1. An inline rule (`mdvMathInline`, before markdown-it's `escape` rule) reads <code>&#36;...&#36;</code> by Pandoc's rules: the opening dollar must be followed by a non-space character, the closing one must follow a non-space character and must not be followed by a digit, and the first unescaped dollar after the opener decides: if it cannot close, the text is not math. It also reads <code>&#36;&#36;...&#36;&#36;</code> inside a paragraph, as display math.
+2. A block rule (`mdvMathBlock`, before `fence`) reads a display block: a line that starts with <code>&#36;&#36;</code>, up to the first line that ends with <code>&#36;&#36;</code>. <code>&#36;&#36; x &#36;&#36;</code> on one line is a block too. It may not contain a blank line.
+3. `mdvTypeset` typesets each formula with `katex.renderToString(tex, { displayMode, throwOnError: false })`; `trust` stays off, so `\href` and the like are unavailable. A display block becomes `<p class="mdv-math-display">`. Without KaTeX the TeX is shown as code (`code.mdv-math-source`, delimiters included; read from the code).
+4. markdown-it tokenizes code spans and code blocks before the inline rules see their text, and inline math may not contain a backtick or `<!--`, so code and HTML comments never hold math.
+
+Consequences, each rendered in Chrome:
 
 | Input | What happens |
 |---|---|
-| A single dollar on a line, for example "Costs &#36;5 total" | Untouched. |
-| Two amounts on one line, "Price &#36;5 and &#36;10 today" | "5 and" becomes math (rendered as `5and`, with "and" as italic math letters and the space dropped), followed by "10 today". |
-| Two amounts on different lines | Untouched; the inline regex does not cross newlines. |
-| A code span or fenced code block with two dollars on a line, for example a shell line that uses two environment variables | **Corrupted.** The KaTeX HTML is inserted into the code, and markdown-it then escapes it, so the reader sees raw `<span class="katex">` markup inside the code block. |
-| A Mermaid block with two dollars on a line | **Corrupted** in the same way; the diagram source Mermaid receives contains KaTeX markup. |
-| A `<!-- narrate: ... -->` comment with two dollars | The KaTeX HTML is written inside the comment. The read-aloud text taken from that comment node (`findNarrationFor`) would then contain markup (inferred). |
-| A backslash-escaped dollar pair | **Broken.** The regex ignores backslashes, KaTeX receives a string ending in a backslash and returns an error `<span>`; the backslash in front of that span then escapes its `<`, and the reader sees the error markup as text. Backslash escaping does not protect a dollar in this viewer. |
-| `&#36;` written as an HTML entity | Safe. `renderMath` never sees a dollar; markdown-it decodes the entity to a dollar sign afterwards. |
-| A blank line inside a display block | **Broken.** KaTeX renders the math, but its output still contains the blank line, so markdown-it splits it into two paragraphs and the HTML ends up mismatched. |
-| Display math in the middle of a paragraph | Rendered as display math (KaTeX's `katex-display` span inside the `<p>`). |
-| A vertical bar in math inside a table cell, <code>&#36;\|x\|&#36;</code> | **Broken.** The KaTeX output (including its annotation) contains the raw bar, and the GFM table parser splits the cell there. Use `\vert` or `\lvert ... \rvert` instead of a bar. |
-| Underscores and asterisks inside math | Mostly safe: KaTeX consumes them before markdown-it runs, so `x_1 and y_1` does not turn into emphasis. The exception is KaTeX's hidden TeX annotation: <code>&#36;a*b*c&#36;</code> leaves `a<em>b</em>c` in the `<annotation>` element. The visible output is correct. |
+| A single dollar, "Costs &#36;5 total." | Text. |
+| Two amounts on one line, "Price &#36;5 and &#36;10 today." | Text: the dollar before "10" follows a space, so it cannot close, and the first dollar after the opener decides. |
+| Two amounts on two lines of one paragraph | Text, for the same reason. |
+| "&#36;20,000 and &#36;30,000" | Text. |
+| <code>&#36; a + b &#36;</code>, with spaces inside the dollars | Text. |
+| <code>&#36;x&#36;5</code>, a digit after the closing dollar | Text. |
+| <code>&#36;a</code> at the end of one line and <code>b&#36;</code> at the start of the next, in one paragraph | Math: inline math may span a soft line break, and the TeX keeps it. |
+| A code span or a fenced code block with dollar signs, such as a shell line with two variables | Code, unchanged. |
+| A Mermaid block with dollar signs in a label | The diagram source reaches Mermaid unchanged. |
+| A `<!-- narrate: ... -->` comment with dollar signs | The comment's text is unchanged. |
+| A lone dollar followed by an inline HTML comment that holds a dollar, <code>&#36;x &lt;!&#45;&#45; y&#36; &#45;&#45;&gt;</code> | Not math; the comment is dropped and nothing of it shows. |
+| A backslash before a dollar, <code>\\&#36;5</code> | A literal dollar sign, never a delimiter. Inside math, <code>&#36;\\&#36;5&#36;</code> typesets a dollar sign. |
+| `&#36;` written as an HTML entity | A literal dollar sign: the math rule reads the source, where an entity is not a dollar. |
+| A blank line inside a display block | Not math: the dollar signs and the TeX are shown as text. |
+| A display block that is never closed | Text. |
+| Display math in the middle of a paragraph, <code>Before &#36;&#36;a+b&#36;&#36; after.</code> | Display math (KaTeX's `katex-display`) inside the paragraph. |
+| A bare vertical bar inside math in a table cell | **Broken**: the table splits the row at every unescaped bar before any inline rule runs, so the cell holds a lone dollar sign. Write the bar as `\vert`, or escape it with a backslash: markdown-it's table rule removes the backslash and the math reads a bar. |
+| Underscores and asterisks inside math, <code>&#36;a\*b\*c&#36;</code> and <code>&#36;x_1&#36; and &#36;y_1&#36;</code> | Math only: no emphasis anywhere, and the TeX annotation keeps the characters exactly. |
+| A TeX error, <code>&#36;\frac{1&#36;</code> | KaTeX's error element (`.katex-error`), showing the source. |
 | `\(x\)` and `\[x\]` | Not math. Shown as `(x)` and `[x]`. |
 
 Safe authoring rules for this viewer:
 
-- Write a literal dollar sign as `&#36;` in prose.
-- In inline code that must show two dollar signs on one line, use HTML instead of backticks: `<code>echo &#36;HOME &#36;PATH</code>` renders as code with real dollar signs (verified).
-- In a code block that must show dollar signs, keep at most one dollar per line, or use a raw `<pre><code>` block with `&#36;` entities. The raw block loses syntax highlighting and the Copy button; the browser decodes the entities when the HTML is inserted (inferred from how `innerHTML` parses entities).
-- Never put a blank line inside a display math block.
+- Prices are safe as written ("&#36;5 and &#36;10"). A dollar sign that could pair with a later one (a non-space character after it, and a later dollar with a non-space character before it and no digit after it) starts math: write it as <code>\\&#36;</code> or `&#36;`.
+- Code spans and code blocks are never math: shell variables, PHP and templates can be written as they are.
+- Never put a blank line inside a display block; it is shown as text.
+- In a table cell, write a bar inside math as `\vert`, or escape it.
 
-The root fix is to make math a markdown-it rule (an inline rule and a block rule, as plugins such as markdown-it-texmath or `@vscode/markdown-it-katex` do) so that code spans, fences and HTML comments are never scanned. See [roadmap.md](roadmap.md).
-
----
+Until 2026-10-10 math was a regular-expression pass over the raw text (`renderMath`). It turned any two dollar signs on one line into math, inside code spans, code blocks, Mermaid sources and comments too, and broke on a backslash before a dollar and on a blank line in a display block. Math is now a markdown-it rule, as this page recommended (roadmap issue 8).
 
 ## Diagrams as code
 
@@ -232,11 +235,11 @@ Read from the fence override and `renderMermaidDiagrams`; the fence detection wa
 
 - The fence override tests `token.info.trim() === 'mermaid'`. The match is exact and case-sensitive. ` ```Mermaid ` and ` ```mermaid title="Flow" ` are **not** diagrams here; they fall through to the normal code block (verified). Other renderers differ on whether extra words are allowed.
 - A matching fence becomes `<div class="mermaid-wrapper"><pre class="mermaid" id="mermaid-N">` with the escaped source. `renderMermaidDiagrams` later calls `mermaid.render` for each element not yet marked `rendered`.
-- `mermaid.initialize` is called with `securityLevel: 'loose'`, but `js/render.js` pins the level to `'strict'` on every call, and a `%%{init}%%` directive cannot change it: `click` callbacks are ignored, `javascript:` links are refused, and HTML in labels is sanitized by Mermaid (verified by `tests/e2e/security.spec.mjs`).
-- The theme is `dark` or `default` depending on the viewer theme at the moment of rendering. `setTheme` schedules `renderMermaidDiagrams`, but that function only selects `.mermaid:not(.rendered)`, and a drawn diagram has the `rendered` class and its source replaced by SVG. Diagrams already drawn therefore keep their old theme until the document is rendered again (read; not run in a browser).
+- `mermaid.initialize` is called with `securityLevel: 'strict'`, and `js/render.js` pins the level to `'strict'` on every call whatever is passed, and a `%%{init}%%` directive cannot change it: `click` callbacks are ignored, `javascript:` links are refused, and HTML in labels is sanitized by Mermaid (verified by `tests/e2e/security.spec.mjs`).
+- Every diagram is drawn with Mermaid's `base` theme and `themeVariables` read from the viewer's `--diagram-*` tokens. A theme change redraws every diagram from its saved source (`data-mdv-source`), so diagrams follow the theme (read from `js/mermaid.js`; tested in `visuals.spec.mjs`).
 - A syntax error replaces the diagram with a red `Mermaid error: ...` message instead of breaking the page.
 - Tildes work as fence characters too (` ~~~mermaid `), because the check uses the token's info string, not the fence characters (verified).
-- Two dollar signs on one line inside the diagram source are corrupted by the math pass; see [What this viewer does](#what-this-viewer-does).
+- Dollar signs in the diagram source reach Mermaid unchanged: math never applies inside a fence (rendered in Chrome; see [What this viewer does](#what-this-viewer-does)).
 
 ### Fenced code in general
 
@@ -324,7 +327,7 @@ All verified unless marked.
 - **Inside a code span or fence, a comment is text**, not a comment node, so `findNarrationFor` and `mdvBuildAnchorMap` do not see it. The raw-text regexes do see it, though: `MDV_RE_BLOCK` and `MDV_RE_ANCHOR` are applied to the whole file without knowing about code. A document that shows a complete comments block or a complete anchor marker inside a code example will have that example parsed as real data, and removed or rewritten when comments are saved (inferred from `mdvParseFile`, `mdvSerialize` and the anchor cleanup in `mdvDeleteThread`). Documents about the format should break the markers up, as this page does.
 - **The text `-->` ends a comment early.** HTML also discourages `--` inside a comment. `mdvSerialize` protects the JSON by writing `--` as `-\u002d` and `<` as `\u003c`, and `mdvParseFile` reverses that. Narration text has no such protection: a narration containing `-->` ends early and the rest is shown as text (inferred).
 - **Section folding may move content away from its comment (inferred, not run in a browser).** `addSectionToggles` moves each heading's following *elements* into a `.section-content` wrapper using `nextElementSibling`, which skips comment nodes, so comment nodes after a heading are left outside the wrapper. If that holds, `findNarrationFor` does not find a narration for a diagram or table under a heading, and `mdvBuildAnchorMap` maps an anchor to whatever element follows the comment at its new position rather than the commented block. This needs a browser check.
-- **The math pass runs inside comments.** Two dollar signs in a narration or in a comment body change the comment node's text (verified for narration). The JSON block is parsed from the raw text before `renderMath` runs, so comment data itself is not affected (read).
+- **Math never runs inside comments.** A comment on its own line is an HTML block, and inline math may not contain `<!--`, so a narration or the comment block keeps its dollar signs (a narration holding two formulas' worth of dollar signs was rendered in Chrome on 2026-10-10). Until then the math pre-pass changed the text of such a narration.
 
 Other ecosystems' invisible-metadata conventions: Obsidian `%% ... %%` comments (shown as text here), link reference definitions used as comments (`[//]: # (note)`, invisible in every CommonMark renderer including this one, because an unused reference definition produces no output), and front matter keys.
 
@@ -348,11 +351,11 @@ Put identifiers in code spans. Escape with a backslash (`\*`) when a literal ast
 
 ### Underscores inside math
 
-In renderers where math is an inline rule, the math is protected. In renderers where it is not (or where math is handled by client-side MathJax after markdown), <code>&#36;a_1 + b_1&#36;</code> style input can lose its underscores to emphasis. In this viewer the pre-pass protects visible math, with the annotation exception in [What this viewer does](#what-this-viewer-does). Portable advice: put spaces around operators and avoid two underscore-subscripts on one line when the file must render in tools without math support.
+In renderers where math is an inline rule, the math is protected. In renderers where it is not (or where math is handled by client-side MathJax after markdown), <code>&#36;a_1 + b_1&#36;</code> style input can lose its underscores to emphasis. In this viewer math is an inline rule, so neither the visible output nor the TeX annotation loses them (rendered in Chrome). Portable advice: put spaces around operators and avoid two underscore-subscripts on one line when the file must render in tools without math support.
 
 ### Dollar signs: currency or math
 
-See [Math](#math). In this viewer any two dollar signs on one line are math, wherever they are, and backslash escapes do not help; `&#36;` does.
+See [Math](#math). This viewer follows Pandoc's rules, so prices such as "&#36;5 and &#36;10" stay text and code is never math; a backslash (<code>\\&#36;</code>) or `&#36;` makes any dollar sign literal.
 
 ### List indentation and lazy continuation
 
@@ -381,7 +384,7 @@ A line of `=` or `-` under a paragraph turns it into a heading. `Title` over `==
 
 - An escaped pipe `\|` inside a cell is a literal pipe (verified).
 - A pipe inside a code span still splits the cell: `` `c|d` `` splits into `` `c `` and `` d` ``, and a cell beyond the header's column count is dropped (verified). This matches the GFM specification, which splits on every unescaped pipe before inline parsing. Escape it: `` `c\|d` ``.
-- Math with a bar in a table breaks the table in this viewer; use `\vert`.
+- A bare bar inside math in a table cell splits the cell, as any unescaped bar does (rendered in Chrome): write `\vert`, or escape the bar.
 - Every table needs a header row and a delimiter row. Alignment colons go in the delimiter row: `:---`, `:---:`, `---:`.
 
 ### Nested fences
@@ -418,7 +421,7 @@ All verified. In technical documents, put file names in code spans, or the viewe
 | `&nbsp;` | a non-breaking space |
 | `&notanentity;` | `¬anentity;` (see [Where markdown-it sits](#where-markdown-it-sits)) |
 | `` `&amp;` `` in a code span | shown literally as `&amp;`; entities are not decoded in code |
-| `&#36;` | a dollar sign that the math pass does not see |
+| `&#36;` | a dollar sign that is never a math delimiter |
 
 All verified.
 
@@ -479,7 +482,7 @@ General knowledge of the other tools, **not tested**; every cell outside the las
 | Obsidian callout titles and folding | no | no | no | yes | no | partial |
 | Admonitions `!!!` or `:::` | no | no | no | no | no | no |
 | Mermaid fences | yes | yes | no (extension) | yes | yes | yes |
-| Dollar math | yes | yes | yes | yes | yes (option for inline) | yes, with the caveats above |
+| Dollar math | yes | yes | yes | yes | yes (option for inline) | yes, by Pandoc's rules |
 | `\(...\)` math | no | no | no | no | no | no |
 | ` ```math ` fences | yes | yes | unverified | no | unverified | no |
 | Definition lists | no | unverified | no | no | no | yes |
@@ -541,7 +544,7 @@ For a file that should look right here, on GitHub and in most editors:
 
 - Use ATX headings (`#`), one `#` heading, no skipped levels, and ASCII-only heading text when other documents link to the headings.
 - Use fenced code with a language tag; put file names, commands and identifiers in code spans.
-- Avoid dollar signs outside math; write `&#36;` when one is needed.
+- Write a dollar sign that is not math as <code>\\&#36;</code> or `&#36;` when it could pair with a later one.
 - Use `~~strike~~`, never a single tilde; use `<sub>` and `<sup>` rather than `~x~` and `^x^` when GitHub matters.
 - Use only the five GitHub alert types, with the marker alone on its first line.
 - Write diagrams as ` ```mermaid ` fences with exactly that info string.
