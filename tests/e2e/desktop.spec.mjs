@@ -555,25 +555,30 @@ test.describe('in the desktop app (stand-in shell)', () => {
     expect(await callsTo(page, 'mdv_save_document')).toEqual([{ path: sibling.path, text: 'kites-self-test: written by the probe\n', version: 'v-sibling' }]);
   });
 
-  test("the self-test's save-guard probe fails when a save into another file is accepted", async ({ page }) => {
-    // The probe's own control: a shell that saves anywhere must make the self-test fail.
-    const text = '# A document\n\nWith a paragraph.\n';
-    const sibling = { path: '/notes/kites-self-test-sibling.md', name: 'kites-self-test-sibling.md', text: '# A sibling\n', mtimeMs: 5, version: 'v-sibling', readOnly: null, reason: 'reload' };
-    await withShell(page, {
-      doc: { path: '/notes/doc.md', name: 'doc.md', text, mtimeMs: 1000, version: 'v-1000', readOnly: null, reason: 'initial' },
-      disk: { [sibling.path]: sibling },
-      selfTest: true,
+  // The probe's own controls: a shell that saves anywhere, and one that refuses for another reason (the
+  // probe used to accept any refusal, so a conflict from a missing version passed for the guard).
+  for (const [shell, answer] of [
+    ['saves into another file', { ok: true, mtimeMs: 6, version: 'v-6' }],
+    ['refuses it for another reason', { ok: false, reason: 'conflict', message: 'The file changed on disk.' }],
+  ]) {
+    test(`the self-test's save-guard probe fails when the shell ${shell}`, async ({ page }) => {
+      const text = '# A document\n\nWith a paragraph.\n';
+      const sibling = { path: '/notes/kites-self-test-sibling.md', name: 'kites-self-test-sibling.md', text: '# A sibling\n', mtimeMs: 5, version: 'v-sibling', readOnly: null, reason: 'reload' };
+      await withShell(page, {
+        doc: { path: '/notes/doc.md', name: 'doc.md', text, mtimeMs: 1000, version: 'v-1000', readOnly: null, reason: 'initial' },
+        disk: { [sibling.path]: sibling },
+        selfTest: true,
+      });
+      await page.addInitScript((a) => {
+        const inner = window.__TAURI__.core.invoke;
+        window.__TAURI__.core.invoke = (cmd, args) => (cmd === 'mdv_save_document' ? Promise.resolve(a) : inner(cmd, args));
+      }, answer);
+      await page.addInitScript({ path: repo('desktop/src-tauri/src/self-test.js') });
+      await page.goto('markdown-viewer.html');
+      const report = await page.waitForFunction(() => window.__shell && window.__shell.report, null, { timeout: 60_000 }).then((h) => h.jsonValue());
+      expect(report.bridge.saveOtherFile.refused).toBe(false);
+      expect(report.bridge.allRefused).toBe(false);
+      expect(report.failures.join(' ')).toMatch(/saveOtherFile/);
     });
-    // A broken shell: every save succeeds, wherever it goes.
-    await page.addInitScript(() => {
-      const inner = window.__TAURI__.core.invoke;
-      window.__TAURI__.core.invoke = (cmd, args) => (cmd === 'mdv_save_document' ? Promise.resolve({ ok: true, mtimeMs: 6, version: 'v-6' }) : inner(cmd, args));
-    });
-    await page.addInitScript({ path: repo('desktop/src-tauri/src/self-test.js') });
-    await page.goto('markdown-viewer.html');
-    const report = await page.waitForFunction(() => window.__shell && window.__shell.report, null, { timeout: 60_000 }).then((h) => h.jsonValue());
-    expect(report.bridge.saveOtherFile.refused).toBe(false);
-    expect(report.bridge.allRefused).toBe(false);
-    expect(report.failures.join(' ')).toMatch(/saveOtherFile/);
-  });
+  }
 });
