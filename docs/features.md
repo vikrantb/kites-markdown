@@ -168,9 +168,9 @@ Every way the folder opens a document (the sidebar, quick open, search in files,
 - **Filter:** typing narrows the tree to the files whose paths hold every word typed, with the words marked, and says
   how many match. Down moves into the tree, Enter opens the first match (and moves into it), Esc clears it.
 - **Keyboard (WAI-ARIA tree):** one row is in the Tab order; Up and Down move, Right opens a folder (then moves into it),
-  Left closes it (then moves to its parent), Home and End, typing a name's first letters moves to it. **Enter** opens a
-  file and moves the keyboard focus into the document, so Space and the arrows scroll it; **Space** opens it and stays
-  in the tree, to look through files. **`Ctrl/Cmd+Shift+E`** comes back to the tree from anywhere, showing the sidebar
+  Left closes it (then moves to its parent), Home and End, typing a name's first letters moves to it (`?` stays the
+  shortcuts sheet). **Enter**, or a click, opens a file and moves the keyboard focus into the document, so Space and the
+  arrows scroll it; **Space** opens it and stays in the tree, to look through files. **`Ctrl/Cmd+Shift+E`** comes back to the tree from anywhere, showing the sidebar
   first when it is hidden. Rows carry `role="treeitem"`, `aria-level`, `aria-setsize`, `aria-posinset`, folders
   `aria-expanded`, and the current document `aria-selected` and `aria-current`.
 - **The toolbar:** the folder button and the recent-documents menu sit at its left. Between 901 and 1,180 px they take

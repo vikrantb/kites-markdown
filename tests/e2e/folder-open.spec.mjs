@@ -130,7 +130,7 @@ test('a document the load seam declines leaves nothing behind for a later render
   expect(problems).toEqual([]);
 });
 
-test('Enter on a file in the sidebar moves the keyboard into the document; Space in the tree only opens; Ctrl/Cmd+Shift+E comes back', async ({ page }) => {
+test('Enter or a click on a file in the sidebar moves the keyboard into the document; Space in the tree only opens; Ctrl/Cmd+Shift+E comes back', async ({ page }) => {
   const problems = await start(page);
   await seed(page, { 'long.md': LONG });
   await openFolder(page);
@@ -163,5 +163,19 @@ test('Enter on a file in the sidebar moves the keyboard into the document; Space
   await page.press('#mdvFolderFilter', 'Enter');
   await expectTitle(page, 'Status');
   await expect.poll(() => page.evaluate(() => document.getElementById('mdBody').contains(document.activeElement))).toBe(true);
+  await page.fill('#mdvFolderFilter', '');
+  await page.press('#mdvFolderFilter', 'Escape');
+  // A click: the reader goes on with Space to read.
+  await tree.locator('[data-path="long.md"]').click();
+  await expectTitle(page, 'Long handoff');
+  await expect.poll(() => page.evaluate(() => document.getElementById('mdBody').contains(document.activeElement))).toBe(true);
+  const before = await scrollY(page);
+  await page.keyboard.press(' ');
+  await expect.poll(() => scrollY(page)).toBeGreaterThan(before + 200);
+  // '?' in the tree is the shortcuts sheet, not a name to jump to.
+  await page.keyboard.press('Control+Shift+E');
+  await expect(tree.locator('[data-path="long.md"]')).toBeFocused();
+  await page.keyboard.press('?');
+  await expect(page.locator('#shortcutsOverlay')).toBeVisible();
   expect(problems).toEqual([]);
 });

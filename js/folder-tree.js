@@ -9,10 +9,10 @@
 // The tree follows the WAI-ARIA tree pattern as a flat list: each row is a treeitem with aria-level,
 // aria-setsize and aria-posinset, folders carry aria-expanded, and one row at a time is in the Tab order.
 // Keys: Up and Down move, Right opens a folder (or moves into it), Left closes it (or moves to its parent),
-// Home and End, typing a name's first letters moves to it. Enter opens a file and moves the keyboard focus into
-// the document (Space and the arrows then scroll it); Space opens it and stays in the tree, to look through files.
-// From the filter box, Down moves into the tree and Enter opens the first match. Cmd/Ctrl+Shift+E comes back to the
-// tree from anywhere (showing the sidebar when it is hidden).
+// Home and End, typing a name's first letters moves to it ('?' stays the shortcuts sheet). Enter (or a click) opens
+// a file and moves the keyboard focus into the document, so Space and the arrows then scroll it; Space opens it and
+// stays in the tree, to look through files. From the filter box, Down moves into the tree and Enter opens the first
+// match. Cmd/Ctrl+Shift+E comes back to the tree from anywhere (showing the sidebar when it is hidden).
 //
 // Names come from the file system and are only ever set as text, never parsed as HTML.
 
@@ -452,7 +452,7 @@ function mdvTreeToggleDir(rel, open) {
   return true;
 }
 
-// focus: the keyboard focus moves into the document once it is shown (Enter), rather than staying here (Space, a click).
+// focus: the keyboard focus moves into the document once it is shown (Enter, a click), rather than staying here (Space).
 function mdvTreeOpenFileRow(node, event, { focus = false } = {}) {
   const newWindow = !!(event && (event.metaKey || event.ctrlKey));
   if (mdvTreeNarrow.matches && !newWindow) mdvTreeShow(false, { persist: false });
@@ -466,7 +466,7 @@ function mdvTreeClick(e) {
   if (!row) return;
   mdvTreeSetFocusRel(row.node.rel, true);
   if (row.node.type === 'dir') mdvTreeToggleDir(row.node.rel);
-  else mdvTreeOpenFileRow(row.node, e);
+  else mdvTreeOpenFileRow(row.node, e, { focus: true });
 }
 
 function mdvTreeKeydown(e) {
@@ -507,8 +507,9 @@ function mdvTreeKeydown(e) {
     default:
       break;
   }
-  // Type-ahead: the next row whose name starts with what was typed in the last half second.
-  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && /\S/.test(e.key)) {
+  // Type-ahead: the next row whose name starts with what was typed in the last half second. '?' is left to the
+  // shortcuts sheet (app.js).
+  if (e.key.length === 1 && e.key !== '?' && !e.ctrlKey && !e.metaKey && !e.altKey && /\S/.test(e.key)) {
     handled();
     const now = Date.now();
     mdvTree.typed = (now - mdvTree.typedAt < 600 ? mdvTree.typed : '') + e.key.toLowerCase();
