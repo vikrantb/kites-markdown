@@ -4,7 +4,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { renderSource } from './visuals-helpers.mjs';
-import { exportHtml, inspect, menu, openDoc, repo, toast } from './export-helpers.mjs';
+import { SECTIONS, exportHtml, inspect, menu, openDoc, repo, toast } from './export-helpers.mjs';
 
 const focusMode = (page) => page.evaluate(() => document.body.classList.contains('focus-mode'));
 
@@ -57,6 +57,23 @@ test('a document cannot take the ids of elements the viewer makes later: the sea
   // The expanded diagram gets its 1:1 button.
   await page.locator('#mdBody .mermaid-wrapper').first().click();
   await expect(page.locator('#diagramOverlay #diagramActualBtn')).toBeVisible();
+});
+
+test('the Export scripts leave the comment code its own functions: a block is hashed by its text without its comment chip', async ({ page }) => {
+  // The scripts share one global scope. copy.js once declared its own mdvBlockText, which replaced the comment code's
+  // (the text a thread's anchor is hashed from) for every script; scripts/check-js.mjs now refuses a name declared twice.
+  await openDoc(page, SECTIONS);
+  const r = await page.evaluate(() => {
+    const p = document.querySelector('#mdBody p');
+    const chip = document.createElement('span');
+    chip.className = 'mdv-chip';
+    chip.textContent = '\u{1F4AC} 2';
+    p.appendChild(chip);
+    const text = mdvBlockText(p);
+    chip.remove();
+    return { text, own: p.textContent.trim() };
+  });
+  expect(r.text).toBe(r.own);
 });
 
 test('Export HTML embeds only images: a file named with an image extension in its fragment or query, or whose bytes are not an image, stays out', async ({ page }) => {

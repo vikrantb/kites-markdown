@@ -369,22 +369,22 @@ async function mdvDiagramToPng({ img, xml, width, height, background }) {
 }
 
 // ---------- Plain text ----------
-const MDV_TEXT_BLOCK = /^(address|article|aside|blockquote|dd|details|div|dl|dt|figcaption|figure|footer|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|summary|table|ul)$/;
-const MDV_TEXT_LEAVES = 'p, li, dt, dd, h1, h2, h3, h4, h5, h6, pre, table, hr, .mermaid-wrapper, .katex-display';
+const MDV_PLAIN_BLOCK = /^(address|article|aside|blockquote|dd|details|div|dl|dt|figcaption|figure|footer|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|summary|table|ul)$/;
+const MDV_PLAIN_LEAVES = 'p, li, dt, dd, h1, h2, h3, h4, h5, h6, pre, table, hr, .mermaid-wrapper, .katex-display';
 
 // A copy of more than one block reads as Markdown does: "## " before a heading and a ``` fence (with the code's
 // language) around a code block, so it pastes into an agent's prompt, a terminal, an issue or a chat as written.
 // A copy inside one block (a word, part of a line of code) is only its text. `local`: links resolved to this
 // computer (mdvResolveLinks), whose address the text leaves out, as it does a relative link's.
 function mdvPlainText(root, { local = null } = {}) {
-  const ctx = { markdown: root.querySelectorAll(MDV_TEXT_LEAVES).length > 1, local };
-  return mdvTextBlocks(root, ctx).join('\n\n')
+  const ctx = { markdown: root.querySelectorAll(MDV_PLAIN_LEAVES).length > 1, local };
+  return mdvPlainBlocks(root, ctx).join('\n\n')
     .replace(/☐ ?/g, '[ ] ').replace(/☑ ?/g, '[x] ')
     .replace(/\n{3,}/g, '\n\n').trim() + '\n';
 }
 
 // The block-level pieces of a container, each a string of one or more lines.
-function mdvTextBlocks(container, ctx) {
+function mdvPlainBlocks(container, ctx) {
   const blocks = [];
   let inline = '';
   const flush = () => {
@@ -393,23 +393,23 @@ function mdvTextBlocks(container, ctx) {
     inline = '';
   };
   for (const node of container.childNodes) {
-    if (node.nodeType === 1 && mdvIsTextBlock(node)) {
+    if (node.nodeType === 1 && mdvIsPlainBlock(node)) {
       flush();
-      const b = mdvBlockText(node, ctx);
+      const b = mdvPlainBlock(node, ctx);
       if (b) blocks.push(b);
     } else {
-      inline += mdvInlineText(node, ctx);
+      inline += mdvPlainInline(node, ctx);
     }
   }
   flush();
   return blocks;
 }
 
-function mdvIsTextBlock(el) {
-  return MDV_TEXT_BLOCK.test(el.localName) || el.classList.contains('mermaid-wrapper') || el.classList.contains('katex-display');
+function mdvIsPlainBlock(el) {
+  return MDV_PLAIN_BLOCK.test(el.localName) || el.classList.contains('mermaid-wrapper') || el.classList.contains('katex-display');
 }
 
-function mdvBlockText(el, ctx) {
+function mdvPlainBlock(el, ctx) {
   const tag = el.localName;
   if (el.classList.contains('mermaid-wrapper')) {
     const img = el.querySelector('img[alt]');
@@ -417,7 +417,7 @@ function mdvBlockText(el, ctx) {
   }
   if (el.classList.contains('katex-display')) {
     const k = el.querySelector('[data-tex]');
-    return k ? `$$${k.getAttribute('data-tex')}$$` : mdvInlineText(el, ctx).trim();
+    return k ? `$$${k.getAttribute('data-tex')}$$` : mdvPlainInline(el, ctx).trim();
   }
   if (tag === 'hr') return '---';
   if (tag === 'pre') {
@@ -428,32 +428,32 @@ function mdvBlockText(el, ctx) {
     return `${fence}${lang ? lang[1] : ''}\n${code}\n${fence}`;
   }
   if (/^h[1-6]$/.test(tag)) {
-    const words = mdvTextBlocks(el, ctx).join(' ');
+    const words = mdvPlainBlocks(el, ctx).join(' ');
     return ctx.markdown && words ? `${'#'.repeat(Number(tag[1]))} ${words}` : words;
   }
-  if (tag === 'ul' || tag === 'ol') return mdvListText(el, ctx);
+  if (tag === 'ul' || tag === 'ol') return mdvPlainList(el, ctx);
   if (tag === 'table') {
     return Array.from(el.rows).map((row) => Array.from(row.cells)
-      .map((cell) => mdvInlineText(cell, ctx).replace(/\s+/g, ' ').trim()).join('\t')).join('\n');
+      .map((cell) => mdvPlainInline(cell, ctx).replace(/\s+/g, ' ').trim()).join('\t')).join('\n');
   }
-  if (tag === 'blockquote') return mdvTextBlocks(el, ctx).join('\n\n').split('\n').map((l) => (l ? '> ' + l : '>')).join('\n');
-  return mdvTextBlocks(el, ctx).join('\n\n');
+  if (tag === 'blockquote') return mdvPlainBlocks(el, ctx).join('\n\n').split('\n').map((l) => (l ? '> ' + l : '>')).join('\n');
+  return mdvPlainBlocks(el, ctx).join('\n\n');
 }
 
-function mdvListText(list, ctx) {
+function mdvPlainList(list, ctx) {
   let n = Number(list.getAttribute('start')) || 1;
   const lines = [];
   for (const li of list.children) {
     if (li.localName !== 'li') continue;
     const marker = list.localName === 'ol' ? `${n++}. ` : '- ';
-    const [first, ...rest] = mdvTextBlocks(li, ctx).join('\n').split('\n');
+    const [first, ...rest] = mdvPlainBlocks(li, ctx).join('\n').split('\n');
     lines.push(marker + (first || ''));
     for (const line of rest) lines.push(' '.repeat(marker.length) + line);
   }
   return lines.join('\n');
 }
 
-function mdvInlineText(node, ctx) {
+function mdvPlainInline(node, ctx) {
   if (node.nodeType === 3) return node.nodeValue.replace(/\s+/g, ' ');
   if (node.nodeType !== 1) return '';
   const el = node;
@@ -469,7 +469,7 @@ function mdvInlineText(node, ctx) {
   const caption = el.getAttribute('data-mdv-caption');
   if (caption === 'alt') return '';
   let s = '';
-  for (const c of el.childNodes) s += mdvInlineText(c, ctx);
+  for (const c of el.childNodes) s += mdvPlainInline(c, ctx);
   if (caption === 'own') return '\n' + s.trim();
   // 2^10, not 210; a footnote mark (a link alone in its <sup>) stays [1].
   if (tag === 'sup' && !(el.children.length === 1 && el.firstElementChild.localName === 'a')) return '^' + s;
