@@ -1084,7 +1084,8 @@ async function mdvPickFile() {
 
 // Opens a file through its handle and links the document to it. opts.prompt === false: never ask for
 // permission (no user gesture, e.g. the startup restore). opts.ifSeq: give up if another document was opened
-// since that load count.
+// since that load count. opts.wanted: give up when it returns false once the file has been read (the load seam,
+// js/files.js: a newer open overtook this one while the file was read).
 async function mdvOpenWithHandle(handle, opts) {
   opts = opts || {};
   let perm = 'prompt';
@@ -1099,6 +1100,7 @@ async function mdvOpenWithHandle(handle, opts) {
     return false;
   }
   if (opts.ifSeq != null && opts.ifSeq !== mdvLoadSeq) return false;
+  if (typeof opts.wanted === 'function' && !opts.wanted()) return false;
   // A version that cannot be rendered never replaces the page on screen (see mdvReloadFromDisk)
   const check = mdvBuildContent(disk.text, mdvRandomKey());
   if (!check.ok) {

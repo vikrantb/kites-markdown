@@ -42,6 +42,7 @@ Before a document is loaded, the body shows a welcome screen with a drop zone, a
 
 | Control | Tooltip | What it does | Implementing function |
 |---|---|---|---|
+| `‹` / `›` | Back to *name* (Alt+←) / Forward to *name* (Alt+→) | Back and forward between the documents you opened (see [Back and forward](#back-and-forward)). Shown once there is somewhere to go; each names the document it goes to, and the one with nowhere to go is dimmed. | `mdvHistoryBack`, `mdvHistoryForward` (`js/history.js`) |
 | Title | — | Shows the file name. | `renderMarkdown` |
 | Breadcrumb | — | Shows the file path if the title contains `/`. When you scroll, it shows the current heading. Hidden at 900 px wide or less. | `renderMarkdown`, `setupScrollSpy` |
 | Reading meta | — | Word count and estimated minutes at 230 words per minute. Hidden at 900 px wide or less. | `renderMarkdown` |
@@ -70,14 +71,14 @@ There are seven ways to get a document into the viewer. They differ in one impor
 | Method | How | Writable? | Implementing function |
 |---|---|---|---|
 | **Open** button or `Ctrl/Cmd+O` | Hidden `<input type="file">` that accepts `text/*`, `.md`, `.markdown` and `.mdx` | No. If a workspace folder is set and holds a file with the same name, the viewer links to that file. | `handleFileInput`, `readFile`, `mdvTryWorkspaceMatch` |
-| Drag and drop | Drop a file anywhere on the page. Only `.md`, `.markdown`, `.mdx`, `.txt` and `.text` are accepted. | No, apart from the same workspace-folder match | `document.body` `drop` listener, `readFile` |
+| Drag and drop | Drop a file anywhere on the page. Only `.md`, `.markdown`, `.mdx`, `.txt` and `.text` are accepted. In Chromium the file is read through a handle (`getAsFileSystemHandle`), so live reload follows it; comments ask for permission to save into it the first time. | Chromium: with permission. Elsewhere no, apart from the same workspace-folder match | `document.body` `drop` listener, `mdvOpenFileHandle` or `readFile` |
 | Paste | Paste more than 10 characters of text anywhere (except while search is open) | No | `document` `paste` listener |
 | `?file=` URL parameter | `markdown-viewer.html?file=path/to/doc.md` | No | `loadFromUrl` |
 | `#demo` URL hash | `markdown-viewer.html#demo` with no `?file=` loads a built-in demo document | No | `loadFromUrl`, `loadDemo` |
 | Writable open (file-plus icon) | File System Access picker for `.md`, `.markdown` and `.txt` | Yes (Chromium only) | `mdvPickFile`, `mdvOpenWithHandle` |
 | Automatic reopen | When the page loads, it reopens the last file opened with write access. The `load` listener checks for read permission, then `mdvOpenWithHandle` asks for read-write permission if it is not already granted. Without a user gesture that request is expected to fail silently, so in practice the reopen happens only while read-write access is still granted *(inferred)* | Yes | `load` listener using `mdvGetHandle('current')`, `mdvOpenWithHandle` |
 
-After a file is opened with the Open button or by drag and drop, the viewer rewrites the address bar to `?file=<name>` and sets the tab title to `<name> - Markdown Viewer` (`updateUrl`). A paste uses the fixed name `pasted`. Only the file name is used, so reloading that address loads the file only if a server can supply it under that name.
+Every way of opening a document ends in one function, `mdvOpenDocument` (`js/files.js`; see [the load seam](#the-load-seam-for-other-features)), and each document becomes a place in the tab's history ([Back and forward](#back-and-forward)). The address bar follows the document: after the Open button or drag and drop it reads `?file=<name>`, after a paste `?file=pasted` (as before), after a `?file=` link or a link followed inside the viewer `?file=<path>`, and a file opened through a handle (the writable open, the folder) has no `?file=`, so reloading the page reopens the last file. Only the file name is used for a chosen or dropped file, so reloading that address loads it only if a server can supply it under that name. The tab title is `<name> - Markdown Viewer` for every document (`mdvShowTitle`).
 
 ### How `?file=` is resolved
 
@@ -98,7 +99,7 @@ Implemented by `loadFromUrl`.
 
 - **The `file://` limitation.** Browsers do not let a page opened from disk `fetch` other files on disk. When the viewer is opened as a `file://` URL, `?file=` cannot load anything. The viewer instead shows a drop zone titled "Open: *name*", a **Browse to *name*** button, and a suggestion to serve the folder with `python3 -m http.server 8080 --bind 127.0.0.1`.
 - **Workspace Root Path** (Settings) is a **URL prefix** that is tried second. Despite the placeholder `/path/to/your/workspace/`, it is not a filesystem path. It is joined to the `?file=` value and fetched from the same server, so it helps only if the server exposes that path *(inferred from `loadFromUrl`)*. `saveBasePath` adds a trailing `/` if it is missing. The setting is stored in `localStorage` under `mdv-basepath`.
-- When a file loads through `?file=` or the writable open, the tab title is not updated: `loadFromUrl` and `mdvOpenWithHandle` do not call `updateUrl`.
+- Until wave 2, a file loaded through `?file=` or the writable open left the tab title at "Markdown Viewer"; every document now sets it.
 
 ### Linking a file to a save location
 
@@ -106,6 +107,145 @@ These two buttons only matter for comments:
 
 - **File-plus icon** (`mdvOpenOrSetSaveLocation`). With no document loaded, it opens a writable file. With a document that has no writable handle and was read from a file (opened with Open, by drag and drop or through `?file=`), it opens an **Open** dialog: pick that same file, and the first save checks that it still holds the version you opened (a file changed since, or a different file, gets a conflict notice instead of being overwritten). Pasted text gets a **Save As** dialog and is written into that new file straight away. Unsaved comment changes are saved straight away too. In browsers without the File System Access API, and for a file whose comments are read-only, it opens the file chooser.
 - **Folder icon** (`mdvPickWorkspace`). You pick a folder once with read-write permission. The handle is stored in IndexedDB (`mdv-viewer` database, `handles` store, key `workspace`). Later, when you open a file whose name matches a file at the top level of that folder, the viewer links to it with no prompt (`mdvTryWorkspaceMatch` uses `getFileHandle(filename)`, so subfolders are not searched).
+
+---
+
+## Following documents: live reload, Back and Forward, and links
+
+Status reports, plans and handoffs change while they are read, and they link to each other. Three features
+serve that reader. Their code is `js/live-reload.js` (and what it shows, `js/live-notes.js`), `js/history.js`, `js/document-links.js`,
+the reader's place in `js/reading-place.js` and the load seam in `js/files.js`; their browser tests are `tests/e2e/live*.spec.mjs`.
+
+![Back and Forward at the left of the toolbar; the note that says what changed, the changed block marked, and the "Newer version on disk" mark at the right; the "Changed on disk: reload?" question; in the light, sepia and dark themes](images/live-reload-and-history.png)
+
+### Live reload
+
+When the file of the document on screen changes, the viewer shows the new version **where you are reading**: the
+words at the top of the window (the paragraph, list item, table row, code block or heading under the toolbar) stay
+at the same height on screen, whatever was added or renamed above them **(tested: a newest-first log that gained a
+day, a handoff that gained a "### Details" above the reader, text added above and the reader's heading renamed)**.
+The place is found by those words and the headings of the sections around them, never by a heading's id:
+markdown-it-anchor numbers headings that share a name (`notes`, `notes-1`, …), so a heading added above renumbers
+every later one. When the reader's own words changed, the heading above them is found the same way; with neither,
+the same proportion of the page. Sections you folded stay folded and `<details>` you opened stay open **(tested)**.
+
+The blocks that changed are marked for a moment, and a quiet note at the top right says where: **Updated: Status**,
+or **Updated: Status and 2 more** (`mdvLiveAnnounce`) **(tested)**. A reload is not a new place in Back/Forward.
+
+| The document came from | How a change is noticed | How often |
+|---|---|---|
+| A file opened with a handle (dropped on the page in Chromium, the writable open, the automatic reopen, a workspace match, a folder) | the file's modification time and size (`getFile()`); the text is read only when one of them moves | every 1.5 s |
+| A `?file=` link, or a link followed inside the viewer, over `http(s)` | a request, conditional (`If-None-Match` / `If-Modified-Since`) when the server sends validators, so that an unchanged file costs a `304` and no body | every 2 s |
+| The desktop app, the window's own file | the shell watches it; `js/host.js` shows the new version, this adds the note | on change |
+| The desktop app, a document opened in the window from a link | the shell does not watch it, so the page reads it through the bridge | every 2 s |
+
+- **Only while the page is visible.** A hidden tab or minimised window looks at nothing; when it is shown again
+  it looks at once **(tested)**.
+- **What a look costs.** For a file opened with a handle, the time and size (no read) every 1.5 s; its text is read
+  only when one of them moves. Over http, a `304` with no body when the server sends `ETag` or `Last-Modified`
+  (Python's `http.server` sends `Last-Modified`); otherwise the whole file. A file over 1 MB that is read whole on
+  each look (the desktop bridge, a server without validators) is looked at every 10 s. A look that fails (the server
+  answers with an error, or does not answer) waits twice as long each time, up to 30 s, and the first look that
+  succeeds goes back to the normal pace **(tested)**.
+- **A look that never answers is given up after 8 s**, so a server that hangs or a network volume that stalls never
+  stops the looks that follow, and a look about a document no longer on screen is dropped **(tested)**.
+- **A file that is not on disk** (removed, renamed, a branch switch) says so at the top right: "*name* is not on
+  disk: the last version stays here". It is asked about every 4 s over http (each miss is a line in the browser's
+  console) and at the usual pace otherwise, so it shows within a few seconds of coming back **(tested)**.
+- **Never a half-written file.** A program that saves by emptying the file and then writing it would otherwise be
+  caught in between, and you would lose your place to an empty page. A new version is shown when two looks 300 ms
+  apart agree **(tested)**. A file that keeps changing (an agent writing into it all the time) is shown at every third
+  look that sees another version instead of never, and is not read more than once per look; an empty version is
+  never shown while the file is changing **(tested)**.
+- **Whole-second time stamps are not trusted while they are fresh.** Two versions saved within one second can
+  share a `Last-Modified`; a conditional request with it could be told "not modified" about the second one. A
+  response whose `Last-Modified` is less than 2 s older than its `Date` is not used as a validator, and the next
+  look asks for the whole file **(tested)**.
+- **The viewer's own comment saves are not changes.** The text on disk is compared with the version the comment
+  code last read or wrote (`mdvBases`), so saving a comment never reloads the page **(tested)**. Nothing is looked at
+  while a comment save is writing the file **(tested)**, and a change found while one starts is left to the comment
+  code, which refuses to write over another program's change.
+- **Unsaved comment work is never replaced.** If the document has comment changes that are not in its file yet (a
+  change not written, a save in flight, a conflict or error notice for this document), a question appears at the
+  bottom instead: **Changed on disk: reload?** **Reload** (or `Alt+R`) shows the new version, and the comment changes
+  stay in the comments panel to download (the comment code keeps the text of a document it no longer shows). **Not
+  now** keeps reading the current one, and a quiet mark at the top right, **Newer version on disk · Reload…**, stays
+  until you reload: later versions do not ask again (an agent saving every minute would ask every minute); the mark's
+  **Reload…** (or `Alt+R`) asks again with **Reload** focused **(tested)**. Comment changes that Back brings back
+  (below) count too. When the comment code is already asking about the file (its conflict notice offers **Reload from
+  disk**), nothing else asks **(tested)**. In the desktop app, the window's own file keeps its own question from
+  `js/host.js`.
+- **A comment being written holds the new version.** While the add-comment box is open (typed into or not) or a reply
+  has text in it, nothing is replaced and nothing asks: the mark says **Newer version on disk: shown when you close
+  the comment box**, and the new version is shown when the box closes (or asked about, when the comment left unsaved
+  work). Saving the box still works: the box never points at text that is gone **(tested)**.
+- **A copy says so.** The Open button (a file input) gives the page a snapshot of the file, not the file: the mark
+  says **A copy: changes to its file do not show here**, and in Chromium its **Follow…** opens the file itself through
+  the File System Access picker, in its place, after which it is followed **(tested)**. A file dropped on the page is
+  read through a handle in Chromium and followed **(tested)**. Not followed: pasted text, files dropped or chosen in
+  Firefox and Safari, and documents on a `file://` page, which cannot fetch.
+
+### Back and forward
+
+Every document you open is a place in the tab's own history, with your place in it: the file chooser, drag and
+drop, paste, `?file=` links, the writable open and links between documents **(tested)**; the folder sidebar and
+quick open show documents through the same seam. Go back and forward with:
+
+- `Alt+←` and `Alt+→` (`⌥←` and `⌥→` on a Mac), registered with `mdvRegisterShortcut`, and in the desktop app the
+  **Go** menu (`⌘[` and `⌘]` on a Mac);
+- the **‹** and **›** buttons at the left of the toolbar.
+
+These go to the previous or next **document**: they step over the places inside the document on screen (an
+in-document link such as a contents line, a heading's `#` permalink), and each button names the document it goes to
+**(tested)**. The browser's own Back and Forward buttons (and its `⌘[`, `⌘]`) move one place at a time, as always.
+
+Each document comes back as you left it **(tested)**: at the same words, with the focus on the link you followed
+out of it (so the keyboard goes on from there), and with the comment changes it had, still unsaved, so live reload
+asks before it replaces them **(tested)**. Its file is read again first, so the version on disk now is the one shown,
+never the old one first; when it changed while you were away, a note says **Updated since you left** **(tested)**.
+Following a link puts the focus at the new document's start **(tested)**. A link followed or a Back pressed while an
+earlier one is still reading its file wins, and the places stay right **(tested)**.
+
+After a reload of the page, Back and Forward still name and reach the documents: the places are kept in
+`sessionStorage` **(tested)**. A document that cannot be read again (a file opened through a handle, a removed file)
+says so, and the page and its address stay **(tested)**. With nowhere to go back to, `Alt+←` is left to the browser.
+
+### Links between documents
+
+A relative link to a Markdown file (`.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`, `.mdwn`, `.mdtxt`,
+`.mdtext`), in the document or in the links panel, opens **inside the viewer** instead of leaving it:
+
+| Where you are reading | The link is opened through | Cmd/Ctrl-click |
+|---|---|---|
+| A document of the open folder | the folder: `mdvFolder.resolve(from, href)`, then `mdvFolder.read(path)` | as below |
+| The desktop app | `mdvHost.readDocument`, in the same window **(tested with a stand-in shell, and in the macOS app by its self-test)** | opens it in a window of its own (`js/host.js`) |
+| A page served over `http(s)` | `fetch`, relative to the document's own address, not the viewer's **(tested)** | the viewer for that file, in a new tab **(tested)** |
+| A `file://` page | the browser's own behaviour | the browser's own behaviour |
+
+Over `http(s)` each such link carries the viewer's own address for its file (`markdown-viewer.html?file=…`), so every
+gesture the browser offers opens the viewer: a middle click, **Open link in new tab**, **Copy link address**, and the
+address the status bar shows **(tested)**. The link as the document wrote it is kept aside (`mdvLinkHref(a)`).
+
+A link with a `#fragment` opens at that heading or anchor, unfolded and focused; a link to the document on screen
+goes to its fragment like an in-document link. A file that cannot be read says so in a notice ("missing.md could
+not be opened: it was not found.") and the page stays where it is **(tested)**. Web, mail and `file:` links, and
+links to other kinds of file, keep their usual behaviour.
+
+### The load seam, for other features
+
+`mdvOpenDocument({name, text, path, handle, mtimeMs}, {push})` (`js/files.js`) is the one way to show a document.
+`push: true` (the default) makes it a new place in Back/Forward; `push: false` shows it in the current place (a
+reload, or Back itself). It keeps the reader's place when the same document is shown again, links the document to
+the handle it was read from (or to none), points the desktop bridge at the document's path, and sets the title.
+With a handle, text the comment code has not read through that handle is read again through `mdvOpenWithHandle`,
+so a comment save compares the file with what is shown. **The newest open wins:** an open that reads a file through a
+handle gives up before it renders when another open began (or another document was shown) meanwhile, and resolves
+`false`; `mdvOpenSeq` counts opens, so a caller can tell that it was overtaken rather than refused **(tested)**.
+Every render of a document, through the seam or not, is reported: `mdvShownDocument()` is the record of the document
+on screen, `mdvOnDocumentOpening(fn)` runs just before a document replaces the page and `mdvOnDocumentOpened(fn)` once
+it is shown, with an event whose `kind` is `first`, `open`, `reload` or `history`; `mdvOnDocumentDrawn(fn)` runs after
+every render, the comment code's own redraws included. Recent documents and other features that follow the document
+subscribe there.
 
 ---
 
@@ -424,10 +564,11 @@ Everything the viewer stores stays in the browser:
 | `localStorage` | `mdv-basepath` | workspace root URL prefix | `saveBasePath` |
 | `localStorage` | `mdv-author-name` | comment author name (read only; set it yourself) | — |
 | `localStorage` | `mdv-tts-rate` | read-aloud speed, 0.75 to 2 | `ttsCycleSpeed` |
-| IndexedDB `mdv-viewer`, store `handles` | `current` | handle of the last writable file | `mdvPutHandle` |
+| IndexedDB `mdv-viewer`, store `handles` | `current` | handle of the last file opened through a handle (the writable open; in Chromium also a dropped file), reopened when the page loads | `mdvPutHandle` |
 | IndexedDB `mdv-viewer`, store `handles` | `workspace` | handle of the workspace folder | `mdvPutHandle` |
+| `sessionStorage` (this tab only) | `mdv-history` | the tab's places for Back/Forward: each document's kind, path and name, the reader's place in it, the link they left by | `mdvHistorySave` |
 
-Not remembered: table-of-contents visibility, page width, focus mode, the read-aloud position, and which sections are collapsed.
+Not remembered: table-of-contents visibility, page width, focus mode, the read-aloud position, and which sections are collapsed (a new version of the document on screen keeps them folded, and so does Back to a document). Back/Forward lives in the tab's own session history (each entry's state names its document and its position), and `sessionStorage` keeps the tab's places (`mdv-history`: each document's kind, path, name, the reader's place in it and the link they left by) so they survive a reload of the page.
 
 ---
 
@@ -440,7 +581,7 @@ The global shortcuts come from one table, `MDV_SHORTCUTS` in `js/app.js`, which 
 - **Caps Lock and Shift do not change the letter.** The key is compared case-insensitively, so `Ctrl+K` works with Caps Lock on, and `Ctrl+Shift+F` works whether the browser reports `F` or `f`. Before, Caps Lock silently disabled `Ctrl+K`, `Ctrl+B` and `Ctrl+O`, and Caps Lock with Shift disabled `Ctrl+Shift+F` and `Ctrl+Shift+R` on Windows.
 - **Shift is part of a letter shortcut.** `Ctrl+B` does not fire for `Ctrl+Shift+B` (the browser's bookmarks bar), nor `Ctrl+O` for `Ctrl+Shift+O`. For punctuation (`\`, `.`, `?`) Shift is ignored, because some layouts need it to type the character.
 - **Other keyboard layouts.** On a layout whose letters are not Latin (Russian, Greek, Hebrew…), the physical key decides, as it does for the browser's own shortcuts: `Ctrl` with the key labelled K on a US keyboard opens search. `Ctrl+\` and `Ctrl+.` also match by physical key, so they work on layouts that put those characters elsewhere (on a German keyboard that key types `#`).
-- **Alt (AltGr) is never part of a shortcut**, so typing a character with AltGr (`Ctrl+Alt` on Windows) never triggers one.
+- **Alt is part of a shortcut only when the shortcut says so** (`Alt+←` and `Alt+→`). A shortcut without Alt never matches with Alt held, so typing a character with AltGr (`Ctrl+Alt` on Windows) never triggers one. For a named key such as an arrow, Shift must match too.
 - **Typing is not a shortcut.** The shortcuts are ignored while the focus is in a text field (a text `input`, a `textarea`, a `select` or editable content), and while an input method is composing. A focused checkbox (a task-list item) or button does not count as a text field.
 - **While a dialog is open** (search, the shortcuts sheet, the image lightbox or the expanded diagram), only `Esc` and the dialog's own toggle work: `Ctrl/Cmd+K` closes search, `?` closes the shortcuts sheet. The other shortcuts are kept from the browser too, and from the comments sidebar's `Ctrl/Cmd+Shift+C`; `Ctrl/Cmd+S` still saves, and a `?` typed into the search box is text **(tested)**.
 
@@ -454,6 +595,8 @@ The global shortcuts come from one table, `MDV_SHORTCUTS` in `js/app.js`, which 
 | `Ctrl/Cmd+Shift+R` | Open or close the read-aloud player | anywhere except text fields | → `ttsToggle` |
 | `Ctrl/Cmd+O` | Open a file (read-only picker) | anywhere except text fields | → clicks the hidden file input |
 | `?` | Show or hide the shortcuts sheet | anywhere except text fields | global `keydown` listener → `toggleShortcuts` |
+| `Alt+←` / `Alt+→` (`⌥←` / `⌥→` on a Mac) | Back / forward to the previous / next document, over the places inside the one on screen; with nowhere to go, the key is left to the browser | anywhere except text fields | `mdvRegisterShortcut` rows from `js/history.js` → `mdvHistoryBack` / `mdvHistoryForward` |
+| `Alt+R` (`⌥R` on a Mac) | While a newer version of the document waits: Reload it from the "Changed on disk" question, or ask again from the "Newer version on disk" mark (with Reload focused); otherwise the key is left to the browser | anywhere except text fields | `mdvRegisterShortcut` row from `js/live-notes.js` |
 | `Esc` | Close the open dialog (search, the shortcuts sheet or the image lightbox), giving the focus back; with none open, close the slide-in outline on narrow screens | anywhere | global `keydown` listener |
 | `Esc` | Close the diagram overlay | while it is open | separate `keydown` listener |
 | `↑` / `↓` | Move the selection in search results (wraps around) | search box | `handleSearchKeys` |
@@ -469,6 +612,8 @@ The global shortcuts come from one table, `MDV_SHORTCUTS` in `js/app.js`, which 
 | Mouse wheel | Zoom the diagram | diagram overlay | `wheel` listener on `diagramBody` |
 | `Shift`+right-click | Native browser context menu instead of the comment menu | document body | `mdvAttachContextMenu` |
 
+Other scripts add their shortcuts with `mdvRegisterShortcut(combo, fn, description)` (`js/app.js`): `combo` is modifiers and a key joined by `+` (`Mod`, `Shift`, `Alt`; a character or a key's name such as `ArrowLeft`), and the row joins the same table, so the key handler and the sheet both have it. A `fn` that returns `false` leaves the key to the browser. Keys another shortcut already has are refused (it returns `false` and warns in the console). A script that loads before `app.js` registers from a `DOMContentLoaded` listener.
+
 The `?` sheet is drawn from `MDV_SHORTCUTS` the first time it opens (`mdvRenderShortcutSheet`): it lists every global shortcut, the comment shortcuts and `Esc`, in the platform's own key names (`⌘` and `⇧` on a Mac, `Ctrl` and `Shift` elsewhere), with a Close button. It used to be static markup that left out the comment shortcuts, said `Ctrl` on a Mac, and showed the backslash twice.
 
 ---
@@ -482,6 +627,8 @@ All reading features use standard web APIs. Saving to disk is the one area that 
 | Rendering, table of contents, search, themes, diagrams, math, lightbox | DOM; `ResizeObserver` (the section rail's label or track mode, and the scroll cues of wide tables; both skipped where it is missing); `checkVisibility()` (the scroll spy, with a `getClientRects()` fallback); `inert` (dialogs: Chrome 102, Firefox 112, Safari 15.5 and later) | Yes | Yes *(not tested)* | Yes *(not tested)* |
 | Open by button, drag and drop, or paste | `FileReader`, drag-and-drop events, `paste` | Yes | Yes *(not tested)* | Yes *(not tested)* |
 | `?file=` auto-load | `fetch` | Only over `http(s)`, not `file://` | Same | Same |
+| Live reload | `FileSystemFileHandle.getFile()` (a file opened with a handle); `fetch` with `If-None-Match`/`If-Modified-Since` (over `http(s)`); `visibilitychange` | Yes | Over `http(s)` only *(not tested)* | Same as Firefox |
+| Back/Forward, links that open in the viewer | `history.pushState` and `popstate`; `fetch` over `http(s)` | Yes | Yes *(not tested)* | Yes *(not tested)* |
 | Writable open, save in place, automatic reopen | File System Access API: `showOpenFilePicker`, `showSaveFilePicker`, `FileSystemHandle.queryPermission`/`requestPermission`, `createWritable` | Yes | No | No |
 | Workspace folder | `showDirectoryPicker`, handles kept in IndexedDB | Yes | No (toast: "This browser does not support workspace folders") | No |
 | Adding comments | DOM only (the anchor hash is computed in JavaScript) | Yes | Yes *(not tested)* | Yes *(not tested)* |
@@ -503,4 +650,7 @@ Notes:
 These are behaviours of the code as of the initial import. Planned fixes belong in [roadmap.md](roadmap.md). Fixed since, and removed from this list: the copy button copying the header (roadmap issue 13), diagram nodes that never linked (14), frontmatter abbreviations (15), diagrams keeping their old colours after a theme change (9), the minimap stopping the title's fold toggle, approximate expanded-view titles (16), dollar signs turning into math, inside code too (8: math is a markdown-it rule now, `js/math.js`), and an empty `status:` or `date:` in frontmatter blanking the page (17: every dashboard field is read as text, `mdvFrontmatterText`, and a render failure shows the error with the document's text). Both are tested in `render-correctness.spec.mjs`.
 
 - **Paste opens pasted text as a new document.** Pasting more than 10 characters anywhere on the page outside a text field (and outside search) replaces the open document with the pasted text and unlinks the opened file, so a later comment save cannot write the pasted text over it. Pastes into text fields (comment boxes, settings) stay in the field. Until the initial import, a paste into a text field also replaced the document and kept the file linked; both were fixed and verified in Chrome.
+- **Live reload follows files the viewer can read again.** A file dropped or chosen with the Open button (no handle), pasted text, and any document on a `file://` page are not followed.
+- **Back/Forward after reloading the page.** The tab keeps its entries, and a `?file=` link or a desktop path is read again; a file that was opened through a handle in the earlier page can no longer be, and a notice says so.
+- **The desktop app, a document opened in the window from a link:** the shell watches and saves only the window's own file. Such a document is read again every 2 s to follow it, a comment on it is not saved into its file (the comments panel says "A window saves only into the file it opened" and keeps the comment to download; Cmd/Ctrl-click the link to open it in a window of its own), View → Reload reloads only the window's own file, the window's title keeps that file's name, and images outside the folders of the documents opened in this session do not load.
 - ~~**`#demo` loads without the commenting layer.**~~ Fixed 2026-10-10: `comments.js` renders a document that was shown before it loaded once more through its hook.

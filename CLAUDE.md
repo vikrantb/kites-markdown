@@ -12,9 +12,9 @@ keep it that way: no product names, private paths or project-specific examples.
 
 | Path | What it is |
 |---|---|
-| `markdown-viewer.html` | The app's markup. It loads `css/viewer.css` and the classic scripts in `js/` in a fixed order. No build step. |
-| `css/viewer.css` | All of the viewer's own styles. |
-| `js/*.js` | The app, as 15 classic scripts sharing one global scope, loaded in the order `markdown-viewer.html` lists them: `core`, `actions`, `math`, `display`, `files`, `render`, `mermaid`, `navigation`, `diagram-overlay`, `links`, `enhancements`, `read-aloud`, `comments`, `host`, `app`. `host.js` is the desktop bridge (`window.mdvHost`, a no-op in a browser); it follows `comments` because it wraps the final `renderMarkdown`. `app` starts the viewer, so it loads last. Classic scripts (not ES modules) still load from `file://`. |
+| `markdown-viewer.html` | The app's markup. It loads `css/viewer.css`, then `css/live.css`, and the classic scripts in `js/` in a fixed order. No build step. |
+| `css/viewer.css` | The viewer's own styles. `css/live.css` styles live reload and Back/Forward. |
+| `js/*.js` | The app, as 20 classic scripts sharing one global scope, loaded in the order `markdown-viewer.html` lists them: `core`, `actions`, `math`, `display`, `files`, `render`, `mermaid`, `navigation`, `diagram-overlay`, `links`, `enhancements`, `read-aloud`, `comments`, `host`, `reading-place`, `live-reload`, `live-notes`, `history`, `document-links`, `app`. `host.js` is the desktop bridge (`window.mdvHost`, a no-op in a browser); it follows `comments` because it wraps the final `renderMarkdown`. `files.js` holds the load seam, `mdvOpenDocument`: every way of showing a document goes through it. `reading-place.js` keeps the reader's place across a new version, `live-reload.js` follows the file and `live-notes.js` says what changed, `history.js` is Back/Forward and `document-links.js` opens links to Markdown files in the viewer. `app` starts the viewer and keeps the shortcut table (`mdvRegisterShortcut`), so it loads last. Classic scripts (not ES modules) still load from `file://`. |
 | `desktop/` | The Mac and Windows app (Tauri 2): it hosts `markdown-viewer.html` in a window per document, so a double-clicked `.md` opens in the viewer. Guide and internals: `docs/desktop.md`. Its CI is `.github/workflows/desktop.yml`, which builds both platforms and runs the app's self-test. |
 | `tests/` | Browser tests (`pnpm test`): every sample in both themes, file:// loading, security (`security.spec.mjs`), every control (`controls.spec.mjs`), render correctness (`render-correctness.spec.mjs`) and the desktop bridge (`desktop.spec.mjs`). `tests/fixtures/` holds their documents; `tests/serve.mjs` is their static server. |
 | `vendor/` | Third-party libraries, vendored unmodified and loaded by relative tags. No CDN. Licenses are in `THIRD_PARTY_NOTICES.md`. |
@@ -91,7 +91,9 @@ that is suddenly "missing" after a reload is usually that, not the code.
   `data-action`/`data-arg` from document HTML, so a document cannot press the viewer's buttons.
 - **A document is only linked to a file handle it was read from.** Any path that replaces the
   document must set `mdvFileHandle` to the matching handle or to `null`; paste and URL loading had
-  this wrong until the initial import.
+  this wrong until the initial import. A new way of showing a document calls `mdvOpenDocument`
+  (`js/files.js`), which does this, keeps the reader's place, and tells Back/Forward, live reload and
+  the title; it never renders on its own.
 
 ## Decisions already made (2026-10-04)
 

@@ -229,7 +229,9 @@ test.describe('in the desktop app (stand-in shell)', () => {
     const start = new URL(page.url());
     const link = (text) => page.locator('#mdBody a', { hasText: text }).first();
 
-    await link('Another Markdown file').click();
+    // Cmd/Ctrl-click opens a Markdown file in a window of its own; a plain click opens it in this window
+    // (js/history.js, tested in live.spec.mjs)
+    await link('Another Markdown file').click({ modifiers: [MOD] });
     await link('A web page').click();
     await link('An email address').click();
     await link('A web page').click({ modifiers: ['Meta'] });

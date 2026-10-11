@@ -1,7 +1,7 @@
-//! The menu bar: App (macOS), File, Edit, View, Window (macOS) / Help (Windows and Linux).
+//! The menu bar: App (macOS), File, Edit, View, Go, Window (macOS) / Help (Windows and Linux).
 
 use tauri::menu::{AboutMetadata, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, EventTarget};
 #[cfg(not(target_os = "macos"))]
 use tauri::Manager;
 
@@ -12,7 +12,11 @@ const OPEN: &str = "open";
 #[cfg(not(target_os = "macos"))]
 const CLOSE: &str = "close-window";
 const RELOAD: &str = "reload";
+const GO_BACK: &str = "go-back";
+const GO_FORWARD: &str = "go-forward";
 const MAKE_DEFAULT: &str = "make-default";
+/// Sent to the focused window by Go → Back and Go → Forward: the page moves between the documents it showed.
+const GO: &str = "mdv://go";
 
 pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
   let new_window = MenuItem::with_id(app, NEW_WINDOW, "New Window", true, Some("CmdOrCtrl+N"))?;
@@ -23,6 +27,14 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
   #[cfg(not(target_os = "macos"))]
   let close = MenuItem::with_id(app, CLOSE, "Close Window", true, Some("CmdOrCtrl+W"))?;
   let reload = MenuItem::with_id(app, RELOAD, "Reload", true, Some("CmdOrCtrl+R"))?;
+  // A window shows the documents its links open, one after another (the page keeps them: js/history.js)
+  #[cfg(target_os = "macos")]
+  let (back_keys, forward_keys) = ("CmdOrCtrl+[", "CmdOrCtrl+]");
+  #[cfg(not(target_os = "macos"))]
+  let (back_keys, forward_keys) = ("Alt+Left", "Alt+Right");
+  let back = MenuItem::with_id(app, GO_BACK, "Back", true, Some(back_keys))?;
+  let forward = MenuItem::with_id(app, GO_FORWARD, "Forward", true, Some(forward_keys))?;
+  let go = Submenu::with_items(app, "Go", true, &[&back, &forward])?;
   let make_default = MenuItem::with_id(app, MAKE_DEFAULT, "Make Default for Markdown Files…", true, None::<&str>)?;
   let info = app.package_info();
   let about = PredefinedMenuItem::about(
@@ -81,7 +93,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
       true,
       &[&PredefinedMenuItem::minimize(app, None)?, &PredefinedMenuItem::maximize(app, None)?],
     )?;
-    Menu::with_items(app, &[&app_menu, &file, &edit, &view, &window])
+    Menu::with_items(app, &[&app_menu, &file, &edit, &view, &go, &window])
   }
 
   #[cfg(not(target_os = "macos"))]
@@ -94,7 +106,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     )?;
     let view = Submenu::with_items(app, "View", true, &[&reload])?;
     let help = Submenu::with_items(app, "Help", true, &[&about])?;
-    Menu::with_items(app, &[&file, &edit, &view, &help])
+    Menu::with_items(app, &[&file, &edit, &view, &go, &help])
   }
 }
 
@@ -117,6 +129,12 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
     RELOAD => {
       if let Some(label) = this_window {
         doc_windows::reload(app, &label);
+      }
+    }
+    GO_BACK | GO_FORWARD => {
+      if let Some(label) = this_window {
+        let direction = if event.id().as_ref() == GO_BACK { "back" } else { "forward" };
+        let _ = app.emit_to(EventTarget::webview_window(&label), GO, direction);
       }
     }
     MAKE_DEFAULT => {

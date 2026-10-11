@@ -232,7 +232,15 @@ Everything below runs in this order on page load.
    hook**, wires the right-click menu on `#mdBody`, and exports six functions on `window`. If a document was
    already rendered (the `#demo` page, step 7), it renders it once more through the hook, so the demo has
    comments too.
-9. **`window` `load` event.** Skipped entirely in the desktop app. The handler reads the IndexedDB key
+9. **`js/reading-place.js`, `js/live-reload.js`, `js/live-notes.js`, `js/history.js` and `js/document-links.js`** define the reader's
+   place and register their hooks on the load seam (`mdvOnDocumentOpening`, `mdvOnDocumentOpened`,
+   `mdvOnDocumentDrawn`), the `history-back`/`history-forward`/`live-reload`/`live-dismiss`/`live-review` actions,
+   `popstate` and `hashchange` listeners, a `click` listener for the `#` permalinks, a capture-phase `click` listener
+   on `window` (links that open in the viewer) and a `visibilitychange` listener. On `DOMContentLoaded`, `files.js`
+   wraps the final `renderMarkdown` once more (`mdvTrackRenders`, so every render of a document is reported; the
+   desktop bridge wraps it in turn), and `history.js` and `live-notes.js` register `Alt+←`/`Alt+→` and `Alt+R` with
+   `mdvRegisterShortcut`, which `app.js` defines.
+10. **`window` `load` event.** Skipped entirely in the desktop app. The handler reads the IndexedDB key
    `workspace`; if its `read` permission is already `granted`, it becomes `mdvWorkspaceDir`. It then reads
    `current` and opens it with `mdvOpenWithHandle(handle, { prompt: false })` (never a permission prompt
    outside a gesture: without write permission the file opens read-only), **unless** the URL has a `?file=`
@@ -283,7 +291,11 @@ Everything below runs in this order on page load.
 | `mdvModal` | `navigation.js` | The open dialog `{ el, returnTo, tabStart, inerted, hidden }`, or `null`. `mdvOpenModal`, `mdvCloseModal`, the Tab trap, the focus guard, the shortcut handler |
 | `mdvNarrow` | `navigation.js` | `matchMedia('(max-width: 900px)')`, the stylesheet's breakpoint: `toggleToc` and `mdvSyncTocInert` |
 | `mdvSearchStale` | `navigation.js` | The search index is out of date; `mdvSearchIndex` rebuilds it on the next search |
-| `MDV_SHORTCUTS`, `MDV_IS_MAC` | `app.js` | The shortcut table that drives the key handler and the `?` sheet |
+| `MDV_SHORTCUTS`, `MDV_IS_MAC` | `app.js` | The shortcut table that drives the key handler and the `?` sheet. Other scripts add rows with `mdvRegisterShortcut` |
+| `mdvShown`, `mdvPendingOpen`, `mdvOpenSeq`, `mdvDocumentHooks` | `files.js` | The load seam: the record of the document on screen (`mdvShownDocument()`), the newest open `mdvOpenDocument` has started, the count of opens (an older handle open gives up when it moved on), and the opening/opened/drawn hooks |
+| `mdvHistory` | `history.js` | Back/Forward: document records by id (the document, the reader's place in it, the link they left by, unsaved comment changes), the tab's positions mapped to document ids (in-document places repeat an id), the tab's position now, the id of the document on screen |
+| `mdvLive` | `live-reload.js` | Live reload: the timer, the look on its way (with its timeout and abort), the source last looked at and its version, the version waiting for a second look and how many looks in a row saw another one, whether the file is gone, the window's own file (desktop), the newer version waiting for the reader and why (the question, Not now, a comment box open) |
+| `mdvWrittenHref` | `document-links.js` | Links whose `href` now holds the viewer's own address (over http), mapped to the `href` the document wrote (`mdvLinkHref(a)`) |
 | `ttsSections`, `ttsStale`, `ttsRebuildQueued` | `read-aloud.js` | Built by `ttsBuildSections` (right after a render, as a microtask, only while the player is in use; otherwise when it opens), read by all `tts*` functions |
 | `ttsCurrentIdx`, `ttsIsPlaying`, `ttsUtterance`, `ttsFinished` | `read-aloud.js` | `speakSection`, `speakNextChunk`, `ttsPlay`, `ttsPause`, `ttsStop`, `ttsGoTo`, `ttsSeekClick`, `ttsReconcile` |
 | `ttsRate`, `ttsRates`, `ttsRateIdx` | `read-aloud.js` | `ttsCycleSpeed`. The rate is saved in `localStorage` (`mdv-tts-rate`). |
@@ -427,6 +439,11 @@ passes, and the code-block markup.
 | `document` `mouseup` | 4107 | `mdvHandleSelection` (shows the "Comment" popover), unless the click is inside comment UI |
 | `document` `keydown` | 4169 | Comment shortcuts (Ctrl/Cmd+Shift+C, Ctrl/Cmd+S) |
 | `window` `load` | 4202 | Restores the workspace and the last file handle from IndexedDB |
+| `window` `click` (capture) | `document-links.js` | A relative link to a Markdown file in the document or the links panel opens in the viewer (folder, desktop bridge or `fetch`); Cmd/Ctrl-click over http opens the viewer for it in a new tab. Runs before `js/host.js`, which would open a new window |
+| `window` `popstate`, `hashchange` | `history.js` | Back/Forward to a place of another document reads it again and shows it through the seam, at the reader's place; a place of the same document (an in-document link, a `#` permalink) is the browser's, and is named as one of this document's |
+| `document` `click` | `history.js` | A click on a heading's `#` permalink: the place the browser is about to make is named when it arrives |
+| `document` `visibilitychange` | `live-reload.js` | Hidden: live reload stops looking. Shown: it looks at once |
+| `MutationObserver` on `document.body` (`childList`) | `live-reload.js`, only while a newer version waits | The add-comment box opening (the question waits for it) and closing (the waiting version is shown or asked about) |
 
 ### 6.2 Listeners attached per render or per interaction
 
@@ -504,7 +521,8 @@ The table comes from every `keydown` site: the handlers in `diagram-overlay.js`,
 
 The `app.js` shortcuts come from the table `MDV_SHORTCUTS`. `mdvShortcutMatches` compares the key
 case-insensitively (`mdvTypedKey`), so Caps Lock and Shift do not change it; requires Shift exactly for
-letter shortcuts and ignores it for punctuation; never matches with Alt (AltGr) held; falls back to the
+letter shortcuts and named keys and ignores it for punctuation; matches with Alt held only a row that asks for
+Alt (so AltGr never triggers one); a `run` that returns `false` leaves the key to the browser; falls back to the
 physical key (`e.code`) on non-Latin layouts and for `\` and `.`. `mdvIsTextEntry` decides what counts as
 typing (a text `input`, `textarea`, `select` or editable content, not a checkbox or a button), and key
 events of an input method that is composing are ignored. While a dialog is open (one of ours, or the
@@ -522,6 +540,8 @@ stays text.
 | Mod+Shift+R | Same | Show or close the read-aloud player | `app.js`: `ttsToggle` |
 | Mod+O | Same | Open the file picker (`#fileInput`) | `app.js` |
 | `?` (no Mod) | Same; inside the shortcuts sheet it closes it | Toggle the shortcuts sheet | `app.js`: `toggleShortcuts` |
+| Alt+← / Alt+→ | Not while typing; with nowhere to go, the browser's | Back / forward to the previous / next document (over the places inside the one on screen) | `history.js`: `mdvHistoryBack`, `mdvHistoryForward`, registered with `mdvRegisterShortcut` |
+| Alt+R | Not while typing; only while a newer version of the document waits | Reload it (the question's Reload), or ask again (the "Newer version on disk" mark) | `live-notes.js`, registered with `mdvRegisterShortcut` |
 | Escape | Anywhere | Close the open dialog and give the focus back; with none open, close the slide-in TOC | `app.js`: `mdvCloseModal` |
 | Tab / Shift+Tab | Inside an open dialog | Cycle inside it; in the diagram overlay, through its buttons and then the nodes that link to a section | `navigation.js` Tab trap; `js/diagram-overlay.js` for the diagram overlay |
 | Enter / Space | A focused document image | Open the lightbox | `navigation.js`: `openLightbox` |
@@ -590,11 +610,13 @@ example when site data is blocked, the reads at lines 1750–1751 stop the whole
 
 | Part | Read by | Written by |
 |---|---|---|
-| `?file=<path>` | `loadFromUrl`: fetch over http(s), else the "Open: <name>" prompt | `updateUrl(name)` via `history.replaceState`, called from `readFile` (the bare file name) and the paste listener (the literal `pasted`). It also sets `document.title` to `<name> - Markdown Viewer`. |
-| `#demo` | `loadFromUrl`, only when `?file=` is absent | nobody. `updateUrl` clears the hash. |
-| `#<id>` | Nobody: when a page loads, the document is not rendered yet as the browser looks for the fragment, and `renderMarkdown` scrolls to the top (read from the code) | The in-document link listener in `links.js` (`history.pushState`), as the browser's own jump did |
+| `?file=<path>` | `loadFromUrl`: fetch over http(s), else the "Open: <name>" prompt | `history.js` (`mdvHistoryUrl`), as each document becomes an entry of the tab's history: the path of a document fetched over http, the bare name of a chosen or dropped file, the literal `pasted`; a file opened through a handle has none. The seam sets `document.title` to `<name> - Markdown Viewer` for every document (`mdvShowTitle`). |
+| `#demo` | `loadFromUrl`, only when `?file=` is absent | nobody. Opening another document clears the hash. |
+| `history.state.mdvDoc` | `history.js` (`popstate`, and the first document after a reload of the page) | `history.js`: `{id, n, kind, path, name}`: the place's document and its position in the tab's history. In-document places (`links.js` through `mdvHistoryPushPlace`, a `#` permalink) carry their document's id with a position of their own |
+| `#<id>` | Nobody: when a page loads, the document is not rendered yet as the browser looks for the fragment, and `renderMarkdown` scrolls to the top (read from the code) | The in-document link listener in `links.js` (`mdvHistoryPushPlace`, which pushes a place of the document on screen), as the browser's own jump did |
 
-There is no `sessionStorage` use. The "workspace root path" setting is unrelated to the IndexedDB
+`sessionStorage` holds one key, `mdv-history` (`history.js`): the tab's places and the documents they name (kind, path,
+name, the reader's place, the link they left by), so Back and Forward name and reach them after a reload of the page. The "workspace root path" setting is unrelated to the IndexedDB
 `workspace` handle. The first is a string prefix for `fetch`. The second is a File System Access
 directory handle used for saving.
 
@@ -771,7 +793,17 @@ template string and is not code. Anonymous handlers follow the table.
 |---|---|---|
 | `handleFileInput(e)` | 1920 | `#fileInput` change → `readFile`, then resets the input |
 | `readFile(file)` | 1929 | FileReader → workspace auto-link → `renderMarkdown` → `updateUrl` |
-| `updateUrl(name)` | 1994 | `?file=name`, clears the hash, sets `document.title` |
+| ~~`updateUrl(name)`~~ | 1994 | Removed: `history.js` writes `?file=` for each document (`mdvHistoryUrl`), the seam sets the title |
+| `mdvOpenDocument(doc, opts)` | `files.js` | **The load seam.** Shows `{name, text, path, handle, mtimeMs}`: links the handle (or reads it through `mdvOpenWithHandle` when the comment code has not recorded that text, giving up unrendered when a newer open began or another document was shown meanwhile: the newest open wins), points the desktop bridge at the path, renders, then keeps the reader's place (the same document), restores `opts.position` (Back/Forward), goes to `opts.fragment`, or opens at the top |
+| `mdvTrackRenders()` | `files.js` | Wraps the final `renderMarkdown` once: every render of a document is reported to the opening/opened hooks as `first`, `open`, `reload` or `history` |
+| `mdvShownDocument()`, `mdvOnDocumentOpening(fn)`, `mdvOnDocumentOpened(fn)`, `mdvOnDocumentDrawn(fn)` | `files.js` | The document on screen; hooks before it replaces the page, once it is shown, and after every render (the comment code's own redraws included) |
+| `mdvReadingPosition()`, `mdvRestoreReadingPosition(p)` | `reading-place.js` | The reader's place: the text block at the top of the window, named by its words, its sections' headings and its rank among the same words (`mdvPlaceKey`), then the heading above it, then the proportion of the page; the folded sections and `<details>` states. Putting it back (`mdvFindPlace`), and holding it while diagrams and images settle. `js/host.js` uses them too |
+| `mdvSameDocument(a, b)`, `mdvNormalizeDocument(doc)` | `files.js` | Whether two records name the same document; a record with its kind inferred |
+| `mdvLiveTarget()`, `mdvLiveRun(target, look)`, `mdvLiveLook(target, look)`, `mdvLiveApply(target, change)` | `live-reload.js` | What to watch for the document on screen; one look at it (a handle's time and size, a conditional request, a read through the bridge), ended by its 8 s timeout and dropped when another document is shown; a new version taken when two looks agree (or at every third look while the file keeps changing); showing it through the seam, marking what changed and saying where (`mdvLiveAnnounce`) |
+| `mdvCommentWorkUnsaved()`, `mdvLiveUnsavedWork()` | `live-reload.js` | The comment code's unsaved state (read only), and a comment box being typed in |
+| `mdvLiveAnnounce(before)`, `mdvLiveShowPrompt()`, `mdvLiveUpdateChip()`, `mdvLiveReview()` | `live-notes.js` | The note that says where a new version changed, and the marks on the changed blocks; the "Changed on disk: reload?" question; the mark at the top right (a newer version waits, the file is not on disk, a copy); the mark's Reload… and Alt+R |
+| `mdvHistoryBack()`, `mdvHistoryForward()`, `mdvHistoryShow(state, from)` | `history.js` | Back or forward to the previous or next document, over the places inside the one on screen; reading again and showing the document `popstate` named, with the focus back on the link the reader left by |
+| `mdvMarkdownLink(href)`, `mdvPlanLink(link)`, `mdvFollowPlan(plan, link, a)`, `mdvPointLinksAtTheViewer()` | `document-links.js` | A relative link to a Markdown file; how it opens (folder, desktop bridge, `fetch`); opening it through the seam; over http, giving each such link the viewer's own address for its file |
 | `loadFromUrl()` | 2002 | `#demo`, or `?file=` fetch with a base-path fallback, or the "Open: <name>" prompt |
 | `loadDemo()` | 3330 | Renders the built-in demo document |
 
@@ -925,6 +957,7 @@ Functions marked with a file name instead of a line were added or rewritten afte
 | `mdvIsTextEntry(t)` | `app.js` | Whether the focus is in a text field |
 | `openShortcuts()`, `closeShortcuts()`, `toggleShortcuts()` | `app.js` | The shortcuts sheet as a dialog |
 | `mdvShortcutKeys(s)`, `mdvRenderShortcutSheet()` | `app.js` | The sheet, drawn from `MDV_SHORTCUTS` in the platform's key names |
+| `mdvRegisterShortcut(combo, fn, description)` | `app.js` | Adds a row to `MDV_SHORTCUTS` from `'Mod+Shift+K'`-style keys; refuses keys another shortcut has |
 
 ### 11.10 Comments: format and anchors
 
@@ -971,7 +1004,7 @@ All comment functions are in `js/comments.js`; find them by name.
 | `mdvAddNotice`, `mdvRemoveNotices`, `mdvRenderNotices`, `mdvNoticeElement`, `mdvNoticeButton`, `mdvNoticeIsCurrent` | The sidebar notices |
 | `mdvNoticeReload(n)`, `mdvNoticeOverwrite(n)`, `mdvReloadFromDisk()` | The reader's choices after a conflict. A reload that fails to read or show the file keeps the notice; Overwrite replaces only the version the notice showed |
 | `mdvPickFile()` | `showOpenFilePicker` → `mdvOpenWithHandle`; without the API, the file input; in the desktop app, `mdvHost.openDialog()` |
-| `mdvOpenWithHandle(handle, opts)` | Records the version read (a new generation; whether it is UTF-8), links the handle, renders; `prompt: false` never asks for permission |
+| `mdvOpenWithHandle(handle, opts)` | Records the version read (a new generation; whether it is UTF-8), links the handle, renders; `prompt: false` never asks for permission; `ifSeq` gives up when another document was shown since that load, and `wanted()` when it returns false once the file is read (the load seam: a newer open overtook this one) |
 | `mdvEnsureWritableHandle()` | Re-permissions the existing handle, or links one: `mdvLinkOpenedFile` for a document read from a file, `mdvSaveAsNewFile` for pasted text and the demo (`mdvDocHasFile`) |
 | `mdvLinkOpenedFile()` | Open dialog for the file the document came from; its base is the version that was opened, so the first save checks the file |
 | `mdvSaveAsNewFile()` | Save dialog for a document with no file of its own |
@@ -1026,7 +1059,9 @@ All comment functions are in `js/comments.js`; find them by name.
 
 - **Keep `renderMarkdown` as the only render entry point.** The comment wrapper relies on every
   render passing through `window.renderMarkdown`. A new loader that calls an internal helper
-  directly would skip comment parsing.
+  directly would skip comment parsing. A new loader calls `mdvOpenDocument` (`js/files.js`), which
+  renders through it and also keeps the reader's place, links the right file handle, and tells
+  Back/Forward, live reload and the title.
 - **`rawMarkdown` is the document of record.** Comment saves write *it*, not the file on disk, and every
   comment change is serialized into it at once (`mdvCommit`). Anything that replaces it must also set
   `mdvFileHandle` to the matching handle or `null`. `readFile` (drop and the file picker), the paste

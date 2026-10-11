@@ -24,8 +24,9 @@
 //
 // Checks (--expect): render (no errors, every diagram drawn, the bridge refused what it must, and on macOS
 // confirm() reached a dialog), kitchen-sink (the sample's features all rendered), assets (images in the
-// document's folder load, one in a dot-folder included; one outside the folder does not), save (the save
-// probe passed), no-inline-handlers (none left for the app's CSP to block), types (macOS: every extension
+// document's folder load, one in a dot-folder included; one outside the folder does not), links (on the linked
+// fixture: a relative link opens its file in the same window, opening the window's own file again shows it with the
+// linked document one step Back, and Back returns), save (the save probe passed), no-inline-handlers (none left for the app's CSP to block), types (macOS: every extension
 // the app claims resolves to a Markdown type, not an anonymous dyn.* type that no app claims, and the app
 // is among the apps that can open that type; launch with open or default, so Launch Services has
 // registered the build).
@@ -197,6 +198,9 @@ function verify(report, exitCode) {
       want((i.broken || []).some((s) => s.includes('../outside.png')), 'the image outside the document folder loaded; the asset scope is too wide');
     } else if (check === 'save') {
       want(v.save && v.save.ok === true, `the save probe failed: ${JSON.stringify(v.save && v.save.checks)}`);
+    } else if (check === 'links') {
+      want(v.links && v.links.probed === true, 'the link probe did not run (it needs the linked fixture, desktop/tests/fixtures/linked/doc.md)');
+      want(v.links && v.links.ok === true, `following a link in the window failed: ${JSON.stringify(v.links && v.links.checks)}`);
     } else if (check === 'types') {
       const conf = JSON.parse(readFileSync(join(desktop, 'src-tauri', 'tauri.conf.json'), 'utf8'));
       const claimed = (conf.bundle.fileAssociations || []).flatMap((a) => a.ext);
@@ -230,6 +234,7 @@ function summary(report) {
     `bridge refusals: ${v.bridge ? Object.entries(v.bridge).filter(([k]) => k !== 'allRefused').map(([k, r]) => `${k}=${r.refused ? r.code : `WRONG (${r.missing || r.code || 'accepted'}, expected ${r.expected})`}`).join(', ') : '-'}`,
     `dialogs: ${v.dialogs && v.dialogs.probed ? `confirm() returned ${v.dialogs.confirmReturned}; the shell answered ${(report.dialogs && report.dialogs.answeredByShell || []).length}` : 'not probed on this platform'}`,
     `save probe: ${v.save ? JSON.stringify(v.save.checks) : 'not run'}`,
+    `link probe: ${v.links && v.links.probed ? JSON.stringify(v.links.checks) : 'not run'}`,
     `inline handlers left: ${v.inlineHandlers ? v.inlineHandlers.count : '?'}`,
     `console errors ${(v.log && v.log.consoleErrors.length) ?? '?'}, page errors ${(v.log && v.log.pageErrors.length) ?? '?'}, CSP violations while rendering ${(v.log && v.log.cspViolations.length) ?? '?'}`,
     `window title: ${report.document && report.document.windowTitle}; default handler: ${report.defaultHandler || 'n/a'}`,
