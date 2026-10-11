@@ -7,6 +7,7 @@
 // that desktop.spec.mjs uses (Tauri's injected API, with the app's own Content Security Policy). The folder
 // sidebar's window.mdvFolder belongs to the folder stream; until it merges, its test here uses a stand-in.
 import { test, expect } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { waitForLayoutSettled } from './support/viewer.mjs';
 import {
   MOD, ALT_LEFT, collectErrors, servedFile, longDocument, ADDED, scrollHeadingTo, headingTop, expectHeadingAt,
@@ -627,6 +628,14 @@ for (const theme of ['light', 'sepia', 'dark']) {
     expect(errors).toEqual([]);
   });
 }
+
+// A :has() rule in css/live.css made every diagram drawing re-evaluate it: one 1.37 s long task on kitchen-sink.md in
+// headless Chromium, and two font-timing tests of visuals.spec.mjs failed on CI. The toolbar and the chip are marked by
+// script instead.
+test('css/live.css has no :has() rule (each one restyled the page on every diagram drawing)', () => {
+  const css = readFileSync(new URL('../../css/live.css', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+  expect(css).not.toMatch(/:has\(/);
+});
 
 test('at phone width, with Back and Forward shown, every toolbar button stays on screen', async ({ page }, info) => {
   const errors = collectErrors(page);
