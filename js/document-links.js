@@ -138,26 +138,26 @@ async function mdvFollowPlan(plan, link, a) {
     mdvGoToFragment(link.fragment);
     return;
   }
-  const going = mdvHistory.going = {};
+  // Counts from the click, before the file is read: an open the reader asks for meanwhile (Back, the sidebar) wins
+  const open = mdvBeginOpen();
   let doc = null;
   try {
     doc = await plan.read();
   } catch (e) {
-    if (mdvHistory.going === going) mdvHistoryProblem(mdvBaseName(link.path), (e && (e.message || e.code)) || 'it could not be read');
+    if (open.current()) mdvHistoryProblem(mdvBaseName(link.path), (e && (e.message || e.code)) || 'it could not be read');
     return;
   }
-  if (mdvHistory.going !== going) return; // the reader went somewhere else meanwhile
+  if (!open.current()) return; // the reader went somewhere else meanwhile
   if (!doc || (typeof doc.text !== 'string' && !doc.handle)) {
     mdvHistoryProblem(mdvBaseName(link.path), 'it could not be read');
     return;
   }
   // Back returns the focus to this link (js/history.js keeps it with the document being left)
   mdvHistory.leaving = a && a.closest('#mdBody') ? mdvLinkKey(a) : a ? { href: mdvLinkHref(a), nth: 0 } : null;
-  const opens = mdvOpenSeq;
-  const shown = await mdvOpenDocument(doc, { push: true, fragment: link.fragment || null });
+  const shown = await mdvOpenDocument(doc, { push: true, fragment: link.fragment || null, begun: open });
   mdvHistory.leaving = null;
   if (!shown) {
-    if (mdvOpenSeq === opens + 1) mdvHistoryProblem(doc.name || mdvBaseName(link.path), 'it could not be shown');
+    if (open.current()) mdvHistoryProblem(doc.name || mdvBaseName(link.path), 'it could not be shown');
     return;
   }
   // The keyboard goes on from the new document's start (a #fragment has the focus already)

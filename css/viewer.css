@@ -2085,6 +2085,9 @@ body.focus-mode .md-body .section-content > .tts-active { opacity: 1; }
   border-radius: 999px;
   background: var(--bg-tertiary);
   white-space: nowrap;
+  /* Short of room (the folder buttons, Back and Forward, a long status), the status gives way first: it is cut short,
+     and its whole text is its tooltip (mdvSetStatus), so the document's name and the Open button keep their room */
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 100 auto;
 }
 .mdv-save-status.mdv-status-saving { color: var(--accent-warn); }
 .mdv-save-status.mdv-status-error { color: var(--accent-danger); }

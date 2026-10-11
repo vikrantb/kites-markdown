@@ -204,12 +204,28 @@ async function loadFromUrl() {
 //   opts.fragment  open at this id (a link's #fragment) instead of at the top
 //   opts.position  open at this reading position (mdvReadingPosition(), taken when the reader left it)
 //   opts.history   set only by js/history.js: Back/Forward moved the browser to this entry
+//   opts.begun     the open as mdvBeginOpen() began it, for a caller that read the document first (below)
 //
 // It resolves true once the document is on screen, and false when it could not be shown (the one on screen stays)
-// or when a newer open overtook it: the newest open wins. A file read through a handle takes time; an open that
-// starts meanwhile (or any other document shown meanwhile) makes the slower one give up before it renders, so it
-// can never replace the document the reader chose since, nor add a place to Back/Forward. mdvOpenSeq counts the
-// opens: a caller that got false while mdvOpenSeq moved past its own open was overtaken, not refused.
+// or when a newer open overtook it: the newest open wins, and one order holds for every route. An open that takes
+// longer to read never replaces the document the reader chose since, nor adds a place to Back/Forward. A file read
+// through a handle is read here, and a newer open (or any other document shown meanwhile) makes it give up before it
+// renders. A caller that must read the document before it can call this (a link's target, the document Back or
+// Forward returns to, a file of the open folder from its sidebar, quick open, search or the recent documents) begins
+// its open first, so it counts from the reader's request, not from the end of its read:
+//   const open = mdvBeginOpen();
+//   const doc = await read();
+//   if (!open.current()) return;                       // the reader asked for another document meanwhile
+//   await mdvOpenDocument(doc, Object.assign({}, opts, { begun: open }));
+// A caller that got false while its open is no longer current (open.current(), or mdvOpenSeq past its own open)
+// was overtaken, not refused.
+//
+// A new version of the document on screen shown in its place (push false, no history: live reload's) is not an open
+// the reader asked for. It overtakes nothing: it gives up when another open is under way here, and an open the reader
+// began before it, still reading, stays the newest.
+//
+// A file shown from a handle (in a browser) is the one a reload of the page opens again (the comment code's startup
+// restore, 'current' in IndexedDB), by whatever route it came.
 //
 // The same document opened again (a live reload, say) keeps the reader's place (js/reading-place.js): the words at
 // the top of the window stay where they were, folded sections stay folded. Any other document opens at the top, or
@@ -228,7 +244,7 @@ async function loadFromUrl() {
 
 let mdvShown = null;        // {doc}: the document on screen; null while the welcome screen shows
 let mdvPendingOpen = null;  // {doc, opts, position, viaHandle, seq}: the newest open the seam has started, until it renders
-let mdvOpenSeq = 0;         // counts opens; an open that a newer one overtook gives up before it renders
+let mdvOpenSeq = 0;         // counts the opens the reader asked for; one that a newer one overtook gives up before it renders
 const mdvDocumentHooks = { opening: [], opened: [], drawn: [] };
 
 function mdvAddDocumentHook(list, fn) {
@@ -248,6 +264,13 @@ function mdvEmitDocument(list, event) {
 
 function mdvInDesktopApp() { return !!(window.mdvHost && window.mdvHost.kind === 'desktop'); }
 
+// Begins an open the reader asked for, before its document is read (see above): {seq, current()}. current() is
+// false once the reader has asked for another document.
+function mdvBeginOpen() {
+  const seq = ++mdvOpenSeq;
+  return { seq, current: () => seq === mdvOpenSeq };
+}
+
 async function mdvOpenDocument(doc, opts) {
   opts = Object.assign({ push: true }, opts);
   doc = mdvNormalizeDocument(doc);
@@ -255,21 +278,29 @@ async function mdvOpenDocument(doc, opts) {
   const desktop = mdvInDesktopApp();
   const viaHandle = !desktop && !!doc.handle && mdvMustReadThroughHandle(doc);
   if (viaHandle ? typeof mdvOpenWithHandle !== 'function' : typeof doc.text !== 'string') return false;
-  const seq = ++mdvOpenSeq;
+  const begun = opts.begun || null;
+  if (begun && !begun.current()) return false; // the reader asked for another document while this one was read
   const previous = mdvShownDocument();
+  // A new version of the document on screen, in its place (live reload): it overtakes nothing
+  const follows = !begun && opts.push === false && !opts.history && !!previous && mdvSameDocument(previous, doc);
+  if (follows && mdvPendingOpen) return false;
+  const seq = begun ? begun.seq : follows ? mdvOpenSeq : ++mdvOpenSeq;
   const position = previous ? mdvReadingPosition() : null;
   mdvStopHoldingPlace();
+  const pending = { doc, opts, position, viaHandle, seq };
   if (viaHandle) {
-    mdvPendingOpen = { doc, opts, position, viaHandle: true, seq };
-    // Another document shown while the file is read (ifSeq), or a newer open begun (wanted): this one gives up
+    mdvPendingOpen = pending;
+    // Another document shown while the file is read (ifSeq), a newer open asked for, or (a new version of the
+    // document on screen) an open the reader asked for that started meanwhile (wanted): this one gives up
     const loads = typeof mdvLoadSeq === 'number' ? mdvLoadSeq : null;
+    const wanted = () => seq === mdvOpenSeq && mdvPendingOpen === pending;
     let shown = false;
     try {
-      shown = !!(await mdvOpenWithHandle(doc.handle, { prompt: false, ifSeq: loads, wanted: () => seq === mdvOpenSeq }));
+      shown = !!(await mdvOpenWithHandle(doc.handle, { prompt: false, ifSeq: loads, wanted }));
     } catch (e) {
       console.warn('MDV: "' + doc.name + '" could not be opened:', e);
     } finally {
-      if (mdvPendingOpen && mdvPendingOpen.seq === seq) mdvPendingOpen = null;
+      if (mdvPendingOpen === pending) mdvPendingOpen = null;
     }
     if (!shown) return false;
   } else {
@@ -278,11 +309,15 @@ async function mdvOpenDocument(doc, opts) {
     if (typeof mdvFileHandle !== 'undefined') mdvFileHandle = desktop ? null : doc.handle;
     rawMarkdown = doc.text;
     currentFileName = doc.name;
-    mdvPendingOpen = { doc, opts, position, viaHandle: false, seq };
+    mdvPendingOpen = pending;
     try {
       renderMarkdown(doc.text, mdvDocumentTitle(doc));
     } finally {
-      if (mdvPendingOpen && mdvPendingOpen.seq === seq) mdvPendingOpen = null;
+      if (mdvPendingOpen === pending) mdvPendingOpen = null;
+    }
+    // A reload of the page opens this file again (mdvOpenWithHandle records the handles it reads itself)
+    if (!desktop && doc.handle && typeof mdvPutHandle === 'function') {
+      mdvPutHandle('current', doc.handle).catch(() => { /* remembering it is a convenience; IndexedDB may be off */ });
     }
   }
   if (opts.fragment && mdvOpenAtFragment(opts.fragment)) return true;

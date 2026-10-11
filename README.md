@@ -36,12 +36,19 @@ width and font size, light, sepia and dark themes, in-document search, a panel l
 abbreviation tooltips, an image lightbox, and **read-aloud** (text-to-speech with per-section
 navigation). See [docs/features.md](docs/features.md).
 
+**A folder of documents:** open a folder and its Markdown files appear in a sidebar you can filter and
+drive from the keyboard; **Cmd/Ctrl+P** goes to any file from a few letters of its name, **Cmd/Ctrl+Shift+F**
+searches every file and takes you to the match, the last 15 documents are one click away on the welcome
+screen and in the toolbar, a document you go back to opens where you left it, and resting on a link to
+another document previews its title and first paragraph. In a browser this needs Chrome, Edge or another Chromium browser; the desktop app opens the
+document's own folder.
+
 ## Documents that change, and documents that link
 
 The viewer follows the file you are reading: when another program saves it, the new version appears
 where you were reading, with a quiet "Updated" note, and a document with comments that are not saved
 yet asks first. A relative link to another Markdown file opens inside the viewer, and Back and Forward
-(`Alt+←` and `Alt+→`, or the arrows at the left of the toolbar) return to each document at the place
+(`Alt+←` and `Alt+→`, or the toolbar's ‹ and › arrows) return to each document at the place
 you left it. See [docs/features.md](docs/features.md#following-documents-live-reload-back-and-forward-and-links).
 
 ## Comments inside the file

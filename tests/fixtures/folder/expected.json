@@ -1,0 +1,16 @@
+{
+  "about": "What the folder sidebar must list for this folder, in its order (folders first, then files, each by name), once the files below are added. Both builds check it: tests/e2e/folder.spec.mjs (the browser's walk) and desktop/scripts/run-self-test.mjs --expect folder (the shell's mdv_list_directory, which also lists the sibling file the runner adds). The added files are created at run time because git cannot store a folder named .git and node_modules is in .gitignore; none of them may be listed.",
+  "listed": [
+    "deep/1/2/3/4/5/6/7/deepest-listed.md",
+    "handoffs/2026-10-01-api.md",
+    "handoffs/2026-10-08-ui.md",
+    "proposals/archive/old-idea.markdown",
+    "proposals/search.md",
+    "README.md",
+    "status.md"
+  ],
+  "addedAtRunTime": {
+    ".git/notes.md": "# Inside .git\n\nNever listed.\n",
+    "node_modules/some-package/README.md": "# A package's readme\n\nNever listed.\n"
+  }
+}

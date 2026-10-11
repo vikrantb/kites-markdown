@@ -4,8 +4,8 @@
 // Files "on disk" are real files: each test writes its documents into its own output folder, which the test
 // server serves, and edits them there, as another program would. The File System Access path uses the browser's
 // private file system (OPFS), so its handles and time stamps are real too. The desktop app is the stand-in shell
-// that desktop.spec.mjs uses (Tauri's injected API, with the app's own Content Security Policy). The folder
-// sidebar's window.mdvFolder belongs to the folder stream; until it merges, its test here uses a stand-in.
+// that desktop.spec.mjs uses (Tauri's injected API, with the app's own Content Security Policy). A link in a folder
+// of documents goes through the folder sidebar's own window.mdvFolder, over its fixture folder (folder-helpers.mjs).
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { waitForLayoutSettled } from './support/viewer.mjs';
@@ -13,6 +13,7 @@ import {
   MOD, ALT_LEFT, collectErrors, servedFile, longDocument, ADDED, scrollHeadingTo, headingTop, expectHeadingAt,
   recordOpens, setVisibility, openApp, callsTo, windowFile, otherFile,
 } from './support/live.mjs';
+import { browserSetup, seed, openFolder } from './folder-helpers.mjs';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Live reload in the browser
@@ -356,37 +357,62 @@ test('Cmd/Ctrl-click on a relative link opens the viewer for it in a new tab', a
   expect(errors).toEqual([]);
 });
 
-test('with a folder open, a link opens through mdvFolder.resolve and mdvFolder.read (a stand-in until the folder stream merges)', async ({ page }) => {
-  const errors = collectErrors(page);
-  await page.addInitScript(() => {
-    const files = { 'notes/a.md': '# Folder A\n\n[To B](../b.md)\n', 'b.md': '# Folder B\n\nThe other file.\n' };
-    window.__folderCalls = [];
-    window.mdvFolder = {
-      kind: 'browser',
-      rootName: 'stand-in',
-      list: () => Object.keys(files).map((path) => ({ path, name: path.split('/').pop(), depth: path.split('/').length - 1 })),
-      resolve(from, href) {
-        window.__folderCalls.push(['resolve', from, href]);
-        const parts = from ? from.split('/').slice(0, -1) : [];
-        for (const p of href.split('/')) { if (p === '..') parts.pop(); else if (p && p !== '.') parts.push(p); }
-        const path = parts.join('/');
-        return files[path] != null ? path : null;
-      },
-      async read(path) {
-        window.__folderCalls.push(['read', path]);
-        return { name: path.split('/').pop(), text: files[path], path, handle: null, mtimeMs: 1 };
-      },
-    };
-  });
+test('with a folder open, a link opens through mdvFolder.resolve and mdvFolder.read, and the sidebar follows it', async ({ page }) => {
+  // The fixture's proposal names two images that are not in the folder (its preview test needs them)
+  const errors = collectErrors(page, [/\/preview-probe\.png/, /\/diagram\.png/]);
+  // The folder sidebar's own folder (js/folder.js) over tests/fixtures/folder, in the browser's private file system
+  await browserSetup(page);
   await page.goto('markdown-viewer.html');
-  await page.evaluate(async () => mdvOpenDocument(await window.mdvFolder.read('notes/a.md')));
-  await expect(page.locator('#mdBody h1')).toHaveAttribute('aria-label', 'Folder A');
-  await page.locator('#mdBody a', { hasText: 'To B' }).click();
-  await expect(page.locator('#mdBody h1')).toHaveAttribute('aria-label', 'Folder B');
-  expect(await page.evaluate(() => window.__folderCalls)).toEqual([['read', 'notes/a.md'], ['resolve', 'notes/a.md', '../b.md'], ['read', 'b.md']]);
-  expect(await page.evaluate(() => [mdvShownDocument().kind, mdvShownDocument().path])).toEqual(['folder', 'b.md']);
+  await seed(page);
+  await openFolder(page);
+  // Its read and resolve, recorded as the link follows them (the sidebar's own opens call them directly)
+  await page.evaluate(() => {
+    window.__folderCalls = [];
+    for (const name of ['resolve', 'read']) {
+      const real = window.mdvFolder[name];
+      window.mdvFolder[name] = (...args) => { window.__folderCalls.push([name, ...args]); return real(...args); };
+    }
+  });
+  await page.locator('#mdvFolderTree [data-path="handoffs/2026-10-01-api.md"]').click();
+  await expect(page.locator('#mdBody h1')).toHaveAttribute('aria-label', 'Handoff: the API');
+  await page.locator('#mdBody a', { hasText: 'search proposal' }).click();
+  await expect(page.locator('#mdBody h1')).toHaveAttribute('aria-label', 'Search across documents');
+  expect(await page.evaluate(() => window.__folderCalls)).toEqual([
+    ['resolve', 'handoffs/2026-10-01-api.md', '../proposals/search.md'], ['read', 'proposals/search.md'],
+  ]);
+  // A file of the folder in a browser is read through its handle, and is known by its place in the folder
+  expect(await page.evaluate(() => [mdvShownDocument().kind, mdvShownDocument().path])).toEqual(['handle', 'proposals/search.md']);
+  await expect(page.locator('#mdvFolderTree .is-current')).toHaveAttribute('data-path', 'proposals/search.md');
   await page.keyboard.press('Alt+ArrowLeft');
-  await expect(page.locator('#mdBody h1')).toHaveAttribute('aria-label', 'Folder A');
+  await expect(page.locator('#mdBody h1')).toHaveAttribute('aria-label', 'Handoff: the API');
+  await expect(page.locator('#mdvFolderTree .is-current')).toHaveAttribute('data-path', 'handoffs/2026-10-01-api.md');
+  expect(errors).toEqual([]);
+});
+
+test('a reload of the page opens the file on screen again, also when the seam showed it from text it had already read', async ({ page }) => {
+  const errors = collectErrors(page);
+  await page.goto('markdown-viewer.html');
+  await page.evaluate(async () => {
+    const root = await navigator.storage.getDirectory();
+    const write = async (name, text) => {
+      const fh = await root.getFileHandle(name, { create: true });
+      const w = await fh.createWritable();
+      await w.write(text);
+      await w.close();
+      return fh;
+    };
+    const a = await write('a.md', '# File A\n\nThe first file.\n');
+    const b = await write('b.md', '# File B\n\nThe second file.\n');
+    await mdvOpenFileHandle(a); // read through the handle: the comment code records the version it read
+    await mdvOpenFileHandle(b);
+    // A again, with the text the comment code already holds for it, as the folder's sidebar, quick open and the
+    // recent documents call the seam: it is shown without reading the file a second time
+    await mdvOpenDocument({ name: 'a.md', text: await (await a.getFile()).text(), handle: a });
+  });
+  await expect(page.locator('#mdBody h1')).toHaveAttribute('aria-label', 'File A');
+  await expect.poll(() => page.evaluate(() => mdvGetHandle('current').then((h) => h && h.name))).toBe('a.md');
+  await page.reload();
+  await expect(page.locator('#mdBody h1')).toHaveAttribute('aria-label', 'File A');
   expect(errors).toEqual([]);
 });
 

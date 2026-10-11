@@ -28,7 +28,9 @@ Related documents:
 > [!NOTE]
 > Since the split into files, the styles live in `css/viewer.css` and the script in the `js/*.js` files, concatenated in load order. Line numbers in this document refer to the pre-split single file and are kept for orientation: find a function by name. The script order is listed in `../CLAUDE.md`.
 >
-> The last script, `js/host.js`, is the desktop bridge: `window.mdvHost`. In a browser it is a no-op. In the desktop app it renders the window's document, wraps `renderMarkdown` to load relative images through the asset protocol, handles link clicks and live reload, and routes saves to the shell. See [desktop.md](desktop.md).
+> `js/folder-paths.js`, `js/folder.js`, `js/folder-open.js` and the five scripts after them (`folder-tree`, `recents`, `quick-open`, `folder-search`, `link-preview`) are a folder of documents: `window.mdvFolder`, the folder sidebar, recent documents, quick open, search in files and link previews ([features.md](features.md#a-folder-of-documents)). They load after `host.js` and before `app.js`, add their keyboard rows to `MDV_SHORTCUTS` once every script has loaded, follow every render with one `MutationObserver` on `#mdBody` (`mdvFolderNoteShown`), and show documents only through `mdvOpenDocument`.
+>
+> The script before them, `js/host.js`, is the desktop bridge: `window.mdvHost`. In a browser it is a no-op. In the desktop app it renders the window's document, wraps `renderMarkdown` to load relative images through the asset protocol, handles link clicks and live reload, and routes saves to the shell. See [desktop.md](desktop.md).
 
 ## 1. The shape of the program
 
@@ -292,7 +294,7 @@ Everything below runs in this order on page load.
 | `mdvNarrow` | `navigation.js` | `matchMedia('(max-width: 900px)')`, the stylesheet's breakpoint: `toggleToc` and `mdvSyncTocInert` |
 | `mdvSearchStale` | `navigation.js` | The search index is out of date; `mdvSearchIndex` rebuilds it on the next search |
 | `MDV_SHORTCUTS`, `MDV_IS_MAC` | `app.js` | The shortcut table that drives the key handler and the `?` sheet. Other scripts add rows with `mdvRegisterShortcut` |
-| `mdvShown`, `mdvPendingOpen`, `mdvOpenSeq`, `mdvDocumentHooks` | `files.js` | The load seam: the record of the document on screen (`mdvShownDocument()`), the newest open `mdvOpenDocument` has started, the count of opens (an older handle open gives up when it moved on), and the opening/opened/drawn hooks |
+| `mdvShown`, `mdvPendingOpen`, `mdvOpenSeq`, `mdvDocumentHooks` | `files.js` | The load seam: the record of the document on screen (`mdvShownDocument()`), the newest open `mdvOpenDocument` has started, the count of the opens the reader asked for (`mdvBeginOpen` and every open but a new version of the document on screen; an older open gives up when it moved on, whichever route it came by), and the opening/opened/drawn hooks |
 | `mdvHistory` | `history.js` | Back/Forward: document records by id (the document, the reader's place in it, the link they left by, unsaved comment changes), the tab's positions mapped to document ids (in-document places repeat an id), the tab's position now, the id of the document on screen |
 | `mdvLive` | `live-reload.js` | Live reload: the timer, the look on its way (with its timeout and abort), the source last looked at and its version, the version waiting for a second look and how many looks in a row saw another one, whether the file is gone, the window's own file (desktop), the newer version waiting for the reader and why (the question, Not now, a comment box open) |
 | `mdvWrittenHref` | `document-links.js` | Links whose `href` now holds the viewer's own address (over http), mapped to the `href` the document wrote (`mdvLinkHref(a)`) |
@@ -536,7 +538,9 @@ stays text.
 | Mod+B | Not while typing | Toggle TOC (slide-in panel at widths of 900px or less) | `app.js`: `toggleToc` |
 | Mod+`\` | Same | Toggle full page width | `app.js`: `toggleWidth` |
 | Mod+`.` | Same | Toggle focus mode | `app.js`: `toggleFocus` |
-| Mod+Shift+F | Same | Fold or unfold all sections | `app.js`: `toggleAllSections` |
+| Mod+Shift+F | Same; inside search in files it closes it | Search in files whenever a folder is open (its sidebar shown or not); with no folder open, fold or unfold all sections | `folder-search.js` (its row comes before `app.js`'s, whose label it extends with "(no folder open)"): `mdvXsOpen` / `toggleAllSections` |
+| Mod+Shift+E | Same | Go to the folder's files: show the sidebar if hidden and focus the tree | `folder-tree.js`: `mdvTreeGoTo` |
+| Mod+P | Same; inside quick open it closes it | Go to a file (quick open) | `quick-open.js`: `mdvQoToggle` |
 | Mod+Shift+R | Same | Show or close the read-aloud player | `app.js`: `ttsToggle` |
 | Mod+O | Same | Open the file picker (`#fileInput`) | `app.js` |
 | `?` (no Mod) | Same; inside the shortcuts sheet it closes it | Toggle the shortcuts sheet | `app.js`: `toggleShortcuts` |
@@ -586,6 +590,9 @@ Notes:
 | `mdv-basepath` | string, a trailing `/` is added | `toggleSettings` (fills the input), `loadFromUrl` (second fetch candidate) | `saveBasePath` |
 | `mdv-author-name` | string, default `You` | comment state init (3510) | **nothing**: no UI or code path writes it |
 | `mdv-tts-rate` | `0.75` … `2`; anything else means 1x | read-aloud state init (`mdvStoredRate`) | `ttsCycleSpeed` |
+| `mdv-folder-panel` | `open` / `closed`: the folder sidebar | `folder-tree.js` at load, `mdvFolderRestore` | `mdvTreeShow` |
+| `mdv-folder` | desktop app: the folder chosen for the sidebar | `mdvFolderDesktopDefault` | `mdvFolderRemember` |
+| `mdv-recents` | desktop app: the recent documents, `[{kind: 'path', name, path, folder, at}]` | `mdvRecentsLoad` | `mdvRecentsSave` |
 
 Apart from `mdv-tts-rate`, none of these accesses is wrapped in `try/catch`. If storage throws, for
 example when site data is blocked, the reads at lines 1750–1751 stop the whole script (inferred).
@@ -596,10 +603,13 @@ example when site data is blocked, the reads at lines 1750–1751 stop the whole
 |---|---|---|---|---|
 | `mdv-viewer` (`MDV_DB`) | 1 | `handles` (`MDV_STORE`, out-of-line keys) | `current` | `FileSystemFileHandle` of the last writable file |
 | | | | `workspace` | `FileSystemDirectoryHandle` of the workspace folder |
+| | | | `folder` | `FileSystemDirectoryHandle` of the folder in the folder sidebar (`mdvFolderRemember`, `mdvFolderRestore`) |
+| | | | `mdv-recents` | the recent documents, `[{kind: 'handle', name, path, handle, folder, at}]` (`mdvRecentsSave`) |
 
 - Opened by `mdvOpenDb`, which creates the store in `onupgradeneeded`.
 - `mdvPutHandle(key, handle)` writes. Callers: `readFile` (`current`, on a workspace match),
-  `mdvOpenWithHandle` (`current`), `mdvEnsureWritableHandle` (`current`), `mdvPickWorkspace`
+  `mdvOpenWithHandle` (`current`), `mdvOpenDocument` (`current`, for a document from a handle that it shows without
+  reading it again), `mdvEnsureWritableHandle` (`current`), `mdvPickWorkspace`
   (`workspace`, and `current` if the loaded file is found in the folder).
 - `mdvGetHandle(key)` reads, and returns `null` on any error. Its only caller is the `window` `load`
   handler, for `workspace` then `current`. Each helper closes its database connection when done, and a
@@ -957,7 +967,7 @@ Functions marked with a file name instead of a line were added or rewritten afte
 | `mdvIsTextEntry(t)` | `app.js` | Whether the focus is in a text field |
 | `openShortcuts()`, `closeShortcuts()`, `toggleShortcuts()` | `app.js` | The shortcuts sheet as a dialog |
 | `mdvShortcutKeys(s)`, `mdvRenderShortcutSheet()` | `app.js` | The sheet, drawn from `MDV_SHORTCUTS` in the platform's key names |
-| `mdvRegisterShortcut(combo, fn, description)` | `app.js` | Adds a row to `MDV_SHORTCUTS` from `'Mod+Shift+K'`-style keys; refuses keys another shortcut has |
+| `mdvRegisterShortcut(combo, fn, description, opts)` | `app.js` | Adds a row to `MDV_SHORTCUTS` from `'Mod+Shift+K'`-style keys; refuses keys another shortcut has, unless `opts.over` takes them over (the other row stays in the sheet with that description); `opts.modal`: the dialog the keys open and close |
 
 ### 11.10 Comments: format and anchors
 

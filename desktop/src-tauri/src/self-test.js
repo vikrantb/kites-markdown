@@ -10,6 +10,39 @@
   if (window.__mdvSelfTestStarted) return;
   window.__mdvSelfTestStarted = true;
 
+  // What the viewer remembers between launches (recent documents, the folder and its sidebar) lives in the app's
+  // localStorage, which the installed app on this machine shares. A self-test starts from none of it and writes none
+  // of it: from before the page's scripts run, these keys live in memory for the run (Storage.prototype is wrapped
+  // for them alone). Putting the keys back at the end was not enough: a review measured one more recent document in
+  // the installed app after each run (a write after the put-back, or a put-back the store never flushed; with
+  // nothing written, neither can happen). The report says whether the real store still holds what it held before the
+  // run (rememberedUntouched), and the run fails when it does not.
+  const REMEMBERED = new Set(['mdv-recents', 'mdv-folder', 'mdv-folder-panel']);
+  const sandbox = new Map();
+  const realStorage = { get: Storage.prototype.getItem, set: Storage.prototype.setItem, remove: Storage.prototype.removeItem };
+  const sandboxed = (store, key) => {
+    try { return store === window.localStorage && REMEMBERED.has(String(key)); } catch (_) { return false; }
+  };
+  const rememberedBefore = {};
+  try { for (const key of REMEMBERED) rememberedBefore[key] = realStorage.get.call(window.localStorage, key); } catch (_) { /* storage off */ }
+  Storage.prototype.getItem = function (key) {
+    if (sandboxed(this, key)) return sandbox.has(String(key)) ? sandbox.get(String(key)) : null;
+    return realStorage.get.apply(this, arguments);
+  };
+  Storage.prototype.setItem = function (key, value) {
+    if (sandboxed(this, key)) { sandbox.set(String(key), String(value)); return; }
+    return realStorage.set.apply(this, arguments);
+  };
+  Storage.prototype.removeItem = function (key) {
+    if (sandboxed(this, key)) { sandbox.delete(String(key)); return; }
+    return realStorage.remove.apply(this, arguments);
+  };
+  function rememberedUntouched() {
+    try {
+      return [...REMEMBERED].every((key) => realStorage.get.call(window.localStorage, key) === rememberedBefore[key]);
+    } catch (_) { return null; }
+  }
+
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const call = (command, args) => window.__TAURI__.core.invoke(command, args || {});
   const clip = (s, n) => (String(s).length > (n || 200) ? String(s).slice(0, n || 200) + '…' : String(s));
@@ -106,6 +139,41 @@
     attempt.siblingUnchanged = !!after && after.text === before.text;
     attempt.refused = attempt.refused && attempt.siblingUnchanged;
     return attempt;
+  }
+
+  // The folder sidebar, end to end in the real app: the shell's mdv_list_directory lists the document's folder (the
+  // runner adds a .git and a node_modules folder to it for --expect folder), refuses a file, and the sidebar draws
+  // the listing with the document marked.
+  async function probeFolder(host) {
+    const path = host.currentPath || '';
+    const root = path.replace(/[\\/][^\\/]*$/, '');
+    const out = { root };
+    try {
+      const listing = await call('mdv_list_directory', { root });
+      out.listed = listing.entries.map((e) => e.rel);
+      out.truncated = listing.truncated;
+      out.unreadable = listing.unreadable;
+    } catch (e) {
+      out.error = clip((e && (e.message || e.code)) || e);
+    }
+    try {
+      await call('mdv_list_directory', { root: path });
+      out.fileRefused = { refused: false, code: 'accepted' };
+    } catch (e) {
+      out.fileRefused = { refused: !!e && e.code === 'not-a-directory', code: e && e.code };
+    }
+    if (typeof mdvTreeToggle === 'function' && typeof mdvFolderState === 'object') {
+      if (!mdvTreeShown()) await mdvTreeToggle();
+      await waitFor(() => mdvFolderState.kind && !mdvFolderState.loading, 15000, 'the folder sidebar').catch(() => null);
+      const current = document.querySelector('#mdvFolderTree .is-current');
+      out.sidebar = {
+        files: document.querySelectorAll('#mdvFolderTree [data-path]').length,
+        current: current ? current.dataset.path : null,
+        status: (document.getElementById('mdvFolderStatus') || {}).textContent || '',
+      };
+      mdvTreeShow(false);
+    }
+    return out;
   }
 
   // alert() and confirm() must reach a dialog. WebKit answers confirm() false by itself unless the shell
@@ -264,6 +332,7 @@
       };
       report.log = before;
       report.bridge = await probeBridge(host);
+      report.folder = await probeFolder(host);
       report.dialogs = options.dialogProbe ? probeDialogs() : { probed: false };
       report.save = options.saveProbe ? await probeSave(host) : null;
       report.links = await probeLinks(host);
@@ -292,11 +361,15 @@
       f.push('the bridge did not refuse as it must: ' + wrong.map(([k, v]) => `${k} (${v.missing || `${v.code || 'accepted'}, expected ${v.expected}`})`).join(', '));
     }
     if (report.dialogs && report.dialogs.probed && report.dialogs.confirmReturned !== true) f.push('confirm() did not reach a dialog');
+    if (report.folder && report.folder.error) f.push('the document\'s folder could not be listed: ' + report.folder.error);
     if (report.save && !report.save.ok) f.push('saving or live reload failed: ' + Object.entries(report.save.checks).filter(([, v]) => !v).map(([k]) => k).join(', '));
     if (report.sanitization) {
       if (report.sanitization.executed) f.push('script in a document ran');
       if (!report.sanitization.rawErrorFired || !report.sanitization.probeRendered) f.push('the script probe did not run, so it proves nothing');
     }
+    // The keys the page wrote during the run (kept in memory) show the sandbox had something to keep out.
+    report.remembered = { untouched: rememberedUntouched(), keptInMemory: [...sandbox.keys()].sort() };
+    if (report.remembered.untouched === false) f.push('the run changed what the installed app remembers (recent documents, folder)');
     report.ok = f.length === 0;
     report.totalMs = Math.round(performance.now() - started);
     await host.reportSelfTest(report);

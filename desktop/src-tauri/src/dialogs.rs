@@ -36,6 +36,25 @@ where
   });
 }
 
+/// Shows the folder panel (attached to `parent_label`'s window when given) and calls `done` with the
+/// chosen folder, or with `None` when the person cancels.
+pub fn pick_folder<F>(app: &AppHandle, parent_label: Option<String>, done: F)
+where
+  F: FnOnce(Option<PathBuf>) + Send + 'static,
+{
+  let handle = app.clone();
+  let _ = app.run_on_main_thread(move || {
+    let mut dialog = AsyncFileDialog::new().set_title("Open Folder");
+    if let Some(window) = parent(&handle, parent_label.as_deref()) {
+      dialog = dialog.set_parent(&window);
+    }
+    let picked = dialog.pick_folder();
+    std::thread::spawn(move || {
+      done(tauri::async_runtime::block_on(picked).map(|f| f.path().to_path_buf()));
+    });
+  });
+}
+
 /// Asks a yes-or-no question; `done` receives `true` for the `yes` button.
 pub fn ask<F>(app: &AppHandle, parent_label: Option<String>, title: &str, message: &str, yes: &str, no: &str, done: F)
 where

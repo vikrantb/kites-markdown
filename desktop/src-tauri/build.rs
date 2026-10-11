@@ -5,6 +5,8 @@ fn main() {
     tauri_build::AppManifest::new().commands(&[
       "mdv_initial_document",
       "mdv_read_document",
+      "mdv_list_directory",
+      "mdv_choose_folder",
       "mdv_save_document",
       "mdv_window_holds_text",
       "mdv_open_dialog",

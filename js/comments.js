@@ -888,6 +888,7 @@ function mdvSetStatus(text, kind) {
   if (!el) return;
   el.style.display = text ? '' : 'none';
   el.textContent = text;
+  el.title = text || ''; // the whole text, where the toolbar has no room for it (css/viewer.css)
   el.className = 'mdv-save-status' + (kind === 'saving' ? ' mdv-status-saving' : (kind === 'error' ? ' mdv-status-error' : ''));
 }
 

@@ -1,0 +1,298 @@
+/* ==========================================================================
+   A folder of documents: the file sidebar, quick open, search in files, recent documents and link previews
+   (js/folder.js, folder-tree.js, quick-open.js, folder-search.js, recents.js, link-preview.js).
+   Tokens only, so every theme follows. Loaded after viewer.css.
+   ========================================================================== */
+
+:root { --mdv-folder-width: 280px; }
+
+/* ----- The toolbar group: the folder button and the recent documents menu ----- */
+.mdv-folder-group {
+  margin-right: 8px; padding-right: 8px;
+  border-right: 1px solid var(--border-primary);
+}
+/* Mid widths: the group takes the room the word count and reading time had, so the document's name keeps its
+   place in the toolbar (at 1,024 px it was squeezed to nothing). viewer.css hides them below 901 px anyway. */
+@media screen and (min-width: 901px) and (max-width: 1180px) {
+  .toolbar-meta { display: none; }
+}
+/* The menu looks like the theme menu (viewer.css .dropdown), and opens from the left edge. */
+.mdv-recent-wrap { position: relative; }
+.mdv-recent-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 200;
+  display: none; width: 360px; max-width: calc(100vw - 24px); max-height: min(70vh, 560px); overflow-y: auto;
+  padding: 5px; background: var(--bg-card); border: 1px solid var(--border-primary); border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+}
+.mdv-recent-menu.show { display: block; animation: mdv-pop-in 0.14s ease-out; }
+
+/* ----- The sidebar ----- */
+.mdv-folder {
+  position: fixed; top: var(--toolbar-height); left: 0; bottom: var(--tts-height, 0px);
+  width: var(--mdv-folder-width);
+  display: flex; flex-direction: column;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-secondary);
+  z-index: 52;
+  font-family: var(--font-ui);
+}
+.mdv-folder[hidden] { display: none; }
+
+/* Wide windows: the sidebar takes its column, and the outline and the document move over for it. */
+@media screen and (min-width: 901px) {
+  body.mdv-folder-open .toc-sidebar { left: var(--mdv-folder-width); }
+  body.mdv-folder-open .content-wrapper { margin-left: calc(var(--mdv-folder-width) + var(--toc-width)); }
+  body.mdv-folder-open .toc-sidebar.hidden ~ .content-wrapper,
+  body.mdv-folder-open .content-wrapper.full-width { margin-left: var(--mdv-folder-width); }
+}
+/* Narrow windows: it slides in over the page, as the outline does there. */
+@media screen and (max-width: 900px) {
+  .mdv-folder { width: min(320px, 88vw); box-shadow: var(--shadow-lg); z-index: 60; }
+}
+
+.mdv-folder-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 14px 8px 8px 16px;
+}
+.mdv-folder-name {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.82rem; font-weight: 650; color: var(--text-primary); letter-spacing: -0.005em;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mdv-folder-name::before {
+  content: ''; flex: none; width: 16px; height: 16px; background: var(--accent);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.mdv-folder-tools { display: flex; align-items: center; gap: 1px; flex: none; }
+.mdv-folder-tool {
+  width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 7px; background: transparent; color: var(--text-tertiary); cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+.mdv-folder-tool svg { width: 15px; height: 15px; }
+.mdv-folder-tool:hover { background: var(--bg-hover); color: var(--text-primary); }
+.mdv-folder-tool:disabled { opacity: 0.4; cursor: default; background: transparent; color: var(--text-tertiary); }
+
+.mdv-folder-filter { position: relative; margin: 2px 12px 4px; }
+.mdv-folder-filter svg {
+  position: absolute; left: 9px; top: 50%; width: 14px; height: 14px; transform: translateY(-50%);
+  color: var(--text-tertiary); pointer-events: none;
+}
+.mdv-folder-filter input {
+  width: 100%; height: 30px; padding: 0 10px 0 30px;
+  border: 1px solid var(--border-primary); border-radius: 8px;
+  background: var(--bg-card); color: var(--text-primary);
+  font: 500 0.8rem var(--font-ui);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.mdv-folder-filter input::placeholder { color: var(--text-tertiary); }
+.mdv-folder-filter input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); outline: none; }
+.mdv-folder-filter input:disabled { opacity: 0.55; }
+
+.mdv-folder-status {
+  padding: 2px 16px 6px; min-height: 1.3em;
+  font-size: 0.7rem; line-height: 1.45; color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.mdv-folder-status.is-error { color: var(--accent-danger); }
+
+/* ----- The tree ----- */
+.mdv-folder-tree { list-style: none; flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 28px; }
+.mdv-tree-item { outline: none; }
+.mdv-tree-row {
+  position: relative;
+  display: flex; align-items: center; gap: 6px;
+  min-height: 28px; margin: 1px 0;
+  padding: 0 8px 0 calc(6px + var(--mdv-tree-level, 0) * 14px);
+  border-radius: 7px;
+  font-size: 0.8rem; line-height: 1.3; color: var(--text-secondary);
+  cursor: pointer; user-select: none;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+.mdv-tree-item:hover > .mdv-tree-row { background: var(--bg-hover); color: var(--text-primary); }
+.mdv-tree-item:focus-visible > .mdv-tree-row { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.mdv-tree-item.is-dir > .mdv-tree-row { color: var(--text-primary); font-weight: 550; }
+.mdv-tree-item.is-current > .mdv-tree-row { background: var(--accent-soft); color: var(--accent-strong); font-weight: 600; }
+.mdv-tree-item.is-current > .mdv-tree-row::before {
+  content: ''; position: absolute; left: 2px; top: 7px; bottom: 7px; width: 3px; border-radius: 3px; background: var(--accent);
+}
+.mdv-tree-twisty {
+  flex: none; width: 14px; height: 14px; background: currentColor; opacity: 0.6;
+  transition: transform var(--transition-fast);
+}
+.mdv-tree-item.is-dir > .mdv-tree-row > .mdv-tree-twisty {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='9 6 15 12 9 18'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='9 6 15 12 9 18'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.mdv-tree-item.is-dir[aria-expanded="true"] > .mdv-tree-row > .mdv-tree-twisty { transform: rotate(90deg); }
+.mdv-tree-item.is-file > .mdv-tree-row > .mdv-tree-twisty {
+  opacity: 0.45;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z'/%3E%3Cpath d='M14 3v5h5'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z'/%3E%3Cpath d='M14 3v5h5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.mdv-tree-item.is-current > .mdv-tree-row > .mdv-tree-twisty { opacity: 0.9; }
+.mdv-tree-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mdv-tree-label mark { background: var(--search-match); color: var(--text-primary); border-radius: 2px; }
+.mdv-tree-count { flex: none; font-size: 0.68rem; font-weight: 500; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.mdv-tree-ext {
+  flex: none; font-size: 0.6rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-tertiary); border: 1px solid var(--border-primary); border-radius: 4px; padding: 0 4px; line-height: 1.5;
+}
+
+/* ----- The sidebar's messages: no folder yet, permission again, nothing found ----- */
+.mdv-folder-empty { padding: 18px 18px 24px; font-size: 0.8rem; line-height: 1.55; color: var(--text-secondary); }
+.mdv-folder-empty[hidden] { display: none; }
+.mdv-folder-empty p { margin-bottom: 14px; }
+.mdv-folder-primary, .mdv-folder-secondary {
+  display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 0 14px; margin: 0 6px 8px 0;
+  border-radius: 8px; font: 600 0.8rem var(--font-ui); cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.mdv-folder-primary { background: var(--accent); color: var(--text-on-accent); border: 1px solid var(--accent); }
+.mdv-folder-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.mdv-folder-secondary { background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-primary); }
+.mdv-folder-secondary:hover { color: var(--text-primary); border-color: var(--border-accent); }
+
+/* ----- Quick open and search in files: the search dialog's look, a little wider ----- */
+.mdv-palette { width: 640px; }
+.mdv-xs { width: 760px; }
+.mdv-palette-list { max-height: min(58vh, 480px); }
+.mdv-palette-item { display: flex; align-items: baseline; gap: 10px; }
+.mdv-palette-name { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--text-primary); }
+.mdv-palette-where { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.76rem; color: var(--text-tertiary); }
+.mdv-palette-tag {
+  flex: none; align-self: center; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--accent-strong); background: var(--accent-soft); border-radius: 999px; padding: 1px 8px;
+}
+.mdv-palette-item.is-current .mdv-palette-name::after { content: '  ·  open'; font-weight: 500; color: var(--text-tertiary); }
+.mdv-palette-footer { align-items: center; flex-wrap: wrap; row-gap: 4px; }
+.mdv-palette-status { margin-left: auto; font-variant-numeric: tabular-nums; }
+.mdv-palette-open-folder {
+  display: block; margin: 0 12px 12px; height: 32px; padding: 0 14px; border-radius: 8px;
+  background: var(--accent); color: var(--text-on-accent); border: 1px solid var(--accent);
+  font: 600 0.8rem var(--font-ui); cursor: pointer;
+}
+.mdv-palette-open-folder:hover { background: var(--accent-hover); }
+
+.mdv-xs-list { padding: 4px 6px 8px; }
+.mdv-xs-file { padding: 2px 0 4px; }
+.mdv-xs-file + .mdv-xs-file { border-top: 1px solid var(--border-secondary); }
+.mdv-xs-file-head {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-top: 4px; padding: 7px 12px 4px; border-radius: 9px; cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+.mdv-xs-file-head:hover, .mdv-xs-file-head.focused { background: var(--accent-soft); }
+.mdv-xs-name { flex: none; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; font-weight: 650; color: var(--text-primary); }
+.mdv-xs-where { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.74rem; color: var(--text-tertiary); }
+.mdv-xs-count {
+  flex: none; font-size: 0.66rem; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--accent-strong); background: var(--accent-soft); border-radius: 999px; padding: 1px 8px;
+}
+.mdv-xs-file-head.focused .mdv-xs-count, .mdv-xs-file-head:hover .mdv-xs-count { background: var(--bg-card); }
+.mdv-xs-hit { display: flex; align-items: baseline; gap: 10px; padding: 5px 12px 5px 14px; }
+.mdv-xs-line {
+  flex: none; min-width: 2.8em; text-align: right;
+  font: 500 0.68rem var(--font-mono); color: var(--text-tertiary); font-variant-numeric: tabular-nums;
+}
+.mdv-xs-text {
+  flex: 1; min-width: 0;
+  font: 0.76rem/1.5 var(--font-mono); color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.mdv-xs-more { padding: 1px 12px 4px calc(14px + 2.8em + 10px); font-size: 0.72rem; color: var(--text-tertiary); }
+
+/* The words a search in files went to, marked in the document for a few seconds (nothing in it changes). */
+::highlight(mdv-folder-match) { background-color: var(--search-match); color: var(--text-primary); }
+
+/* ----- Recent documents: the menu and the welcome screen ----- */
+.mdv-recent-head {
+  padding: 6px 10px 6px; font-size: 0.66rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+.mdv-recent-none { padding: 4px 10px 10px; font-size: 0.78rem; line-height: 1.5; color: var(--text-tertiary); }
+.mdv-recent-item {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; row-gap: 1px; align-items: baseline;
+  width: 100%; padding: 7px 10px; border: 0; border-radius: 8px; background: none; text-align: left; cursor: pointer;
+  font-family: var(--font-ui); color: var(--text-secondary);
+  transition: background-color var(--transition-fast);
+}
+.mdv-recent-item:hover, .mdv-recent-item:focus-visible { background: var(--bg-hover); color: var(--text-primary); }
+.mdv-recent-item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.mdv-recent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.82rem; font-weight: 600; color: var(--text-primary); }
+.mdv-recent-when { font-size: 0.68rem; color: var(--text-tertiary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mdv-recent-where { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.72rem; color: var(--text-tertiary); }
+.mdv-recent-where:empty { display: none; }
+.mdv-recent-clear {
+  display: block; width: 100%; margin-top: 4px; padding: 8px 10px 6px; border: 0; border-top: 1px solid var(--border-secondary);
+  border-radius: 0 0 8px 8px; background: none; text-align: left; cursor: pointer;
+  font: 500 0.78rem var(--font-ui); color: var(--text-tertiary);
+}
+.mdv-recent-clear:hover, .mdv-recent-clear:focus-visible { color: var(--accent-danger); background: var(--bg-hover); }
+
+.mdv-welcome-recents { width: 100%; max-width: 540px; margin-top: 26px; text-align: left; }
+.mdv-welcome-recents[hidden] { display: none; }
+.mdv-welcome-recents-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 6px 8px; }
+.mdv-welcome-recents-head h2 {
+  font: 600 0.7rem var(--font-ui); letter-spacing: 0.09em; text-transform: uppercase; color: var(--text-tertiary);
+}
+.mdv-welcome-recents-tools { display: flex; gap: 6px; }
+.mdv-welcome-link {
+  border: 0; background: none; padding: 2px 6px; border-radius: 6px; cursor: pointer;
+  font: 600 0.78rem var(--font-ui); color: var(--text-link);
+}
+.mdv-welcome-link:hover { background: var(--bg-hover); color: var(--text-link-hover); }
+.mdv-welcome-recents-list {
+  list-style: none; padding: 4px;
+  background: var(--bg-card); border: 1px solid var(--border-primary); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm);
+}
+.mdv-welcome-recents-list .mdv-recent-item { padding: 9px 12px; }
+.mdv-welcome-recents-none { margin: 0 6px; font-size: 0.82rem; line-height: 1.55; color: var(--text-tertiary); }
+
+/* ----- Link previews ----- */
+.mdv-preview {
+  position: fixed; z-index: 250; width: 400px;
+  padding: 12px 15px 13px;
+  background: var(--bg-card); color: var(--text-primary);
+  border: 1px solid var(--border-primary); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  opacity: 0; transform: translateY(3px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.mdv-preview[hidden] { display: none; }
+.mdv-preview.show { opacity: 1; transform: none; }
+.mdv-preview-where {
+  margin-bottom: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 500 0.68rem var(--font-mono); color: var(--text-tertiary);
+}
+.mdv-preview-title { margin-bottom: 6px; font: 600 1.02rem/1.3 var(--font-reading); color: var(--text-primary); letter-spacing: -0.005em; }
+.mdv-preview-body {
+  font: 0.86rem/1.58 var(--font-reading); color: var(--text-secondary);
+  display: -webkit-box; -webkit-line-clamp: 6; line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+}
+.mdv-preview-body p { margin: 0; }
+.mdv-preview-body.is-empty, .mdv-preview-note { font: italic 0.82rem/1.5 var(--font-ui); color: var(--text-tertiary); }
+.mdv-preview-body code {
+  font-family: var(--font-mono); font-size: 0.84em; padding: 0.05em 0.35em; border-radius: 4px;
+  background: var(--bg-code); color: var(--text-code);
+}
+.mdv-preview-link { color: var(--text-link); }
+
+@media (prefers-reduced-motion: reduce) {
+  .mdv-preview, .mdv-tree-twisty { transition: none; }
+}
+
+/* ----- Phones: no room in the toolbar, and phone browsers cannot list a folder (no showDirectoryPicker), as for
+   the save-location buttons (viewer.css). The recent documents stay on the welcome screen. ----- */
+@media (max-width: 600px) {
+  .mdv-folder-group { display: none !important; }
+}
+
+/* ----- Print: the document only ----- */
+@media print {
+  .mdv-folder, .mdv-folder-group, .mdv-preview, .mdv-palette-overlay { display: none !important; }
+  body.mdv-folder-open .content-wrapper { margin-left: 0 !important; }
+  body.mdv-folder-open .toc-sidebar { left: 0 !important; }
+}

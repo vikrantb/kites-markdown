@@ -39,6 +39,8 @@
       currentVersion: null,
       initialDocument: none,
       readDocument: none,
+      listDirectory: none,
+      chooseFolder: none,
       saveDocument: none,
       openPath: none,
       openExternal: none,
@@ -198,6 +200,13 @@
       if (doc && (samePath(doc.path, host.currentPath) || samePath(doc.path, windowPath))) remember(doc.mtimeMs, doc.version);
       return doc;
     }),
+
+    // The Markdown files under a folder, for the file sidebar (js/folder.js): {root, name, entries:
+    // [{path, rel, name, depth, size, mtimeMs}], truncated, unreadable}. Rejects with {code, message}.
+    listDirectory: (root) => call('mdv_list_directory', { root }),
+
+    // The native folder panel: the chosen folder's path, or null when the person cancels.
+    chooseFolder: () => call('mdv_choose_folder'),
 
     // Never rejects: {ok:true, mtimeMs, version} or
     // {ok:false, reason:'conflict'|'not-allowed'|'io', currentMtimeMs?, currentVersion?, message}.
