@@ -291,6 +291,22 @@ test("a linked class name keeps its underline, and a mind map's SVG label takes 
   expect(r.mindFill).toBeLessThan(2);
 });
 
+// The inline link marks became drawn icons in an earlier change; the link card kept its glyph (a star for GitHub,
+// colour emoji for docs and files), the one instance of that defect left.
+test("a link card's mark is a drawn icon, not a glyph", async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  const card = await page.$eval('#mdBody a.link-chip .link-chip-icon', (icon) => {
+    const before = getComputedStyle(icon, '::before');
+    return { glyphSize: getComputedStyle(icon).fontSize, glyph: icon.textContent.trim(), content: before.content,
+             mask: before.maskImage || before.webkitMaskImage, width: parseFloat(before.width) };
+  });
+  expect(card.glyph).toBe('\u2605'); // positive control: the star is still there for anything that reads the text
+  expect(card.glyphSize).toBe('0px');
+  expect(card.content).toBe('""');
+  expect(card.mask).toContain('url(');
+  expect(card.width).toBeGreaterThan(10);
+});
+
 // ---------------------------------------------------------------------------------------------
 // Diagrams keep a legible size
 // ---------------------------------------------------------------------------------------------

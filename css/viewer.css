@@ -1669,7 +1669,15 @@ body > div[id^="dmdv-mermaid-"] { min-width: 1600px; }
   width: 36px; height: 36px; border-radius: 9px;
   background: var(--accent-soft); color: var(--accent-strong);
   display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; font-size: 1rem;
+  flex-shrink: 0; font-size: 0;
+}
+/* One drawn link mark for every card; its badge names the kind of link. The glyph links.js writes stays in the DOM but
+   is not drawn (font-size 0): GitHub's star read as "favourite" and the docs and file marks were colour emoji that
+   changed with the operating system, as the inline link marks did before they were drawn (see above). */
+.link-chip .link-chip-icon::before {
+  content: ''; width: 17px; height: 17px; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 14a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.2 1.2'/%3E%3Cpath d='M14 10a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.2-1.2'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 14a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.2 1.2'/%3E%3Cpath d='M14 10a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.2-1.2'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 .link-chip .link-chip-body { min-width: 0; flex: 1; }
 .link-chip .link-chip-title {
