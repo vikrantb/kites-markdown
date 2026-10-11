@@ -63,25 +63,29 @@ as it has been opened once: an app that declares a file type becomes the automat
 
 ## Using it
 
-- **One window per document.** Double-clicking a file that is already open brings its window forward.
-  Opening the app without a file shows the welcome screen, which takes the next file you open.
+- **One window per document.** Double-clicking a file that is already open brings its window forward. If that
+  window shows a document opened from one of its links, it shows its own file again, and **Back** returns to the
+  linked document. Opening the app without a file shows the welcome screen, which takes the next file you open.
 - **Open files** with **File → Open…** (⌘O / Ctrl+O), by dropping them on a window, or from links.
   **File → New Window** (⌘N / Ctrl+N) opens an empty window; **View → Reload** (⌘R / Ctrl+R) re-reads
-  the file; **Close Window** is ⌘W / Ctrl+W.
+  the document on screen; **Close Window** is ⌘W / Ctrl+W.
 - **Links in a document:** a link to another Markdown file opens that file in the same window, and **Back**
-  (`⌥←` / `Alt+←`, or the arrow at the left of the toolbar) returns to where you were; ⌘-click (Ctrl-click)
-  opens it in a window of its own. Web and email links open in your browser or mail app; links within the page
+  (**Go → Back**, ⌘[ on a Mac, `Alt+←`, or the arrow at the left of the toolbar) returns to where you were, with
+  the focus on that link; **Go → Forward** (⌘] / `Alt+→`) goes on again. ⌘-click (Ctrl-click) opens it in a
+  window of its own. Web and email links open in your browser or mail app; links within the page
   scroll. Links to other kinds of file are not opened (a short notice says so), and the window never navigates
   away from the app.
 - **A document opened from a link** is shown in the window, but the window still belongs to the file it opened:
   the shell saves and watches only that one. The page reads the linked document again every 2 s to follow its
-  changes, and a comment on it is kept in the comments panel to download rather than saved into it. To comment on
-  a linked document, ⌘-click (Ctrl-click) the link to open it in a window of its own.
+  changes (and **View → Reload** reads it at once), and a comment on it is kept in the comments panel to download
+  rather than saved into it. To comment on a linked document, ⌘-click (Ctrl-click) the link to open it in a window
+  of its own.
 - **Images** with a relative path (`![chart](images/chart.png)`) load from the document's folder and the
   folders below it, dot-folders such as `.github/` and `.gitbook/assets/` included. Images elsewhere on
   the disk do not load.
-- **Live reload:** when another program saves the file, the window shows the new version, keeps your
-  place in it and says **Updated**. If you have comment changes that are not in the file yet, the window waits
+- **Live reload:** when another program saves the file, the window shows the new version, keeps you on the words
+  you were reading (whatever was added above them) with your folded sections folded, marks what changed for a moment
+  and says where (**Updated: Status**). If you have comment changes that are not in the file yet, the window waits
   and offers **Reload** instead, and so does **View → Reload**: loading the file's version is then your choice.
 - **Comments** (still experimental, see the [README](../README.md)) are saved into the file itself.
 - **Paste:** pasting Markdown into an empty window shows it; it is not saved anywhere. That window then
@@ -205,8 +209,14 @@ the same window through the viewer's load seam (`mdvOpenDocument`, `js/files.js`
 its path, which the shell refuses for any file but the window's own (`not-allowed`), so the window's file is never
 written with another document's text. The shell neither watches it nor knows the window shows it: the page reads it
 every 2 s while it is visible (`js/live-reload.js`), Back and Forward use the page's own history (`js/history.js`),
-and ⌘/Ctrl-click still goes to `openPath`. When Back returns to the window's own file, the page reads it once,
-since the shell's change events for it were ignored while another document was shown.
+and ⌘/Ctrl-click still goes to `openPath`. Back reads a document again before it shows it, so the window's own file
+comes back as it is on disk now: the shell's change events for it were let pass while another document was shown.
+The shell's own commands follow the document on screen: **View → Reload** sends the window's file as always
+(`mdv://document-changed`, reason `reload`), and `js/host.js` reloads the linked document on screen instead; opening
+the window's own file again (`open_path` finds its window) also sends it that file (`mdv://open-document`, reason
+`focus`), and the page shows it as a new place, so Back returns to the linked document; **Go → Back** and **Go →
+Forward** send `mdv://go` (`back` or `forward`), and the page goes to the previous or next document. The bridge
+remembers the versions of the window's own file whatever is on screen, so a save after Back names the right one.
 
 **Live reload.** Each open document is watched through its folder, filtered by name, so editors that save
 by writing a new file and renaming it still count. Events are debounced (300 ms). A change that is the
@@ -225,8 +235,9 @@ save into an existing sibling file, naming that file's real version, must be ref
 and leave the file unchanged), calls `confirm()` and `alert()` on macOS (the shell answers them without
 showing anything in this mode, and must have), optionally saves, edits the file "from outside" and saves
 a stale version (expecting live reload and a conflict), follows the linked fixture's link to `other.md` (it must
-open in the same window through `readDocument`, with no new window asked for, and Back must return to the window's
-own file), and finally renders a document with an `onerror` handler to prove it does not run. The shell adds the window title and the asset scope, writes the JSON
+open in the same window through `readDocument`, with no new window asked for), opens the window's own file again
+through `mdv_open_path` (the window must show it, and Back must return to `other.md`), goes Back once more (to the
+window's own file), and finally renders a document with an `onerror` handler to prove it does not run. The shell adds the window title and the asset scope, writes the JSON
 and exits 0 or 1 (1 after 60 s without a report, and 1 if the report cannot be written).
 
 **CI** (`.github/workflows/desktop.yml`) builds a universal macOS app and a Windows x64 installer with a
@@ -297,8 +308,7 @@ document was opened.
 - **Fonts:** the app uses the viewer's fallback fonts (system fonts): it loads nothing from the internet, so
   the web fonts the browser build uses are left out.
 - **A document opened from a link in the same window** is not saved into (comments on it stay in the comments
-  panel to download), View → Reload reloads only the window's own file, the window's title keeps that file's name,
-  and images outside the folders of the documents opened in this session do not load. ⌘/Ctrl-click opens it in a
-  window of its own, where all of these work.
+  panel to download), the window's title keeps that file's name, and images outside the folders of the documents
+  opened in this session do not load. ⌘/Ctrl-click opens it in a window of its own, where all of these work.
 - **Not in v1:** tabs, Quick Look previews, a document icon of its own for `.md` files, an "Open Recent"
   menu, and printing from the menu.
