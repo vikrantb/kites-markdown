@@ -48,7 +48,8 @@ keep it that way: no product names, private paths or project-specific examples.
    - the console must be clean;
    - diagrams, math, task-list checkboxes and code highlighting must render;
    - comment threads must appear in the sidebar.
-3. Saving to disk needs a real user click, so confirm it by hand.
+3. Saving to a real file on disk needs a real user click, so confirm it by hand. The browser tests cover the
+   save logic with fake and browser-private (OPFS) files.
 4. For anything touching file access, also check the non-Chromium fallback in Firefox or Safari.
 
 `python3 -m http.server` occasionally resets a connection when many files load at once. A library
@@ -99,8 +100,10 @@ that is suddenly "missing" after a reload is usually that, not the code.
 - The legacy viewer is kept for reference. Its ideas worth porting are in `docs/legacy-viewer.md`.
 - The extension's iframe is sandboxed **without** `allow-same-origin`, so a rendered page cannot act
   with the viewer's GitHub session.
-- Comments are marked **experimental** in the README until roadmap issues 1–6 (data safety) are
-  fixed. Start there.
+- Comment data safety (roadmap issues 1–6) was fixed on 2026-10-10, with a browser test for each in
+  `tests/e2e/comments*.spec.mjs`, and the README's "experimental" warning was removed.
+  `mdvWriteDocument` in `js/comments.js` is the only function that writes a document; keep it that way.
+  It writes only into the version of a file its text was made from, and never rewrites a file that is not UTF-8.
 
 Open decisions (form factor, which visualizations first, GitHub Pages, vendoring fonts) live in
 `docs/roadmap.md`.

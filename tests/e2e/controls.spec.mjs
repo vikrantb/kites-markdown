@@ -238,8 +238,10 @@ test('files: Open, the file input, the writable open and the workspace buttons',
 
   await page.locator('#mdvOpenBtn').click();
   await page.locator('#mdvWorkspaceBtn').click();
+  // The document was read from a file, so linking it opens THAT file (showOpenFilePicker) and its first save is
+  // compared with it; the Save dialog is only for pasted text and the demo (stream C, comments.js).
   await expect.poll(() => page.evaluate(() => window.__mdvPickerCalls.slice().sort()))
-    .toEqual(['showDirectoryPicker', 'showSaveFilePicker']);
+    .toEqual(['showDirectoryPicker', 'showOpenFilePicker']);
 
   expect(problems, problems.join('\n')).toEqual([]);
 });

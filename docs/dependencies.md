@@ -132,7 +132,7 @@ own global when executed on its own).
 | 8 | `markdown-it-sup.min.js` | `markdownitSup` | `md.use(window.markdownitSup)` | `x^2^` | Guarded; literal text |
 | 9 | `markdown-it-deflist.min.js` | `markdownitDeflist` | `md.use(window.markdownitDeflist)` | Definition lists | Guarded; terms and `:` lines render as paragraphs |
 | 10 | `markdown-it-abbr.min.js` | `markdownitAbbr` | `md.use(window.markdownitAbbr)` | `*[HTML]: ...` abbreviations | Guarded; definitions show as text, no `<abbr>` |
-| 11 | `diff-match-patch.js` | `diff_match_patch`, `DIFF_DELETE`, `DIFF_INSERT`, `DIFF_EQUAL` | `const _mdvDmp = (typeof diff_match_patch !== 'undefined') ? new diff_match_patch() : null`; `_mdvDmp.match_main(...)` in `mdvResolveAnchor` (with `Match_Threshold = 0.5`, `Match_Distance = 1000`) | Third, fuzzy level of re-attaching a comment to its text; currently dead code (see [commenting.md](commenting.md)) | Guarded; `_mdvDmp` is `null` and the fuzzy level would be skipped. In practice nothing changes: `mdvResolveAnchor` is never called, and comments are placed only by marker id (see [commenting.md](commenting.md#the-unused-three-level-resolver)) |
+| 11 | `diff-match-patch.js` | `diff_match_patch`, `DIFF_DELETE`, `DIFF_INSERT`, `DIFF_EQUAL` | **Nothing, since 2026-10-10.** It served `mdvResolveAnchor`, a fuzzy comment resolver that was never called and has been removed; comments are placed by marker id and block number (see [commenting.md](commenting.md#resolving-an-anchor)) | None | None. The `<script>` tag can be removed, together with this file and its notice |
 | 12 | `<link id="hljs-light" href="vendor/github.min.css">` | — | `setTheme` sets `disabled = (theme === 'dark')` | Code colours, light theme | Code is uncoloured in light theme |
 | 13 | `<link id="hljs-dark" href="vendor/github-dark.min.css" disabled>` | — | `setTheme` sets `disabled = (theme !== 'dark')` | Code colours, dark theme | Code is uncoloured in dark theme |
 | 14 | `highlight.min.js` | `hljs` | The `highlight(str, lang)` option passed to `markdownit`: `hljs.getLanguage(lang)` then `hljs.highlight(str, { language: lang })` | Syntax highlighting | Guarded by `typeof hljs !== 'undefined'`; code is HTML-escaped and shown plain. No auto-detection is used, so an unknown or missing language is also shown plain |
@@ -159,8 +159,6 @@ flowchart LR
   MI -->|"md.use()"| PL
   MI -->|"highlight option"| HL
   RM -->|"3. renderMermaidDiagrams()"| MM
-  IS --> CR["mdvResolveAnchor() (comments)"]
-  CR -->|"fuzzy level"| DMP
 ```
 
 ### 2.1 What KaTeX's CSS references but is not vendored
