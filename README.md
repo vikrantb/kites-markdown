@@ -36,6 +36,14 @@ width and font size, light, sepia and dark themes, in-document search, a panel l
 abbreviation tooltips, an image lightbox, and **read-aloud** (text-to-speech with per-section
 navigation). See [docs/features.md](docs/features.md).
 
+## Documents that change, and documents that link
+
+The viewer follows the file you are reading: when another program saves it, the new version appears
+where you were reading, with a quiet "Updated" note, and a document with comments that are not saved
+yet asks first. A relative link to another Markdown file opens inside the viewer, and Back and Forward
+(`Alt+←` and `Alt+→`, or the arrows at the left of the toolbar) return to each document at the place
+you left it. See [docs/features.md](docs/features.md#following-documents-live-reload-back-and-forward-and-links).
+
 ## Comments inside the file
 
 Comments are threads attached to blocks of the document and stored **inside the markdown file
@@ -80,8 +88,8 @@ comment format.
 
 Prefer double-clicking? **Kites Markdown** is the same viewer as a Mac and Windows app: double-click any
 `.md` file and it opens, rendered, in its own window. It saves comments into the file, opens linked
-Markdown files in their own windows, shows images that sit next to the document, and updates when
-another program changes the file.
+Markdown files in the same window (Back returns; Cmd/Ctrl-click opens a window of its own), shows images
+that sit next to the document, and updates when another program changes the file.
 
 - **Mac:** download the `.dmg` from the [releases](../../releases), drag the app to Applications, and
   allow the first launch in **System Settings → Privacy & Security → Open Anyway** (the app is not signed

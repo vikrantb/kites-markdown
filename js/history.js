@@ -74,6 +74,14 @@ function mdvHistoryAdd(doc) {
   return entry;
 }
 
+// The tab's current entry is named after its document only when the reader leaves it, so a page that only shows
+// one document never touches the tab's history (a fragment link's entries copy the state it then has)
+function mdvHistoryTag(entry) {
+  const st = history.state && history.state.mdvDoc;
+  if (st && st.id === entry.id) return;
+  mdvHistoryWrite('replaceState', Object.assign({}, history.state, mdvHistoryState(entry, mdvHistory.index)), location.href);
+}
+
 // Just before a document replaces the page (the old one is still on screen): the browser keeps the old entry's
 // scroll position as it moves on, and the old entry keeps the reader's place and the document as they leave it.
 mdvOnDocumentOpening((event) => {
@@ -84,7 +92,6 @@ mdvOnDocumentOpening((event) => {
     out = mdvHistoryAdd(event.previous);
     mdvHistory.order = [out.id];
     mdvHistory.index = 0;
-    mdvHistoryWrite('replaceState', Object.assign({}, history.state, mdvHistoryState(out, 0)), location.href);
   }
   if (out) {
     out.position = event.position;
@@ -100,6 +107,7 @@ mdvOnDocumentOpening((event) => {
   }
   const entry = mdvHistoryAdd(event.doc);
   if (event.push && out) {
+    mdvHistoryTag(out);
     mdvHistory.order = mdvHistory.order.slice(0, mdvHistory.index + 1);
     mdvHistory.order.push(entry.id);
     mdvHistory.index = mdvHistory.order.length - 1;
@@ -114,14 +122,18 @@ mdvOnDocumentOpening((event) => {
 // Once it is on screen: the entry holds the document as shown
 mdvOnDocumentOpened((event) => {
   if (event.kind === 'first') {
-    // The page's own entry becomes this document's. After a reload of the page it keeps its place.
+    // The page's own entry is this document's (named when the reader leaves it). After a reload of the page it
+    // keeps its place among the entries the tab kept.
     const prior = history.state && history.state.mdvDoc;
     const entry = mdvHistoryAdd(event.doc);
     const n = prior && Number.isInteger(prior.n) ? prior.n : 0;
     mdvHistory.order = [];
     mdvHistory.order[n] = entry.id;
     mdvHistory.index = n;
-    mdvHistoryWrite('replaceState', Object.assign({}, history.state, mdvHistoryState(entry, n)), mdvHistoryUrl(event.doc, { first: true }));
+    // A chosen, dropped or pasted document names itself in the address, as the viewer always did
+    if (event.doc.kind === 'file' || event.doc.kind === 'pasted') {
+      mdvHistoryWrite('replaceState', Object.assign({}, history.state, mdvHistoryState(entry, n)), mdvHistoryUrl(event.doc, { first: true }));
+    }
   } else {
     const entry = mdvHistoryCurrent();
     if (entry) entry.doc = event.doc;
