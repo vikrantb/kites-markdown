@@ -273,7 +273,7 @@ if (mdvPurifier) {
   });
   mdvPurifier.addHook('uponSanitizeAttribute', (node, data) => {
     if (data.attrName !== 'id' && data.attrName !== 'name') return;
-    if (mdvSanitizeChromeIds && mdvSanitizeChromeIds.has(data.attrValue)) {
+    if ((mdvSanitizeChromeIds && mdvSanitizeChromeIds.has(data.attrValue)) || MDV_LATER_IDS.test(data.attrValue)) {
       data.keepAttr = false;
       return;
     }
@@ -301,6 +301,15 @@ function mdvChromeIds() {
   }
   return ids;
 }
+
+// The ids of elements the viewer makes only later, and then finds by id: the comment notices' area
+// (#mdvNotices), the search status (#mdvSearchStatus), the expanded diagram's 1:1 button
+// (#diagramActualBtn), the shortcuts sheet's title. They are not on the page when the first document is
+// sanitized, so mdvChromeIds cannot see them; a document that named one first was taken for it (its
+// content wiped by the notices, the search status written into it, the 1:1 button never made). Every id
+// the viewer gives its own elements is mdv followed by a capital letter, or one of these; a heading's id
+// never is (it is lower case).
+const MDV_LATER_IDS = /^(?:mdv[A-Z]|diagramActualBtn$)/;
 
 // Returns a DocumentFragment, or, without DOMPurify, the HTML string markdown-it produced with raw
 // HTML disabled (every tag in it was written by markdown-it or the viewer, from escaped text).

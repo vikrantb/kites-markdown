@@ -42,6 +42,23 @@ test('a document cannot take the print header\'s id: its element stays in the do
   expect(next).toEqual({ leftover: false, intro: true, headers: 1, title: 'Second document' });
 });
 
+test('a document cannot take the ids of elements the viewer makes later: the search status, the comment notices, the diagram view\'s 1:1 button', async ({ page }) => {
+  // The same kind of hole as the print header's: the first document is sanitized before these exist.
+  await openDoc(page, 'tests/fixtures/export/later-ids.md');
+  expect(await page.evaluate(() => ['mdvSearchStatus', 'mdvNotices', 'diagramActualBtn']
+    .filter((id) => document.querySelector(`#mdBody [id="${id}"]`)))).toEqual([]);
+  // Search writes its status into its own footer, not into the document.
+  await page.keyboard.press('Control+k');
+  await page.locator('#searchInput').fill('release');
+  await expect(page.locator('#searchOverlay .search-footer [role="status"]')).toHaveText(/match/);
+  await expect(page.locator('#mdBody span', { hasText: 'own status line' })).toHaveText(/^The document.s own status line$/);
+  await expect(page.locator('#mdBody')).not.toContainText('match');
+  await page.keyboard.press('Escape');
+  // The expanded diagram gets its 1:1 button.
+  await page.locator('#mdBody .mermaid-wrapper').first().click();
+  await expect(page.locator('#diagramOverlay #diagramActualBtn')).toBeVisible();
+});
+
 test('Export HTML embeds only images: a file named with an image extension in its fragment or query, or whose bytes are not an image, stays out', async ({ page }) => {
   await openDoc(page, 'tests/fixtures/export/not-images.md');
   const { html } = await exportHtml(page);
