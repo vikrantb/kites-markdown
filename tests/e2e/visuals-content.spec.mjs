@@ -85,3 +85,78 @@ for (const theme of THEMES) {
     }
   });
 }
+
+test('tabular figures only in number columns: prose cells and the dashboard date keep proportional hyphens', async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  const date = await page.evaluate(() => getComputedStyle(document.querySelector('#mdBody .fm-date')).fontVariantNumeric);
+  const prose = await page.evaluate(() => {
+    const cell = [...document.querySelectorAll('#mdBody td')].find((td) => td.textContent.trim() === 'character-level');
+    return getComputedStyle(cell).fontVariantNumeric;
+  });
+  await renderSource(page, '# Numbers\n\n| Area | Words |\n|---|---|\n| Prose-heavy | 1,204 |\n| Code | 380 |\n');
+  const cells = await page.evaluate(() => [...document.querySelectorAll('#mdBody tbody tr:first-child td')].map((td) => getComputedStyle(td).fontVariantNumeric));
+  expect(date).toBe('normal');
+  expect(prose).toBe('normal');
+  expect(cells).toEqual(['normal', 'tabular-nums']);
+});
+
+test('a task-list checkbox is centred on the capital height of its text', async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  const off = await page.evaluate(() => {
+    const out = [];
+    for (const box of document.querySelectorAll('#mdBody .task-list-item input[type="checkbox"]')) {
+      const li = box.closest('li');
+      // The baseline: a zero-size inline-block sits on it.
+      const probe = document.createElement('span');
+      probe.style.cssText = 'display:inline-block;width:0;height:0';
+      box.after(probe);
+      const baseline = probe.getBoundingClientRect().bottom;
+      probe.remove();
+      const ctx = document.createElement('canvas').getContext('2d');
+      const cs = getComputedStyle(li);
+      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const cap = ctx.measureText('H').actualBoundingBoxAscent;
+      const r = box.getBoundingClientRect();
+      out.push(+((r.top + r.height / 2) - (baseline - cap / 2)).toFixed(2));
+    }
+    return out;
+  });
+  expect(off.length).toBeGreaterThan(0);
+  for (const o of off) expect(Math.abs(o)).toBeLessThanOrEqual(1.5);
+});
+
+test('a highlight does not push the punctuation after it away', async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  const gap = await page.evaluate(() => {
+    const mark = document.querySelector('#mdBody mark');
+    const text = mark.firstChild;
+    const end = document.createRange();
+    end.setStart(text, text.length - 1);
+    end.setEnd(text, text.length);
+    const after = mark.nextSibling; // ", `inline code`..."
+    const comma = document.createRange();
+    comma.setStart(after, 0);
+    comma.setEnd(after, 1);
+    return { char: after.textContent[0], gap: comma.getBoundingClientRect().left - end.getBoundingClientRect().right };
+  });
+  expect(gap.char).toBe(',');
+  expect(gap.gap).toBeLessThanOrEqual(1.5);
+});
+
+test('diff rows run the full width of the code block', async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  const rows = await page.evaluate(() => {
+    const code = document.querySelector('#mdBody pre code.hljs.language-diff, #mdBody pre code.language-diff code.hljs') ||
+      [...document.querySelectorAll('#mdBody pre code.hljs')].find((c) => c.querySelector('.hljs-addition'));
+    const box = code.getBoundingClientRect();
+    return [...code.querySelectorAll('.hljs-addition, .hljs-deletion')].map((row) => {
+      const r = row.getBoundingClientRect();
+      return { left: r.left - box.left, right: box.right - r.right };
+    });
+  });
+  expect(rows.length).toBeGreaterThan(0);
+  for (const r of rows) {
+    expect(Math.abs(r.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(r.right)).toBeLessThanOrEqual(1);
+  }
+});

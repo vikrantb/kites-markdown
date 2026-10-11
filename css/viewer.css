@@ -878,18 +878,23 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
 .md-body .task-list-item { list-style: none; padding-left: 0; }
 .md-body .task-list-item::marker { content: none; }
 .md-body .task-list-item > label { cursor: pointer; }
+/* The box is sized in the text's own em (font: inherit; an input otherwise uses the UA's 13.33 px), and its centre
+   sits on the middle of a capital letter: a box with no inner baseline aligns by its bottom edge, 0.17em below the
+   text's baseline. The tick is positioned, so it cannot become the box's baseline. */
 .md-body .task-list-item input[type="checkbox"] {
   appearance: none; -webkit-appearance: none;
-  width: 1.15em; height: 1.15em;
-  margin: 0 0.65em 0 0; vertical-align: -0.2em;
-  border: 1.5px solid var(--border-accent); border-radius: 5px;
+  font: inherit;
+  width: 1.05em; height: 1.05em;
+  margin: 0 0.6em 0 0; vertical-align: -0.17em;
+  border: 1.5px solid var(--border-accent); border-radius: 0.3em;
   background: var(--bg-card);
-  display: inline-grid; place-content: center;
+  display: inline-block; position: relative;
   cursor: pointer;
   transition: background-color var(--transition-fast), border-color var(--transition-fast);
 }
 .md-body .task-list-item input[type="checkbox"]::before {
-  content: ''; width: 0.62em; height: 0.62em;
+  content: ''; position: absolute; inset: 0; margin: auto;
+  width: 0.62em; height: 0.62em;
   background: var(--text-on-accent);
   clip-path: polygon(14% 52%, 0 66%, 38% 100%, 100% 22%, 86% 8%, 38% 72%);
   transform: scale(0); transition: transform 0.12s ease-out;
@@ -923,9 +928,10 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
   border: 1px solid var(--border-primary); border-bottom-width: 2px; border-radius: 6px;
   box-shadow: var(--shadow-xs); vertical-align: 0.08em;
 }
+/* The padding is taken back by a negative margin, so a comma right after the highlight stays where the text puts it. */
 .md-body mark {
   background: var(--mark-bg); color: inherit;
-  padding: 0.05em 0.25em; border-radius: 4px;
+  padding: 0.05em 0.14em; margin: 0 -0.14em; border-radius: 4px;
   box-decoration-break: clone; -webkit-box-decoration-break: clone;
 }
 .md-body sub, .md-body sup { font-size: 0.72em; line-height: 0; }
@@ -957,7 +963,8 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
 /* A highlighted fence: markdown-it's outer <code> holds the header and the inner code.hljs */
 .md-body pre > code:has(> .code-header) { padding: 0; overflow: visible; font-size: inherit; }
 .md-body pre > code > code {
-  display: block; padding: 14px 20px 16px; overflow-x: auto;
+  --code-pad-x: 20px;
+  display: block; padding: 14px var(--code-pad-x) 16px; overflow-x: auto;
   font-size: 0.8em; line-height: 1.65;
   background: none; border: 0; border-radius: 0; color: var(--text-primary);
 }
@@ -1043,16 +1050,14 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
 .md-body .hljs-meta { color: var(--syntax-meta); }
 .md-body .hljs-variable, .md-body .hljs-params, .md-body .hljs-subst, .md-body .hljs-operator,
 .md-body .hljs-punctuation { color: inherit; }
-.md-body .hljs-addition {
-  color: var(--syntax-addition);
-  background: color-mix(in srgb, var(--syntax-addition) 12%, transparent);
-  display: inline-block; width: 100%;
+/* A diff row runs the full width of the code box, through its side padding. */
+.md-body .hljs-addition, .md-body .hljs-deletion {
+  display: inline-block; box-sizing: border-box;
+  width: calc(100% + 2 * var(--code-pad-x, 20px));
+  margin: 0 calc(-1 * var(--code-pad-x, 20px)); padding: 0 var(--code-pad-x, 20px);
 }
-.md-body .hljs-deletion {
-  color: var(--syntax-deletion);
-  background: color-mix(in srgb, var(--syntax-deletion) 12%, transparent);
-  display: inline-block; width: 100%;
-}
+.md-body .hljs-addition { color: var(--syntax-addition); background: color-mix(in srgb, var(--syntax-addition) 12%, transparent); }
+.md-body .hljs-deletion { color: var(--syntax-deletion); background: color-mix(in srgb, var(--syntax-deletion) 12%, transparent); }
 .md-body .hljs-emphasis { font-style: italic; }
 .md-body .hljs-strong { font-weight: 700; }
 
@@ -1068,7 +1073,6 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
   box-shadow: var(--shadow-xs);
   font-family: var(--font-ui);
   font-size: 0.86em; line-height: 1.55;
-  font-variant-numeric: tabular-nums;
 }
 .md-body th, .md-body td {
   padding: 10px 16px; text-align: left; vertical-align: top;
@@ -1086,7 +1090,8 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
 .md-body tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--bg-secondary) 55%, transparent); }
 .md-body tbody tr:last-child td { border-bottom: 0; }
 .md-body tbody tr:hover td { background: var(--bg-hover); }
-.md-body td.mdv-num, .md-body th.mdv-num { text-align: right; }
+/* Tabular figures only in number columns: in prose cells they widen Inter's hyphen by 41% ("character - level"). */
+.md-body td.mdv-num, .md-body th.mdv-num { text-align: right; font-variant-numeric: tabular-nums; }
 .md-body td code { font-size: 0.86em; }
 
 /* ===== Images and figures ===== */
@@ -1247,7 +1252,7 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
 .fm-status-badge.draft { --s: var(--status-draft); }
 .fm-date {
   display: inline-flex; align-items: center; gap: 6px;
-  font-size: 0.78rem; color: var(--text-tertiary); font-variant-numeric: tabular-nums;
+  font-size: 0.78rem; color: var(--text-tertiary);
 }
 .fm-date::before {
   content: ''; width: 13px; height: 13px; background: currentColor;
