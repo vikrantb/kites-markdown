@@ -115,7 +115,7 @@ These two buttons only matter for comments:
 
 For a reader of notes that live in folders of related documents (status reports, handoffs, proposals): a sidebar of
 the folder's Markdown files, quick open, search in files, recent documents and link previews. `js/folder.js` is the
-folder itself (`window.mdvFolder`); `folder-tree.js`, `quick-open.js`, `folder-search.js`, `recents.js` and
+folder itself (`window.mdvFolder`, its path arithmetic in `folder-paths.js`); `folder-tree.js`, `quick-open.js`, `folder-search.js`, `recents.js` and
 `link-preview.js` are built on it, with their styles in `css/folder.css`. They show a document only through
 `mdvOpenDocument` (`js/files.js`). Tests: `tests/e2e/folder.spec.mjs`; the desktop app's own walk: the shell's unit
 tests (`desktop/src-tauri/src/folders.rs`) and its self-test (`--expect folder`).
