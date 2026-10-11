@@ -45,7 +45,7 @@ function handoff({ extraDetails = false, risksTitle = 'Risks', risksText = 'Risk
   parts.push('## Plan', '', words(40, 'plan'), '');
   if (extraDetails) parts.push('### Details', '', 'Plan details added by the agent: ' + words(50, 'plan detail'), '');
   parts.push('## Retry policy', '', words(40, 'retry'), '', '### Details', '', 'Retry details: ' + words(60, 'retry detail'), '');
-  parts.push(`## ${risksTitle}`, '', words(40, 'risk'), '', '### Details', '', risksText, '', 'Second risk paragraph: ' + words(60, 'more risk'), '');
+  parts.push(`## ${risksTitle}`, '', 'Risk summary: ' + words(40, 'risk'), '', '### Details', '', risksText, '', 'Second risk paragraph: ' + words(60, 'more risk'), '');
   parts.push('## Appendix', '', words(200, 'appendix'), '');
   return parts.join('\n');
 }
@@ -80,10 +80,12 @@ test('text added above and the reader\'s heading renamed: their paragraph keeps 
   await page.goto(`markdown-viewer.html?file=${doc.path}`);
   await page.waitForSelector('#mdBody h2');
   await waitForLayoutSettled(page);
-  await scrollBlockTo(page, 'Second risk paragraph:', 160);
+  // The reader is in the first paragraph under "## Risks" (its heading just went under the toolbar), the heading the
+  // agent renames, while it also adds a status line above
+  await scrollBlockTo(page, 'Risk summary:', 30);
   doc.write(handoff({ risksTitle: 'Risks (updated)', above: 'Status: Done. ' + words(80, 'status') + '\n' }));
   await expect(page.locator('#mdBody')).toContainText('Risks (updated)', { timeout: 10_000 });
-  await expectBlockAt(page, 'Second risk paragraph:', 160);
+  await expectBlockAt(page, 'Risk summary:', 30);
   expect(errors).toEqual([]);
 });
 

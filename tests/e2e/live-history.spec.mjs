@@ -69,6 +69,25 @@ test('Back and Forward step over the places inside a document, and go where thei
   expect(errors).toEqual([]);
 });
 
+test('a heading\'s "#" permalink is a place of the document too: Back still goes to the previous document in one press', async ({ page }, info) => {
+  const errors = collectErrors(page);
+  const readme = servedFile(info, 'readme.md', '# Readme\n\nStart with [the handoff](handoff.md).\n');
+  servedFile(info, 'handoff.md', longDocument('Handoff'));
+  await page.goto(`markdown-viewer.html?file=${readme.path}`);
+  await page.waitForSelector('#mdBody h1');
+  await page.locator('#mdBody a', { hasText: 'the handoff' }).click();
+  await expect(h1(page)).toHaveText(/Handoff/);
+  await waitForLayoutSettled(page);
+  // The permalink after a heading is the browser's own jump (js/links.js leaves it alone): it shows on hover
+  await page.locator('#section-3').hover();
+  await page.locator('#section-3 a.header-anchor').click();
+  await expect.poll(() => new URL(page.url()).hash).toBe('#section-3');
+  await expect(page.locator('#mdvBackBtn')).toHaveAttribute('aria-label', 'Back to readme.md');
+  await page.locator('#mdvBackBtn').click();
+  await expect(h1(page)).toHaveText(/Readme/);
+  expect(errors).toEqual([]);
+});
+
 test('after a reload of the page, Back and Forward still name and reach the documents', async ({ page }, info) => {
   const errors = collectErrors(page);
   const a = servedFile(info, 'a.md', '# A\n\n[To B](b.md)\n');
