@@ -1,6 +1,6 @@
 # Features
 
-This is the user-facing reference for `markdown-viewer.html`: every control, panel and overlay, what each one does, and the function that implements it. It describes the code as of the initial import. Behaviour I inferred rather than read is marked *(inferred)*. Behaviour I could not confirm is marked *(unverified)*.
+This is the user-facing reference for `markdown-viewer.html`: every control, panel and overlay, what each one does, and the function that implements it. It describes the code as of the initial import; the reading aids (outline, scroll spy, folding, search, dialogs, keyboard shortcuts and read-aloud) are described as of the reading-aids change of 2026-10-10, and their behaviour is covered by `tests/e2e/reading-aids.spec.mjs`. Behaviour I inferred rather than read is marked *(inferred)*. Behaviour I could not confirm is marked *(unverified)*.
 
 Related documents:
 
@@ -55,7 +55,7 @@ Before a document is loaded, the body shows a welcome screen with a drop zone, a
 | Link icon | All links | Opens the links panel. Shown after a document loads. | `toggleLinksPanel` |
 | **Listen** | Read aloud | Opens the read-aloud player. Shown after a document loads. | `ttsToggle` |
 | Speech-bubble icon with a badge | Comments (Ctrl+Shift+C) | Opens the comments sidebar. The badge counts open (unresolved) threads. Shown after a document loads. | `mdvToggleSidebar`, `mdvRenderSidebar` |
-| File-plus icon | Open .md / set save location (Chromium) | Opens a file with write access. If a file is already loaded without a save location, asks where to save instead. | `mdvOpenOrSetSaveLocation` |
+| File-plus icon | Open .md / set save location (Chromium) | Opens a file with write access. If a file is already loaded without a save location, links it to its file (an Open dialog; a Save dialog for pasted text) instead. | `mdvOpenOrSetSaveLocation` |
 | Folder icon | Set workspace folder | Asks once for a folder. Files from that folder can then be saved without further prompts. | `mdvPickWorkspace` |
 | Sun icon | Theme | Dropdown with Light, Sepia and Dark. | `toggleDropdown`, `setTheme` |
 | Gear icon | Settings | Opens the settings panel (workspace root path). | `toggleSettings` |
@@ -104,7 +104,7 @@ Implemented by `loadFromUrl`.
 
 These two buttons only matter for comments:
 
-- **File-plus icon** (`mdvOpenOrSetSaveLocation`). With no document loaded, it opens a writable file. With a document that has no writable handle (opened with Open, by drag and drop, by paste or through `?file=`), it opens a **Save As** dialog so future saves go to the file you choose, then saves straight away.
+- **File-plus icon** (`mdvOpenOrSetSaveLocation`). With no document loaded, it opens a writable file. With a document that has no writable handle and was read from a file (opened with Open, by drag and drop or through `?file=`), it opens an **Open** dialog: pick that same file, and the first save checks that it still holds the version you opened (a file changed since, or a different file, gets a conflict notice instead of being overwritten). Pasted text gets a **Save As** dialog and is written into that new file straight away. Unsaved comment changes are saved straight away too. In browsers without the File System Access API, and for a file whose comments are read-only, it opens the file chooser.
 - **Folder icon** (`mdvPickWorkspace`). You pick a folder once with read-write permission. The handle is stored in IndexedDB (`mdv-viewer` database, `handles` store, key `workspace`). Later, when you open a file whose name matches a file at the top level of that folder, the viewer links to it with no prompt (`mdvTryWorkspaceMatch` uses `getFileHandle(filename)`, so subfolders are not searched).
 
 ---
@@ -128,18 +128,22 @@ The commenting layer wraps `renderMarkdown`. It reads the `MDV-COMMENTS` block f
 
 ### Table of contents
 
-- **Built by** `buildToc`. It lists every H1–H6 in the document. H1 and H2 entries share one indent; H3–H6 are indented progressively further (CSS on `.toc-link[data-level]`). A heading without an `id` gets one (`heading-<n>`).
-- **Click an entry** to scroll smoothly to that heading. On narrow screens the overlay also closes.
-- **Toggle** with the toolbar button or `Ctrl/Cmd+B` (`toggleToc`). Wider than 900 px, the sidebar hides and the content takes the full width. At 900 px or less, the sidebar is off-canvas and the toggle slides it in as an overlay.
-- **No headings:** the sidebar is hidden and the content uses the full width. `buildToc` never removes that state, so a document with headings opened afterwards also starts with the sidebar hidden. Because `tocVisible` is still `true`, the first toggle keeps it hidden and the second shows it (wider than 900 px).
+- **Built by** `buildToc`. It lists every H1–H6 in the document, by the heading's own words (`mdvHeadingText`: without the fold chevron, the permalink `#` or comment chips; a `#` the author wrote, as in "C# tips", is kept). H1 and H2 entries share one indent; H3–H6 are indented progressively further (CSS on `.toc-link[data-level]`). A heading without an `id` gets one (`heading-<n>`). The sidebar is a `nav` named "Table of contents".
+- **Click an entry** (or Tab to it and press Enter) to scroll smoothly to that heading. A heading inside a folded section is unfolded first, and the keyboard focus moves to the heading, so Tab continues from there. On narrow screens the overlay also closes. One delegated listener on `#tocList` handles every entry.
+- **Toggle** with the toolbar button or `Ctrl/Cmd+B` (`toggleToc`). Wider than 900 px, the sidebar hides and the content takes the full width. At 900 px or less, the sidebar is off-canvas and the toggle slides it in as an overlay; `Esc` closes it.
+- **A hidden outline is inert** (`mdvSyncTocInert`): out of the Tab order and away from screen readers, whether it was hidden by the toggle or is off-canvas on a narrow screen **(tested)**. Before, every outline link stayed a tab stop while hidden, where the focus could not be seen: 25 on `kitchen-sink.md`, one per heading on any document.
+- **No headings:** the sidebar is hidden and the content uses the full width. The next document with headings shows the sidebar again as you left it (before, it stayed hidden until toggled twice).
 - **Not remembered** between page loads.
 
 ### Scroll spy and breadcrumb
 
-`setupScrollSpy` uses an `IntersectionObserver` that watches a band near the top of the viewport (root margin `-80px 0px -70% 0px`). When a heading enters that band:
+The current heading is the last visible heading whose top is above the reading line, 30% of the way down the window (at least 80 px, below the toolbar). One passive `scroll` listener, attached once for the page's lifetime, finds it at most once per animation frame with a binary search over the headings' positions (`mdvScrollSpyUpdate`); `setupScrollSpy` only hands it the new headings on each render. When the current heading changes:
 
-- its table-of-contents entry is highlighted and scrolled into view;
-- the toolbar breadcrumb changes to that heading's text.
+- its table-of-contents entry is highlighted and marked `aria-current="location"`, and the sidebar scrolls (never the page) so the entry is visible;
+- the toolbar breadcrumb changes to that heading's text, and back to the file path above the first heading;
+- the section minimap highlights the H2 at or above it.
+
+It is right in both directions: scrolling back up into a long section highlights that section. The earlier version used an `IntersectionObserver` band, which only noticed headings entering the band, so the section below stayed highlighted; it also created a new observer on every render and never disconnected it. At the very end of a document that scrolls, the last heading on screen becomes current, so short final sections are reachable **(tested)**. A page too short to scroll is at its top as much as at its bottom, so there the reading line decides (before, a short note opened with its last heading current) **(tested)**. Headings inside folded sections or closed `<details>` are skipped (`mdvHeadingVisible`, which uses `checkVisibility()`: Chrome still reports a box for a heading inside a closed `<details>`) **(tested)**.
 
 ### Section minimap
 
@@ -147,12 +151,15 @@ The commenting layer wraps `renderMarkdown`. It reads the `MDV-COMMENTS` block f
 
 - It sits directly after the frontmatter dashboard if there is one. Otherwise it sits after the first H1, or at the top.
 - Clicking a segment scrolls to that H2.
-- The segment for the H2 currently in view is highlighted, using the same observer band as the scroll spy.
+- The segment for the H2 you are reading is highlighted (`.active`, `aria-current`) by the scroll spy, which finds segments by their `data-target-id`. If the minimap scrolls, the scroll spy keeps the active segment in view inside it. (`buildSectionMinimap` still creates its own `IntersectionObserver` for the same job, one per render, never disconnected; the scroll spy makes it redundant.)
 
 ### Collapsing and expanding sections
 
-- **Per section** (`addSectionToggles`, `toggleSection`). Every H1–H4 gets a chevron button at its start. The content after the heading, up to the next heading of the same or a higher level, is wrapped in a collapsible container. A heading with no content after it keeps a hidden, inactive chevron.
+- **Per section** (`addSectionToggles`, `toggleSection`). Every H1–H4 gets a chevron button at its start. The content after the heading, up to the next heading of the same or a higher level, is wrapped in a collapsible container. A heading with no content after it keeps a hidden, inactive chevron. The chevron is a button named after its section ("Toggle section: C# tips"), with `aria-expanded` and `aria-controls` pointing at its container, so it works from the keyboard and screen readers announce its state. The heading itself is named by its own words (`aria-label`); before, the chevron inside it made every heading's name start with "Toggle section" **(tested in Chrome's accessibility tree; not with a screen reader)**.
+- **The `#` permalink** after each heading is out of the Tab order (`tabindex="-1"`). It is invisible until hovered and already hidden from screen readers, so tabbing on from a heading (an outline jump puts the focus there) used to land on nothing visible **(tested)**.
+- **What moves with a block.** The wrapper takes every node up to the next heading, including the HTML comments between blocks: a `<!-- narrate: -->` stays right before its diagram or table, and a comment thread's `<!-- MDV-ANCHOR -->` stays right before its block. Comments and whitespace after a section's last block stay outside, with what follows. Before, only elements moved, which lost narrations and attached comment threads to the next heading.
 - **All sections** (`toggleAllSections`). The toolbar chevron or `Ctrl/Cmd+Shift+F` collapses or expands every section at once. Each new render starts with everything expanded.
+- **Jumping into a folded section** (from the outline or search) unfolds it and opens a closed `<details>` around the target (`mdvReveal`) **(tested)**. Read-aloud unfolds every folded section around the blocks it is reading (`mdvUnfold`) **(tested)**.
 - H5 and H6 cannot be collapsed separately. Their content folds with the nearest H1–H4 above them.
 
 ### Focus mode
@@ -197,16 +204,17 @@ The choice is stored in `localStorage` under `mdv-fontsize`.
 
 ### Search
 
-Open with the **Search** button or `Ctrl/Cmd+K` (`openSearch`). `Ctrl/Cmd+K` while the search box has focus does nothing *(inferred: the global shortcut handler ignores key presses in inputs)*.
+Open with the **Search** button or `Ctrl/Cmd+K` (`openSearch`); `Ctrl/Cmd+K` again closes it. Search is a modal dialog: see [Dialogs](#dialogs-search-shortcuts-image-lightbox).
 
 | Aspect | Behaviour | Function |
 |---|---|---|
-| What is indexed | Every heading, plus every `p`, `li`, `td` and `blockquote` with more than 15 characters of text (the first 200 characters of each) | `buildSearchIndex` |
-| Matching | Case-insensitive substring match. Starts at 2 characters. At most 20 results. | `handleSearch` |
-| Results | Heading hits show `#` marks for their level. Content hits show the nearest preceding heading and a snippet. Matches are highlighted. | `handleSearch`, `highlightMatch` |
-| Keyboard | `↑` / `↓` move the selection. `Enter` jumps to the selected result, but only after an arrow key has selected one. `Esc` closes. | `handleSearchKeys` |
-| Jump target | A heading hit scrolls to that heading. A content hit scrolls to its nearest preceding heading. Only when no heading precedes it does the viewer scroll to the block itself and briefly highlight it. | `goSearch` |
-| Close | `Esc`, or a click on the dimmed backdrop | `closeSearch` |
+| What is indexed | Every heading, and the readable text of every paragraph, list item, table cell, definition, quote, code block, figure caption, `<details>` summary and link card (by its title) with at least 2 characters. Each entry holds only its own words: a nested list or a paragraph inside a quote has its own entry, so a sentence is never listed twice. The whole text is indexed (it used to stop at 200 characters, so later words were never found). Diagram source, an SVG's `<style>` and the viewer's own controls are left out **(tested)** | `buildSearchIndex` (on render: marks the index stale and drops the old results, or runs the open query again), `mdvSearchIndex`, `mdvIndexDocument` (on the first search after a render) |
+| Matching | Case-insensitive substring match. Starts at 2 characters. Heading hits first, then blocks in reading order. At most 20 results | `handleSearch` |
+| Results | Heading hits show `#` marks for their level. Content hits show the nearest preceding heading and about 160 characters around the first match. Matches are highlighted. The footer says how many matched ("3 matches", "First 20 of 57 matches", "No matches") and screen readers hear it | `handleSearch`, `mdvSnippet`, `mdvHighlight`, `mdvSearchStatus` |
+| Keyboard | `↑` / `↓` move the selection and wrap around. `Enter` jumps to the selected result, or to the first one when none is selected. `Esc` closes | `handleSearchKeys` |
+| Jump target | A heading hit scrolls to that heading. A content hit scrolls to the block itself and briefly highlights it (it used to scroll to the section's heading, which could leave the match off screen); the highlight then gives back any background colour the author set on the block **(tested)**. A folded section is unfolded and a closed `<details>` opened first, and the keyboard focus moves to the target | `goSearch`, `mdvGoTo`, `mdvFlash` |
+| Close | `Esc`, `Ctrl/Cmd+K`, or a click on the dimmed backdrop | `closeSearch` |
+| Screen readers | The input is a `combobox` controlling a `listbox` of `option`s; the selected result is its `aria-activedescendant` | `wireSearch` |
 
 ### Links
 
@@ -239,7 +247,18 @@ Open with the **Search** button or `Ctrl/Cmd+K` (`openSearch`). `Ctrl/Cmd+K` whi
 
 ### Image lightbox
 
-`setupImageLightbox` makes every image in the document clickable. A click shows the image enlarged (up to 92% of the viewport) on a dimmed overlay. Click anywhere or press `Esc` to close it (`closeLightbox`).
+`setupImageLightbox` makes every image that is not inside a link a button named "Enlarge image: <alt text>": click it, or Tab to it and press `Enter` or `Space`, to see it enlarged (up to 92% of the viewport) on a dimmed overlay (`openLightbox`). Click anywhere or press `Esc` to close it (`closeLightbox`); the focus returns to the image. An image inside a link (a badge, for example) follows the link instead; before, a click opened the lightbox and followed the link. The lightbox is a modal dialog named after the image's alt text.
+
+### Dialogs: search, shortcuts, image lightbox
+
+Search, the shortcuts sheet and the image lightbox are modal dialogs (`mdvOpenModal`, `mdvCloseModal` in `js/navigation.js`):
+
+- they have `role="dialog"`, `aria-modal="true"` and a name ("Search this document", "Keyboard Shortcuts", "Image: <alt text>");
+- opening one moves the keyboard focus into it (the search box, the sheet's Close button, the lightbox itself), and neither the mouse, the keyboard nor a screen reader reaches what is behind it. The toolbar, panels and player are made `inert`. The document area (the outline and the document) is hidden from screen readers with `aria-hidden` instead, because making it inert restyles every node in it: on a 3,000-section document that took more than 100 ms each way. The backdrop takes the pointer, and a focus guard returns any focus that lands behind the dialog **(tested)**;
+- `Tab` and `Shift+Tab` stay inside;
+- `Esc` closes it, and the focus returns to whatever had it before (a jump to a search result moves the focus to the result instead). If nothing had the focus, the next `Tab` continues from where you last clicked in the page, or from the top of the page; before, it went to an invisible button at the top **(tested)**;
+- while one is open, the viewer's other shortcuts do nothing, and the browser does not get them either (`Ctrl/Cmd+Shift+R` is its hard reload, `Ctrl/Cmd+O` its Open dialog); `Ctrl/Cmd+S` still saves. The expanded diagram counts as a dialog here: a shortcut pressed over it used to open search or the sheet underneath it, out of sight **(tested)**;
+- only one is open at a time.
 
 ### Diagrams: expand, zoom and fit
 
@@ -347,11 +366,11 @@ The **Listen** button or `Ctrl/Cmd+Shift+R` opens a player bar at the bottom of 
 |---|---|
 | Previous / next section | `ttsPrev`, `ttsNext` |
 | Play / pause | `ttsPlayPause` |
-| Progress bar with the "n/total: heading" label. Click it to jump to that section. | `ttsSeekClick`, `updateTtsUI` |
-| Speed button, cycles 0.75×, 1×, 1.25×, 1.5×, 1.75×, 2× (not remembered) | `ttsCycleSpeed` |
+| Progress bar with the "n/total: heading" label. Click it to jump to that section. It is also a slider: Tab to it and use the arrow keys, Page Up/Down, Home and End | `ttsSeekClick`, `ttsSliderKeys`, `updateTtsUI` |
+| Speed button, cycles 0.75×, 1×, 1.25×, 1.5×, 1.75×, 2× (remembered) | `ttsCycleSpeed` |
 | × closes the player and stops speech | `ttsStop` |
 
-The section being read is highlighted and scrolled into view. A `<!-- narrate: … -->` comment placed before a diagram or table supplies spoken text for it. Diagrams without one are skipped. Full details are in [read-aloud.md](read-aloud.md).
+Opening the player moves the keyboard focus to Play, so `Space` starts reading; every control is a named button or slider in the Tab order, and closing the player gives the focus back. The section being read is unfolded, highlighted and scrolled into view. A `<!-- narrate: … -->` comment placed before a diagram or table, anywhere in the document, supplies spoken text for it. Diagrams without one are skipped; images are read by their alt text. Full details are in [read-aloud.md](read-aloud.md).
 
 ---
 
@@ -362,7 +381,7 @@ The section being read is highlighted and scrolled into view. A `<!-- narrate: �
 - **Save from the popup:** `Ctrl/Cmd+Enter`. `Esc` cancels (`mdvShowAddPopup`).
 - **Where comments appear:** threads show as chips on the commented block and as cards in the comments sidebar (`mdvRenderChips`, `mdvRenderSidebar`).
 - **Sidebar actions:** an open thread has a reply box and **Reply**, **Resolve** and **Delete** buttons. A resolved thread shows only **Reopen** (`mdvRenderThreadCard`, `mdvPostReply`, `mdvResolveThread`, `mdvDeleteThread`). Delete asks for confirmation.
-- **Saving:** changes auto-save 1.5 seconds later through the writable file handle (`mdvScheduleSave`, `mdvSaveFile`). `Ctrl/Cmd+S` saves immediately and, if needed, asks for a save location.
+- **Saving:** every change is saved into the file at once, through `mdvWriteDocument`, the only function that writes a document. A file that another program changed after the viewer read it is never overwritten: the sidebar explains and offers **Reload from disk**, **Download my version** or **Overwrite the file**. `Ctrl/Cmd+S` saves immediately and, if needed, links the file first (or downloads a copy in browsers without the File System Access API). A file that is not UTF-8 text is never rewritten. Leaving the page with unsaved comment changes asks first.
 - **Author name:** taken from `localStorage` key `mdv-author-name`, default `You`. There is no settings control for it.
 
 Comments are stored inside the markdown file as `<!-- MDV-ANCHOR id="…" -->` markers and a trailing `<!-- MDV-COMMENTS:v1 … MDV-COMMENTS:end -->` block. Full details are in [commenting.md](commenting.md).
@@ -381,31 +400,44 @@ Everything the viewer stores stays in the browser:
 | `localStorage` | `mdv-fontsize` | font step, -2 to 2 | `changeFontSize` |
 | `localStorage` | `mdv-basepath` | workspace root URL prefix | `saveBasePath` |
 | `localStorage` | `mdv-author-name` | comment author name (read only; set it yourself) | — |
+| `localStorage` | `mdv-tts-rate` | read-aloud speed, 0.75 to 2 | `ttsCycleSpeed` |
 | IndexedDB `mdv-viewer`, store `handles` | `current` | handle of the last writable file | `mdvPutHandle` |
 | IndexedDB `mdv-viewer`, store `handles` | `workspace` | handle of the workspace folder | `mdvPutHandle` |
 
-Not remembered: table-of-contents visibility, page width, focus mode, read-aloud speed, and which sections are collapsed.
+Not remembered: table-of-contents visibility, page width, focus mode, the read-aloud position, and which sections are collapsed.
 
 ---
 
 ## Keyboard shortcuts
 
-On macOS, `Cmd` works wherever `Ctrl` is listed: every handler accepts `ctrlKey || metaKey`. The global shortcuts (`keydown` listener after the scroll handler) are ignored while the focus is in an `input` or `textarea`, except `Esc`.
+On macOS, `Cmd` works wherever `Ctrl` is listed: every handler accepts `ctrlKey || metaKey`.
+
+The global shortcuts come from one table, `MDV_SHORTCUTS` in `js/app.js`, which drives both the key handler and the `?` sheet, so the sheet always matches the keys. How a key press is matched:
+
+- **Caps Lock and Shift do not change the letter.** The key is compared case-insensitively, so `Ctrl+K` works with Caps Lock on, and `Ctrl+Shift+F` works whether the browser reports `F` or `f`. Before, Caps Lock silently disabled `Ctrl+K`, `Ctrl+B` and `Ctrl+O`, and Caps Lock with Shift disabled `Ctrl+Shift+F` and `Ctrl+Shift+R` on Windows.
+- **Shift is part of a letter shortcut.** `Ctrl+B` does not fire for `Ctrl+Shift+B` (the browser's bookmarks bar), nor `Ctrl+O` for `Ctrl+Shift+O`. For punctuation (`\`, `.`, `?`) Shift is ignored, because some layouts need it to type the character.
+- **Other keyboard layouts.** On a layout whose letters are not Latin (Russian, Greek, Hebrew…), the physical key decides, as it does for the browser's own shortcuts: `Ctrl` with the key labelled K on a US keyboard opens search. `Ctrl+\` and `Ctrl+.` also match by physical key, so they work on layouts that put those characters elsewhere (on a German keyboard that key types `#`).
+- **Alt (AltGr) is never part of a shortcut**, so typing a character with AltGr (`Ctrl+Alt` on Windows) never triggers one.
+- **Typing is not a shortcut.** The shortcuts are ignored while the focus is in a text field (a text `input`, a `textarea`, a `select` or editable content), and while an input method is composing. A focused checkbox (a task-list item) or button does not count as a text field.
+- **While a dialog is open** (search, the shortcuts sheet, the image lightbox or the expanded diagram), only `Esc` and the dialog's own toggle work: `Ctrl/Cmd+K` closes search, `?` closes the shortcuts sheet. The other shortcuts are kept from the browser too, and from the comments sidebar's `Ctrl/Cmd+Shift+C`; `Ctrl/Cmd+S` still saves, and a `?` typed into the search box is text **(tested)**.
 
 | Keys | Action | Where it works | Handler |
 |---|---|---|---|
-| `Ctrl/Cmd+K` | Open or close search | anywhere except text fields | global `keydown` listener → `openSearch` / `closeSearch` |
+| `Ctrl/Cmd+K` | Open or close search | anywhere except text fields; inside search it closes it | global `keydown` listener → `openSearch` / `closeSearch` |
 | `Ctrl/Cmd+B` | Toggle table of contents | anywhere except text fields | → `toggleToc` |
 | `Ctrl/Cmd+\` | Toggle page width | anywhere except text fields | → `toggleWidth` |
 | `Ctrl/Cmd+.` | Toggle focus mode | anywhere except text fields | → `toggleFocus` |
 | `Ctrl/Cmd+Shift+F` | Fold or unfold all sections | anywhere except text fields | → `toggleAllSections` |
 | `Ctrl/Cmd+Shift+R` | Open or close the read-aloud player | anywhere except text fields | → `ttsToggle` |
 | `Ctrl/Cmd+O` | Open a file (read-only picker) | anywhere except text fields | → clicks the hidden file input |
-| `?` | Show or hide the shortcuts overlay | anywhere except text fields | global `keydown` listener |
-| `Esc` | Close search, the shortcuts overlay and the image lightbox | anywhere; in text fields it closes only search and shortcuts | global `keydown` listener |
+| `?` | Show or hide the shortcuts sheet | anywhere except text fields | global `keydown` listener → `toggleShortcuts` |
+| `Esc` | Close the open dialog (search, the shortcuts sheet or the image lightbox), giving the focus back; with none open, close the slide-in outline on narrow screens | anywhere | global `keydown` listener |
 | `Esc` | Close the diagram overlay | while it is open | separate `keydown` listener |
-| `↑` / `↓` | Move the selection in search results | search box | `handleSearchKeys` |
-| `Enter` | Jump to the selected search result | search box, after `↑`/`↓` | `handleSearchKeys` → `goSearch` |
+| `↑` / `↓` | Move the selection in search results (wraps around) | search box | `handleSearchKeys` |
+| `Enter` | Jump to the selected search result, or the first one | search box | `handleSearchKeys` → `goSearch` |
+| `Tab` / `Shift+Tab` | Move between controls; inside a dialog, stay inside it | everywhere | browser, and the dialog trap in `js/navigation.js` |
+| `Enter` / `Space` | Open the focused image in the lightbox | a document image | `#mdBody` `keydown` listener → `openLightbox` |
+| `←` `→` `↑` `↓`, `Page Up/Down`, `Home`, `End` | Previous / next section, a tenth of the document, first / last section | the read-aloud progress slider | `ttsSliderKeys` |
 | `Ctrl/Cmd+Shift+C` | Open or close the comments sidebar | everywhere, including text fields | comments `keydown` listener → `mdvToggleSidebar` |
 | `Ctrl/Cmd+S` | Save comments into the file, asking for a location if needed | when a document is loaded; otherwise the browser default | comments `keydown` listener → `mdvSaveFile({allowPrompt: true})` |
 | `Ctrl/Cmd+Enter` | Save a new comment / send a reply | comment popup / reply box | `mdvShowAddPopup`, `mdvRenderSidebar` |
@@ -414,7 +446,7 @@ On macOS, `Cmd` works wherever `Ctrl` is listed: every handler accepts `ctrlKey 
 | Mouse wheel | Zoom the diagram | diagram overlay | `wheel` listener on `diagramBody` |
 | `Shift`+right-click | Native browser context menu instead of the comment menu | document body | `mdvAttachContextMenu` |
 
-The `?` overlay lists only the first eight rows of this table and the first `Esc` row. Its "Toggle width" row is written as `\\` in the HTML, so it shows two backslashes; the key is a single `\`.
+The `?` sheet is drawn from `MDV_SHORTCUTS` the first time it opens (`mdvRenderShortcutSheet`): it lists every global shortcut, the comment shortcuts and `Esc`, in the platform's own key names (`⌘` and `⇧` on a Mac, `Ctrl` and `Shift` elsewhere), with a Close button. It used to be static markup that left out the comment shortcuts, said `Ctrl` on a Mac, and showed the backslash twice.
 
 ---
 
@@ -424,20 +456,20 @@ All reading features use standard web APIs. Saving to disk is the one area that 
 
 | Capability | Web API used | Chromium (Chrome, Edge, Opera, Arc) | Firefox | Safari |
 |---|---|---|---|---|
-| Rendering, table of contents, search, themes, diagrams, math, lightbox | DOM, `IntersectionObserver` | Yes | Yes *(not tested)* | Yes *(not tested)* |
+| Rendering, table of contents, search, themes, diagrams, math, lightbox | DOM; `IntersectionObserver` (minimap); `inert` (dialogs: Chrome 102, Firefox 112, Safari 15.5 and later) | Yes | Yes *(not tested)* | Yes *(not tested)* |
 | Open by button, drag and drop, or paste | `FileReader`, drag-and-drop events, `paste` | Yes | Yes *(not tested)* | Yes *(not tested)* |
 | `?file=` auto-load | `fetch` | Only over `http(s)`, not `file://` | Same | Same |
 | Writable open, save in place, automatic reopen | File System Access API: `showOpenFilePicker`, `showSaveFilePicker`, `FileSystemHandle.queryPermission`/`requestPermission`, `createWritable` | Yes | No | No |
 | Workspace folder | `showDirectoryPicker`, handles kept in IndexedDB | Yes | No (toast: "This browser does not support workspace folders") | No |
-| Adding comments | `crypto.subtle.digest` (anchor hash) | Yes in a secure context | Yes *(not tested)* | Yes *(not tested)* |
-| Saving comments | as above | In place | Downloads a copy of the file on every save (`mdvDownloadFallback`) | Same as Firefox |
+| Adding comments | DOM only (the anchor hash is computed in JavaScript) | Yes | Yes *(not tested)* | Yes *(not tested)* |
+| Saving comments | as above | In place, with a check that the file did not change on disk | Downloads a copy when you press `Ctrl/Cmd+S` (`mdvDownloadFallback`); a change never downloads by itself | Same as Firefox |
 | Read aloud | Web Speech API `speechSynthesis` | Yes, with a 12-second pause/resume keep-alive for a Chrome cut-off bug (`ttsStartKeepAlive`) | Yes *(not tested)* | Yes *(not tested)* |
 | Copy buttons | `navigator.clipboard.writeText` | Yes in a secure context | *(not tested)* | *(not tested)* |
 
 Notes:
 
 - **Why Chromium.** In-place save needs the File System Access API, which is implemented by Chromium-based browsers and not by Firefox or Safari. Brave is Chromium-based, but may ship with this API turned off *(unverified)*.
-- **Secure contexts.** `crypto.subtle`, `navigator.clipboard` and the File System Access API require a secure context. `https://` and `http://localhost` qualify, but a plain-`http` LAN address does not. Whether `file://` counts as secure differs between browsers *(unverified)*.
+- **Secure contexts.** `navigator.clipboard` and the File System Access API require a secure context (comments no longer use `crypto.subtle`). `https://` and `http://localhost` qualify, but a plain-`http` LAN address does not. Whether `file://` counts as secure differs between browsers *(unverified)*.
 - **Android.** `speechSynthesis.pause()` behaves like cancel there, so pausing cancels speech and keeps only the section index; pressing play again restarts the current section from its beginning (`isAndroid` checks in `ttsPause` and `ttsStartKeepAlive`; `ttsPlay` calls `speakSection`).
 - **Fonts.** Inter, Literata and JetBrains Mono load from Google Fonts. This is the page's only network request. Offline, the browser falls back to other fonts *(inferred)*. See [dependencies.md](dependencies.md).
 
@@ -452,9 +484,7 @@ These are behaviours of the code as of the initial import. Planned fixes belong 
 - **Frontmatter abbreviations do nothing.** See [Abbreviation tooltips](#abbreviation-tooltips).
 - **Changing theme does not recolour diagrams already on screen.** `setTheme` calls `renderMermaidDiagrams` again, but that only renders `.mermaid` elements not yet marked `.rendered`, and the original diagram source has already been replaced by the SVG.
 - **Paste opens pasted text as a new document.** Pasting more than 10 characters anywhere on the page outside a text field (and outside search) replaces the open document with the pasted text and unlinks the opened file, so a later comment save cannot write the pasted text over it. Pastes into text fields (comment boxes, settings) stay in the field. Until the initial import, a paste into a text field also replaced the document and kept the file linked; both were fixed and verified in Chrome.
-- **Collapsing an H1 can stop working.** When the minimap is inserted directly after the first H1 (three or more H2s, no dashboard), it sits between that H1 and its section container. `toggleSection` reads `heading.nextElementSibling` and returns without doing anything *(inferred)*. Fold-all is not affected.
 - **Math and dollar signs.** `renderMath` runs on the raw source before markdown-it, so two dollar signs on one line (including inside code) are treated as math *(inferred)*. Details are in [rendering.md](rendering.md).
 - **Diagram overlay titles are approximate.** Diagrams declared with `flowchart` are not titled "Flowchart", because the check only recognises `graph`. The checks run in a fixed order and `/pie/i` matches any source containing the letters "pie", so, for example, an ER or state diagram with a node named "Recipe" is titled "Pie Chart" (`openDiagramOverlay`).
-- **File-plus button outside Chromium.** With no document loaded, `mdvPickFile` shows a toast that mentions a "Download with comments" button that does not exist, then calls `document.getElementById('mdFile').click()`. The file input's id is `fileInput`, so this throws and no picker opens *(inferred)*.
 - **An empty `status:` or `date:` in frontmatter blanks the page.** `parseFrontmatter` turns a top-level key with no value into an empty list. `renderFrontmatterDashboard` then calls `status.toLowerCase()` (or `escapeHtml(date)`, when the dashboard is shown) on that list and throws a `TypeError`. The dashboard is built before `#mdBody.innerHTML` is assigned and outside the per-pass `try/catch` blocks, so `renderMarkdown` aborts and the document is not shown. I confirmed this by running `parseFrontmatter` and `renderFrontmatterDashboard` on their own in Node: `status: Draft` renders, while `status:` with no value throws `status.toLowerCase is not a function`.
-- **`#demo` loads without the commenting layer.** `loadFromUrl` calls `loadDemo` synchronously while the script is still running, before the commenting wrapper around `renderMarkdown` is installed near the end of the script. The comments button therefore stays hidden and right-click does not offer **Add comment** for the demo *(inferred)*.
+- ~~**`#demo` loads without the commenting layer.**~~ Fixed 2026-10-10: `comments.js` renders a document that was shown before it loaded once more through its hook.

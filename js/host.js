@@ -16,8 +16,9 @@
 //   - routes the Open button to the native Open panel, and keeps every other way of loading a
 //     different document (paste, File System Access) from linking it to this window's file.
 //
-// It is loaded last, after comments.js, because it wraps the final renderMarkdown. So window.mdvHost
-// exists from DOMContentLoaded on: check it when you use it, never while the scripts load.
+// It loads after comments.js, because it wraps the final renderMarkdown, and before app.js, which
+// starts the viewer. Its own start (and the wrap) waits for DOMContentLoaded, when every script has
+// loaded. window.mdvHost is set while the scripts load, but read it when you use it, not at load time.
 (function () {
   'use strict';
 

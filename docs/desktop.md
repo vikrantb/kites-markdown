@@ -152,9 +152,9 @@ thread of its own (creating a window inside that hand-over can deadlock on Windo
 File → Open…, links, and dropped files.
 
 **The bridge** (`window.mdvHost`, in `js/host.js`) is the only contract between the page and the shell.
-In a browser `kind` is `'browser'` and every method is a no-op that returns `null`. It is loaded last
-(after `comments.js`, because it wraps the final `renderMarkdown`), so it exists from `DOMContentLoaded` on:
-check it when you use it, never while the scripts load.
+In a browser `kind` is `'browser'` and every method is a no-op that returns `null`. It loads after
+`comments.js`, because it wraps the final `renderMarkdown`, and before `app.js`, which starts the viewer;
+its own start waits for `DOMContentLoaded`. Read it when you use it, never while the scripts load.
 
 | Call | Does |
 |---|---|

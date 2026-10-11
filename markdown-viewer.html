@@ -3,7 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Only the viewer's own script files may run: no inline script, no on*= handler, no javascript: URL.
+     A document's markup cannot run script even if something slipped past the sanitizer. -->
+<meta http-equiv="Content-Security-Policy" content="script-src 'self' file:; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Markdown Viewer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%236B8F71'/%3E%3Cpath d='M9 46V18h7l7 10 7-10h7v28h-7V30l-7 10-7-10v16z' fill='%23FAFAF6'/%3E%3Cpath d='M44 18h6v16h5l-8 12-8-12h5z' fill='%23FAFAF6'/%3E%3C/svg%3E">
 
 <!-- Fonts: Google Fonts is the one external dependency (fonts only, no JS) -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -21,6 +25,7 @@
 <script src="vendor/markdown-it-deflist.min.js"></script>
 <script src="vendor/markdown-it-abbr.min.js"></script>
 <script src="vendor/diff-match-patch.js"></script>
+<script src="vendor/purify.min.js"></script>
 
 <link rel="stylesheet" href="vendor/github.min.css" id="hljs-light">
 <link rel="stylesheet" href="vendor/github-dark.min.css" id="hljs-dark" disabled>
@@ -50,65 +55,65 @@
   <div class="toolbar-group">
     <!-- Font size -->
     <div class="font-ctrl">
-      <button onclick="changeFontSize(-1)" title="Smaller text">A&#8722;</button>
+      <button data-action="font-size" data-arg="-1" title="Smaller text" aria-label="Smaller text">A&#8722;</button>
       <span class="font-lbl" id="fontLbl">M</span>
-      <button onclick="changeFontSize(1)" title="Larger text">A+</button>
+      <button data-action="font-size" data-arg="1" title="Larger text" aria-label="Larger text">A+</button>
     </div>
 
     <div class="toolbar-sep"></div>
 
     <!-- Width toggle -->
-    <button class="btn btn-icon" id="widthBtn" onclick="toggleWidth()" title="Toggle page width">
+    <button class="btn btn-icon" id="widthBtn" data-action="toggle-width" title="Toggle page width" aria-label="Toggle page width">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 8l4 4-4 4"/><path d="M6 8l-4 4 4 4"/><line x1="2" y1="12" x2="22" y2="12" opacity="0.3"/></svg>
     </button>
 
     <!-- TOC toggle -->
-    <button class="btn btn-icon" id="tocBtn" onclick="toggleToc()" title="Table of contents (Ctrl+B)">
+    <button class="btn btn-icon" id="tocBtn" data-action="toggle-toc" title="Table of contents (Ctrl+B)" aria-label="Table of contents">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="10" y2="18"/></svg>
     </button>
 
     <!-- Fold all -->
-    <button class="btn btn-icon" id="foldBtn" onclick="toggleAllSections()" title="Fold/Unfold sections" style="display:none">
+    <button class="btn btn-icon" id="foldBtn" data-action="toggle-all-sections" title="Fold/Unfold sections" aria-label="Fold or unfold all sections" style="display:none">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4,8 12,16 20,8"/></svg>
     </button>
 
     <!-- Focus mode -->
-    <button class="btn btn-icon" id="focusBtn" onclick="toggleFocus()" title="Focus mode">
+    <button class="btn btn-icon" id="focusBtn" data-action="toggle-focus" title="Focus mode" aria-label="Focus mode">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
     </button>
 
     <div class="toolbar-sep"></div>
 
     <!-- Search -->
-    <button class="btn" onclick="openSearch()" title="Search (Ctrl+K)">
+    <button class="btn" data-action="open-search" title="Search (Ctrl+K)" aria-label="Search">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <span class="lbl">Search</span>
     </button>
 
     <!-- Links index -->
-    <button class="btn btn-icon" id="linksPanelBtn" onclick="toggleLinksPanel()" title="All links" style="display:none">
+    <button class="btn btn-icon" id="linksPanelBtn" data-action="toggle-links-panel" title="All links" aria-label="All links" style="display:none">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>
     </button>
 
     <!-- TTS -->
-    <button class="btn" id="ttsToggleBtn" onclick="ttsToggle()" title="Read aloud" style="display:none">
+    <button class="btn" id="ttsToggleBtn" data-action="tts-toggle" title="Read aloud" aria-label="Read aloud" style="display:none">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>
       <span class="lbl">Listen</span>
     </button>
 
     <!-- MDV Comments toggle -->
-    <button class="btn btn-icon" id="mdvToggleBtn" onclick="mdvToggleSidebar()" title="Comments (Ctrl+Shift+C)" style="display:none">
+    <button class="btn btn-icon" id="mdvToggleBtn" data-action="toggle-comments" title="Comments (Ctrl+Shift+C)" aria-label="Comments" style="display:none">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       <span class="mdv-badge" id="mdvBadge" style="display:none"></span>
     </button>
 
     <!-- Open file via FSA (writable) -->
-    <button class="btn btn-icon" id="mdvOpenBtn" onclick="mdvOpenOrSetSaveLocation()" title="Open .md / set save location (Chromium)">
+    <button class="btn btn-icon" id="mdvOpenBtn" data-action="open-writable" title="Open .md / set save location (Chromium)" aria-label="Open a file or set its save location">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
     </button>
 
     <!-- Workspace folder (one-time pick, zero popups thereafter) -->
-    <button class="btn btn-icon" id="mdvWorkspaceBtn" onclick="mdvPickWorkspace()" title="Set workspace folder (one-time, no more save popups)">
+    <button class="btn btn-icon" id="mdvWorkspaceBtn" data-action="pick-workspace" title="Set workspace folder (one-time, no more save popups)" aria-label="Set workspace folder">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
     </button>
 
@@ -116,27 +121,27 @@
 
     <!-- Theme -->
     <div class="dropdown-wrap">
-      <button class="btn btn-icon" onclick="toggleDropdown('themeDD')" title="Theme">
+      <button class="btn btn-icon" data-action="toggle-dropdown" data-arg="themeDD" title="Theme" aria-label="Theme" aria-haspopup="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
       </button>
       <div class="dropdown" id="themeDD">
-        <button class="dropdown-item active" data-theme="light" onclick="setTheme('light')"><span class="dropdown-swatch" style="background:#FAFAF6"></span>Light</button>
-        <button class="dropdown-item" data-theme="sepia" onclick="setTheme('sepia')"><span class="dropdown-swatch" style="background:#F5EDD9"></span>Sepia</button>
-        <button class="dropdown-item" data-theme="dark" onclick="setTheme('dark')"><span class="dropdown-swatch" style="background:#1C1C24"></span>Dark</button>
+        <button class="dropdown-item active" data-theme="light" data-action="set-theme" data-arg="light"><span class="dropdown-swatch" style="background:#FAFAF6"></span>Light</button>
+        <button class="dropdown-item" data-theme="sepia" data-action="set-theme" data-arg="sepia"><span class="dropdown-swatch" style="background:#F5EDD9"></span>Sepia</button>
+        <button class="dropdown-item" data-theme="dark" data-action="set-theme" data-arg="dark"><span class="dropdown-swatch" style="background:#1C1C24"></span>Dark</button>
       </div>
     </div>
 
     <!-- Settings -->
-    <button class="btn btn-icon" onclick="toggleSettings()" title="Settings">
+    <button class="btn btn-icon" data-action="toggle-settings" title="Settings" aria-label="Settings">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
     </button>
 
     <!-- Open file -->
-    <button class="btn" onclick="document.getElementById('fileInput').click()" title="Open file">
+    <button class="btn" data-action="open-file" title="Open file" aria-label="Open file">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
       <span class="lbl">Open</span>
     </button>
-    <input type="file" id="fileInput" accept="text/*,.md,.markdown,.mdx" style="display:none" onchange="handleFileInput(event)">
+    <input type="file" id="fileInput" accept="text/*,.md,.markdown,.mdx" style="display:none" data-action="file-chosen">
   </div>
 </div>
 
@@ -145,21 +150,21 @@
 
 <!-- Settings panel -->
 <div class="settings-toast" id="settingsPanel">
-  <label>Workspace Root Path</label>
+  <label for="basePathInput">Workspace Root Path</label>
   <input type="text" id="basePathInput" placeholder="/path/to/your/workspace/" spellcheck="false">
   <div class="hint">Set this to resolve relative paths like <code>notes/file.md</code>.<br>Then open via URL: <code>?file=notes/file.md</code></div>
   <div class="settings-actions">
-    <button class="btn" onclick="saveBasePath()">Save</button>
-    <button class="btn" onclick="toggleSettings()">Close</button>
+    <button class="btn" data-action="save-base-path">Save</button>
+    <button class="btn" data-action="toggle-settings">Close</button>
   </div>
 </div>
 
 <!-- Search overlay -->
-<div class="overlay" id="searchOverlay" onclick="if(event.target===this)closeSearch()">
+<div class="overlay" id="searchOverlay" data-action="close-search">
   <div class="search-box">
     <div class="search-input-wrap">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input class="search-input" id="searchInput" type="text" placeholder="Search headings and content..." oninput="handleSearch(this.value)" onkeydown="handleSearchKeys(event)">
+      <input class="search-input" id="searchInput" type="text" placeholder="Search headings and content..." aria-label="Search this document" data-action="search">
     </div>
     <div class="search-results" id="searchResults"></div>
     <div class="search-footer">
@@ -171,7 +176,7 @@
 </div>
 
 <!-- Shortcuts overlay -->
-<div class="overlay" id="shortcutsOverlay" onclick="if(event.target===this)closeShortcuts()">
+<div class="overlay" id="shortcutsOverlay" data-action="close-shortcuts">
   <div class="shortcuts-box">
     <h3>Keyboard Shortcuts</h3>
     <div class="shortcut-row"><span>Search</span><span><kbd>Ctrl</kbd>+<kbd>K</kbd></span></div>
@@ -187,7 +192,7 @@
 </div>
 
 <!-- Image lightbox -->
-<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+<div class="lightbox" id="lightbox" data-action="close-lightbox">
   <img id="lightboxImg" src="" alt="">
 </div>
 
@@ -196,15 +201,15 @@
   <div class="diagram-overlay-header">
     <span class="diagram-title" id="diagramTitle">Diagram</span>
     <div class="diagram-overlay-controls">
-      <button onclick="diagramZoom(-1)" title="Zoom out">&#8722;</button>
+      <button data-action="diagram-zoom" data-arg="-1" title="Zoom out" aria-label="Zoom out">&#8722;</button>
       <span id="diagramZoomLabel" style="font-size:0.72rem;color:var(--text-tertiary);min-width:36px;text-align:center">100%</span>
-      <button onclick="diagramZoom(1)" title="Zoom in">+</button>
-      <button onclick="diagramFitToggle()" id="diagramFitBtn" title="Fit to screen">Fit</button>
-      <button onclick="closeDiagramOverlay()" title="Close (Esc)">&times; Close</button>
+      <button data-action="diagram-zoom" data-arg="1" title="Zoom in" aria-label="Zoom in">+</button>
+      <button data-action="diagram-fit" id="diagramFitBtn" title="Fit to screen">Fit</button>
+      <button data-action="close-diagram" title="Close (Esc)" aria-label="Close diagram">&times; Close</button>
     </div>
   </div>
   <div class="diagram-overlay-body fit" id="diagramBody">
-    <div class="diagram-zoom-container" id="diagramZoomContainer"></div>
+    <div class="diagram-zoom-container" id="diagramZoomContainer" data-mdv-document></div>
   </div>
 </div>
 
@@ -213,14 +218,14 @@
   <span class="link-tooltip-icon" id="linkTooltipIcon"></span>
   <span class="link-tooltip-text" id="linkTooltipText"></span>
   <span class="link-tooltip-badge" id="linkTooltipBadge"></span>
-  <button class="link-tooltip-copy" id="linkTooltipCopy" onclick="copyLinkUrl(event)">Copy</button>
+  <button class="link-tooltip-copy" id="linkTooltipCopy" data-action="copy-link">Copy</button>
 </div>
 
 <!-- Links panel -->
 <div class="links-panel" id="linksPanel">
   <div class="links-panel-header">
     <h4>All Links</h4>
-    <button class="links-panel-close" onclick="toggleLinksPanel()">&times;</button>
+    <button class="links-panel-close" data-action="toggle-links-panel" aria-label="Close links panel">&times;</button>
   </div>
   <div id="linksPanelContent"></div>
 </div>
@@ -239,7 +244,7 @@
           <div class="drop-zone-icon">&#128196;</div>
           <div class="drop-zone-title">Open a Markdown file</div>
           <div class="drop-zone-sub">Drag & drop, browse, paste, or use <code>?file=path</code></div>
-          <button class="drop-btn" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">
+          <button class="drop-btn" data-action="browse-file">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
             Browse files
           </button>
@@ -247,15 +252,17 @@
           <div class="paste-hint">Paste markdown with <kbd>Ctrl</kbd>+<kbd>V</kbd></div>
         </div>
       </div>
-      <article class="md-body" id="mdBody" style="display:none"></article>
+      <!-- isolation: the document's own z-index values stay inside #mdBody, so nothing it positions
+           (style attributes are kept for KaTeX) can cover the viewer's fixed controls. -->
+      <article class="md-body" id="mdBody" data-mdv-document style="display:none;isolation:isolate"></article>
     </div>
   </div>
 </div>
 
 <!-- FABs -->
 <div class="fab-container" id="fabContainer" style="display:none">
-  <button class="fab" id="fabUp" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Scroll to top">&#8593;</button>
-  <button class="fab" id="fabDown" onclick="window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})" title="Scroll to bottom">&#8595;</button>
+  <button class="fab" id="fabUp" data-action="scroll-top" title="Scroll to top" aria-label="Scroll to top">&#8593;</button>
+  <button class="fab" id="fabDown" data-action="scroll-bottom" title="Scroll to bottom" aria-label="Scroll to bottom">&#8595;</button>
 </div>
 
 <!-- MDV Comments sidebar -->
@@ -263,38 +270,41 @@
   <div class="mdv-sidebar-head">
     <span>💬 Comments</span>
     <span class="mdv-status" id="mdvSidebarStatus"></span>
-    <button class="mdv-sidebar-close" onclick="mdvToggleSidebar()" aria-label="Close comments">&times;</button>
+    <button class="mdv-sidebar-close" data-action="toggle-comments" aria-label="Close comments">&times;</button>
   </div>
-  <div class="mdv-thread-list" id="mdvThreadList"></div>
+  <!-- The thread cards are built from the document's comment data: a document container. -->
+  <div class="mdv-thread-list" id="mdvThreadList" data-mdv-document></div>
 </aside>
 
 <!-- TTS Player bar -->
 <div class="tts-player" id="ttsPlayer">
   <div class="tts-controls">
-    <button class="tts-btn" onclick="ttsPrev()" title="Previous section">
+    <button class="tts-btn" data-action="tts-prev" title="Previous section" aria-label="Previous section">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
     </button>
-    <button class="tts-btn tts-play" id="ttsPlayBtn" onclick="ttsPlayPause()" title="Play / Pause">
+    <button class="tts-btn tts-play" id="ttsPlayBtn" data-action="tts-play-pause" title="Play / Pause" aria-label="Play or pause">
       <svg id="ttsPlayIcon" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>
       <svg id="ttsPauseIcon" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="5" y="4" width="4" height="16"/><rect x="15" y="4" width="4" height="16"/></svg>
     </button>
-    <button class="tts-btn" onclick="ttsNext()" title="Next section">
+    <button class="tts-btn" data-action="tts-next" title="Next section" aria-label="Next section">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
     </button>
 
     <div class="tts-progress-wrap">
       <div class="tts-section-label" id="ttsSectionLabel">Ready</div>
-      <div class="tts-progress-bar" id="ttsProgressBar" onclick="ttsSeekClick(event)">
+      <div class="tts-progress-bar" id="ttsProgressBar" data-action="tts-seek">
         <div class="tts-progress-fill" id="ttsProgressFill"></div>
       </div>
     </div>
 
-    <button class="tts-speed" id="ttsSpeedBtn" onclick="ttsCycleSpeed()" title="Playback speed">1x</button>
-    <button class="tts-close" onclick="ttsStop()" title="Close player">&times;</button>
+    <button class="tts-speed" id="ttsSpeedBtn" data-action="tts-speed" title="Playback speed">1x</button>
+    <button class="tts-close" data-action="tts-stop" title="Close player" aria-label="Close player">&times;</button>
   </div>
 </div>
 
 <script src="js/core.js"></script>
+<script src="js/actions.js"></script>
+<script src="js/math.js"></script>
 <script src="js/display.js"></script>
 <script src="js/files.js"></script>
 <script src="js/render.js"></script>
@@ -304,8 +314,12 @@
 <script src="js/links.js"></script>
 <script src="js/enhancements.js"></script>
 <script src="js/read-aloud.js"></script>
-<script src="js/app.js"></script>
 <script src="js/comments.js"></script>
+<!-- host.js (the desktop bridge) wraps the comment wrapper around renderMarkdown, so it follows
+     comments.js; its own start waits for DOMContentLoaded. -->
 <script src="js/host.js"></script>
+<!-- app.js starts the viewer (theme, font size, ?file=), so it loads last: every subsystem, the
+     comment wrapper around renderMarkdown included, is in place before the first render. -->
+<script src="js/app.js"></script>
 </body>
 </html>
