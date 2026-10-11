@@ -9,8 +9,9 @@
 // The data-safety rules this file keeps:
 //   1. A comment change is written into the source (rawMarkdown) together with the in-memory list, so
 //      nothing that reads the source again can lose it.
-//   2. Only a block that ends the file is the comment block. A document that merely mentions the tokens,
-//      even inside code, keeps every character of its text.
+//   2. The comment block is the last top-level HTML block that opens with the block token, as markdown-it
+//      reads the document. A document that merely mentions the tokens (in code, inline code, a list, a quote
+//      or prose) keeps every character of its text, and so does text typed below the block in another editor.
 //   3. The payload is escaped and unescaped by the JSON parser. A block that cannot be read makes the
 //      comments read-only for that file; it is never rewritten or dropped.
 //   4. mdvWriteDocument() is the only function that writes a document, and it never overwrites a file that
@@ -20,7 +21,10 @@ const MDV_VERSION = 1;
 const MDV_GENERATOR = 'mdv-viewer';
 const MDV_RE_ANCHOR = /<!--\s*MDV-ANCHOR\s+id="([a-zA-Z0-9_-]+)"\s*-->/g;
 // The comment block opens at the start of a line (CommonMark allows up to 3 spaces before an HTML block)
-// and must close at the very end of the file.
+const MDV_RE_BLOCK_START = /(^|\n) {0,3}<!--\s*MDV-COMMENTS:v\d+/;
+const MDV_RE_BLOCK_HEAD = /^ {0,3}<!--\s*MDV-COMMENTS:v(\d+)/;
+const MDV_RE_BLOCK_CLOSE = /MDV-COMMENTS:end\s*-->/;
+// Without markdown-it, only a block that ends the file is read
 const MDV_RE_BLOCK_OPEN = /(^|\n)( {0,3})<!--\s*MDV-COMMENTS:v(\d+)/g;
 const MDV_RE_BLOCK_END = /MDV-COMMENTS:end\s*-->\s*$/;
 
@@ -92,9 +96,38 @@ function mdvSha256Hex(str) {
 function mdvHash(text) { return mdvSha256Hex(text).slice(0, 16); }
 
 // ------- The comment block: locate / parse / serialize -------
-// The block is the one that ENDS the file, found from the LAST opening token, so a document that mentions
-// the tokens anywhere else (a code span, a code block, prose) is never mistaken for one.
+// The comment block is the LAST top-level HTML block of the document that opens with "<!-- MDV-COMMENTS:v<n>".
+// markdown-it decides what a top-level HTML block is, so the same text in code, inline code, a list item, a quote
+// or a paragraph is document text, never the block. Text after the block (typed below it in another editor) is
+// document text too; a save moves the block back to the end. Returns {start, end, version, payload, error} with
+// [start, end) the block in the source, or null when the document has no block.
 function mdvLocateBlock(src) {
+  if (!MDV_RE_BLOCK_START.test(src)) return null;
+  const parts = mdvSplitFrontmatter(src);
+  const tokens = parts ? mdvParseMarkdown(parts.body) : null;
+  if (!tokens) return mdvLocateBlockAtEnd(src);
+  let start = -1;
+  let stop = -1;
+  tokens.forEach((t) => {
+    if (t.type !== 'html_block' || t.level !== 0 || !t.map || !MDV_RE_BLOCK_HEAD.test(t.content)) return;
+    start = parts.bodyStart + mdvLineOffset(parts.body, t.map[0]);
+    stop = parts.bodyStart + mdvLineOffset(parts.body, t.map[1]);
+  });
+  if (start === -1) return null;
+  const text = src.slice(start, stop);
+  const head = MDV_RE_BLOCK_HEAD.exec(text);
+  const close = MDV_RE_BLOCK_CLOSE.exec(text);
+  if (!head) return null;
+  if (!close) {
+    // The HTML comment ended before its closing line (a hand edit or a merge put "-->" inside it)
+    return { start, end: stop, version: Number(head[1]), payload: null, error: 'its closing "MDV-COMMENTS:end -->" line is missing' };
+  }
+  return { start, end: start + close.index + close[0].length, version: Number(head[1]),
+    payload: text.slice(head[0].length, close.index).trim(), error: null };
+}
+
+// Without markdown-it the viewer cannot tell an HTML block from code, so only a block that ends the file counts
+function mdvLocateBlockAtEnd(src) {
   const end = MDV_RE_BLOCK_END.exec(src);
   if (!end) return null;
   let open = null;
@@ -106,14 +139,17 @@ function mdvLocateBlock(src) {
   if (payloadStart > end.index) return null;
   return {
     start: open.index + open[1].length,
+    end: end.index + end[0].replace(/\s+$/, '').length,
     version: Number(open[3]),
-    payload: src.slice(payloadStart, end.index).trim()
+    payload: src.slice(payloadStart, end.index).trim(),
+    error: null
   };
 }
 
 // Reads a located block. JSON.parse itself decodes the \u002d and \u003c escapes that mdvSerialize writes,
 // so a comment whose text contains those six characters literally round-trips intact.
 function mdvReadPayload(loc) {
+  if (loc.error) return { comments: [], extras: null, error: loc.error };
   if (loc.version !== MDV_VERSION) {
     return { comments: [], extras: null, error: 'it uses format v' + loc.version + ', which this viewer cannot read' };
   }
@@ -144,29 +180,44 @@ function mdvParseFile(src) {
 // The line ending a document already uses, so a Windows file stays CRLF throughout
 function mdvEol(src) { return String(src).indexOf('\r\n') !== -1 ? '\r\n' : '\n'; }
 
-// Returns the document with its comment block replaced by one holding `comments`. The text before the block
-// is kept byte for byte (only trailing line breaks are normalized to one blank line before the block). Throws,
-// changing nothing, when the existing block cannot be read: an unreadable block is never dropped.
+// Returns the document with its comment block replaced by one holding `comments`, at the end of the file. Every
+// character of the text around the block is kept (only the line breaks where the block was are normalized), and
+// fields of the block this viewer does not know are kept too. Throws, changing nothing, when the existing block
+// cannot be read (an unreadable block is never dropped) or when the new block would not be read back.
 function mdvSerialize(src, comments) {
   src = String(src == null ? '' : src);
+  const list = comments || [];
   const loc = mdvLocateBlock(src);
   let extras = {};
   if (loc) {
     const r = mdvReadPayload(loc);
-    if (r.error) throw new Error('The comment block at the end of this file could not be read (' + r.error + '), so it was left unchanged.');
+    if (r.error) throw new Error('The comment block in this file could not be read (' + r.error + '), so it was left unchanged.');
     extras = r.extras;
   }
+  if (!loc && list.length === 0) return src; // nothing to add and nothing to remove: the file is left exactly as it is
   const eol = mdvEol(src);
-  const body = loc ? src.slice(0, loc.start) : src;
-  if (!comments || comments.length === 0) {
-    if (!loc) return src; // nothing to add and nothing to remove: the file is left exactly as it is
-    return body.replace(/[\r\n]+$/, '') + eol;
+  let body = src;
+  if (loc) {
+    // Text typed below the block in another editor stays, after the text above it
+    const after = src.slice(loc.end);
+    const tail = /\S/.test(after) ? after.replace(/^[ \t]*(?:\r?\n)+/, '') : '';
+    body = src.slice(0, loc.start).replace(/[\r\n]+$/, '') + (tail ? eol + eol + tail : '');
   }
-  const payload = Object.assign({ version: MDV_VERSION, generator: MDV_GENERATOR, comments }, extras);
+  body = body.replace(/[\r\n]+$/, '');
+  // No comments left: the block goes, unless it holds fields this viewer does not know, which stay
+  if (list.length === 0 && Object.keys(extras).length === 0) return body + eol;
+  const payload = Object.assign({ version: MDV_VERSION, generator: MDV_GENERATOR, comments: list }, extras);
   // Escape what could end the HTML comment early: "--" and "<". Both escapes are plain JSON string escapes,
   // so JSON.parse restores them, and no other character can appear outside a JSON string.
   const json = JSON.stringify(payload).replace(/--/g, '-\\u002d').replace(/</g, '\\u003c');
-  return body.replace(/[\r\n]+$/, '') + eol + eol + '<!-- MDV-COMMENTS:v' + MDV_VERSION + eol + json + eol + 'MDV-COMMENTS:end -->' + eol;
+  const out = body + eol + eol + '<!-- MDV-COMMENTS:v' + MDV_VERSION + eol + json + eol + 'MDV-COMMENTS:end -->' + eol;
+  // Never write a block this viewer would not read back as this block: in a document that ends inside an
+  // unclosed code fence the block would be code, invisible as comments, and every save would add another.
+  const check = mdvLocateBlock(out);
+  if (!check || check.error || check.payload !== json || out.slice(check.end).trim() !== '') {
+    throw new Error('The comments could not be stored at the end of this file (it may end inside an unclosed code block), so nothing was changed.');
+  }
+  return out;
 }
 
 // ------- Anchor markers in the source -------
@@ -212,41 +263,43 @@ function mdvLineOffset(text, line) {
   return off;
 }
 
+// markdown-it's block tokens for `text`. The last parse is kept: locating the block, its markers and an insertion
+// point each need one, and they ask about the same text. The tokens are only read, never changed.
+let mdvParseCache = { text: null, tokens: null };
 function mdvParseMarkdown(text) {
   if (typeof md === 'undefined' || !md || typeof md.parse !== 'function') return null;
-  try { return md.parse(text, { mdvProbe: true }); } catch (e) { return null; }
+  if (mdvParseCache.text === text) return mdvParseCache.tokens;
+  let tokens;
+  try { tokens = md.parse(text, { mdvProbe: true }); } catch (e) { return null; }
+  mdvParseCache = { text, tokens };
+  return tokens;
 }
 
-// Source ranges [start, end) of code (fenced and indented) and of front matter: marker-shaped text there is
-// document content, never a marker.
-function mdvProtectedRanges(src) {
+// Removes the anchor markers with the given ids. A marker is a line that markdown-it reads as an HTML block (at any
+// depth, outside the comment block): the same text in code, inline code or front matter is document content and
+// stays, and nothing else in the document changes.
+function mdvRemoveMarkers(src, ids) {
+  if (!ids || !ids.size) return src;
   const parts = mdvSplitFrontmatter(src);
-  if (!parts) return [[0, src.length]]; // cannot tell what is code: protect everything
-  const ranges = parts.bodyStart ? [[0, parts.bodyStart]] : [];
-  const tokens = mdvParseMarkdown(parts.body);
-  if (!tokens) return [[0, src.length]];
+  const tokens = parts ? mdvParseMarkdown(parts.body) : null;
+  // A marker left behind is an invisible HTML comment; text removed by mistake is lost. When markers cannot be told
+  // from text, none is removed.
+  if (!tokens) return src;
+  const ranges = [];
   tokens.forEach((t) => {
-    if ((t.type === 'fence' || t.type === 'code_block') && t.map) {
+    if (t.type === 'html_block' && t.map && t.content.indexOf('MDV-ANCHOR') !== -1) {
       ranges.push([parts.bodyStart + mdvLineOffset(parts.body, t.map[0]), parts.bodyStart + mdvLineOffset(parts.body, t.map[1])]);
     }
   });
-  return ranges;
-}
-
-// Removes the anchor markers with the given ids. Only real markers go: text inside code, front matter or the
-// comment block is untouched, and nothing else in the document changes.
-function mdvRemoveMarkers(src, ids) {
-  if (!ids || !ids.size) return src;
   const loc = mdvLocateBlock(src);
-  const limit = loc ? loc.start : src.length;
-  const protectedRanges = mdvProtectedRanges(src.slice(0, limit));
   const re = new RegExp(MDV_RE_ANCHOR.source, 'g');
   let out = '';
   let last = 0;
   let m;
-  while ((m = re.exec(src)) && m.index < limit) {
+  while ((m = re.exec(src))) {
     if (!ids.has(m[1])) continue;
-    if (protectedRanges.some(([a, b]) => m.index >= a && m.index < b)) continue;
+    if (loc && m.index >= loc.start && m.index < loc.end) continue;
+    if (!ranges.some(([a, b]) => m.index >= a && m.index < b)) continue;
     let s = m.index;
     let e = m.index + m[0].length;
     const lineStart = src.lastIndexOf('\n', s - 1) + 1;
@@ -274,41 +327,48 @@ function mdvAnnotateBlocks(state) {
   let pending = [];
   state.tokens.forEach((t) => {
     if (t.level !== 0 || t.nesting === -1) return;
-    if (t.type === 'html_block') {
-      if (mdvIsCommentOnly(t.content)) { pending = pending.concat(mdvMarkerIds(t.content)); return; }
-      n++;          // raw HTML cannot carry an attribute: markers before it fall back to the DOM walk
-      pending = [];
-      return;
-    }
+    if (t.type === 'html_block' && mdvIsCommentOnly(t.content)) { pending = pending.concat(mdvMarkerIds(t.content)); return; }
     t.attrSet('data-mdv-block', String(n++));
     if (pending.length) { t.attrSet('data-mdv-anchor', pending.join(' ')); pending = []; }
   });
 }
 
+// Puts a block's number and anchors on the first element of HTML that a renderer builds itself, since such HTML
+// drops token attributes: raw HTML blocks, and fences drawn by a custom renderer (Mermaid's)
+function mdvWithBlockAttrs(html, token) {
+  const block = token.attrGet('data-mdv-block');
+  if (block == null) return html;
+  const anchor = token.attrGet('data-mdv-anchor');
+  const attrs = ' data-mdv-block="' + md.utils.escapeHtml(block) + '"' + (anchor ? ' data-mdv-anchor="' + md.utils.escapeHtml(anchor) + '"' : '');
+  return html.replace(/^(\s*(?:<!--[\s\S]*?-->\s*)*<[a-zA-Z][\w:-]*)/, (tag) => tag + attrs);
+}
+
 if (typeof md !== 'undefined' && md && md.core && md.renderer) {
   md.core.ruler.push('mdv_blocks', mdvAnnotateBlocks);
-  // A custom fence renderer (Mermaid) drops token attributes: put ours on its first element instead.
   const mdvPrevFence = md.renderer.rules.fence;
   if (mdvPrevFence) {
     md.renderer.rules.fence = function (tokens, idx, options, env, self) {
       const out = mdvPrevFence(tokens, idx, options, env, self);
-      const block = tokens[idx].attrGet('data-mdv-block');
-      if (block == null || /^\s*<pre[^>]*>\s*<code[^>]*\sdata-mdv-block=/.test(out)) return out;
-      const anchor = tokens[idx].attrGet('data-mdv-anchor');
-      const attrs = ' data-mdv-block="' + block + '"' + (anchor ? ' data-mdv-anchor="' + md.utils.escapeHtml(anchor) + '"' : '');
-      return out.replace(/^(\s*<[a-zA-Z][\w:-]*)/, (tag) => tag + attrs);
+      // markdown-it's own fence renderer already puts them on the <code> inside its <pre>
+      if (/^\s*<pre[^>]*>\s*<code[^>]*\sdata-mdv-block=/.test(out)) return out;
+      return mdvWithBlockAttrs(out, tokens[idx]);
     };
   }
+  const mdvPrevHtmlBlock = md.renderer.rules.html_block;
+  md.renderer.rules.html_block = function (tokens, idx, options, env, self) {
+    const out = mdvPrevHtmlBlock ? mdvPrevHtmlBlock(tokens, idx, options, env, self) : tokens[idx].content;
+    return mdvWithBlockAttrs(out, tokens[idx]);
+  };
 }
 
 // Map of anchor id -> the element it marks
 function mdvBuildAnchorMap(container) {
-  const map = {};
+  const map = Object.create(null); // an id such as "constructor" must not find a built-in property
   if (!container) return map;
   container.querySelectorAll('[data-mdv-anchor]').forEach((el) => {
     String(el.getAttribute('data-mdv-anchor')).split(/\s+/).forEach((id) => { if (id && !map[id]) map[id] = el; });
   });
-  // Markers the render could not attach (inside a list or quote, or before raw HTML): the next element
+  // Markers the render could not attach (inside a list or quote, or before raw HTML that starts with text): the next element
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_COMMENT);
   let node;
   while ((node = walker.nextNode())) {
@@ -388,13 +448,13 @@ function mdvLocateInsertion(elem) {
   if (!tokens) return null;
   const blocks = mdvTopBlocks(tokens);
   const loc = mdvLocateBlock(src);
-  const limit = loc ? loc.start : src.length;
+  const inBlock = (pos) => !!loc && pos >= loc.start && pos < loc.end; // a marker never goes inside the comment block
   let target = null;
   // A fenced code block carries the number on the <code> inside its <pre>
   const top = elem && elem.closest ? (elem.closest('[data-mdv-block]') || elem.querySelector(':scope > [data-mdv-block]')) : null;
   if (top && mdvSameBlocks(parts.body, blocks)) {
     const t = blocks[Number(top.getAttribute('data-mdv-block'))];
-    const tagOk = t && (t.type === 'fence' || t.type === 'code_block' || t.tag === top.tagName.toLowerCase());
+    const tagOk = t && (t.type === 'fence' || t.type === 'code_block' || t.type === 'html_block' || t.tag === top.tagName.toLowerCase());
     if (t && t.map && tagOk) target = t;
   }
   if (!target) {
@@ -402,7 +462,7 @@ function mdvLocateInsertion(elem) {
     const probe = mdvBlockText(elem).split('\n')[0].trim().slice(0, 48);
     if (probe.length >= 6) {
       const at = parts.body.indexOf(probe);
-      if (at !== -1 && parts.bodyStart + at < limit) {
+      if (at !== -1 && !inBlock(parts.bodyStart + at)) {
         const line = parts.body.slice(0, at).split('\n').length - 1;
         target = blocks.find((t) => t.map && t.map[0] <= line && line < t.map[1] && t.type !== 'fence' && t.type !== 'code_block') || null;
       }
@@ -410,7 +470,7 @@ function mdvLocateInsertion(elem) {
   }
   if (!target || !target.map) return null;
   const offset = parts.bodyStart + mdvLineOffset(parts.body, target.map[0]);
-  if (offset >= limit) return null;
+  if (inBlock(offset)) return null;
   return { offset, index: blocks.indexOf(target) };
 }
 
@@ -1049,7 +1109,7 @@ function mdvEscape(s) {
 }
 
 function mdvThreadTree() {
-  const byId = {};
+  const byId = Object.create(null); // ids come from the file: "__proto__" must be an ordinary key
   mdvComments.forEach((c) => {
     if (c && typeof c === 'object' && c.id != null) byId[c.id] = Object.assign({}, c, { replies: [] });
   });
