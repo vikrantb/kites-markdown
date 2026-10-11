@@ -29,7 +29,7 @@ in the viewer none may run, and the harmless content around them must still rend
 
 <svg id="svg-onload" onload="window.__mdvPwned='svg-onload'" width="10" height="10"><circle cx="5" cy="5" r="4"/></svg>
 
-<p><a id="link-javascript" href="javascript:window.__mdvPwned='javascript-url'">A link with a script URL</a></p>
+<p>A link inside a sentence (a link alone in a paragraph becomes a card): <a id="link-javascript" href="javascript:window.__mdvPwned='javascript-url'">a script URL</a>.</p>
 
 <iframe id="frame-src" src="about:blank"></iframe>
 <object id="plugin-object" data="does-not-exist.bin"></object>

@@ -76,10 +76,12 @@ test('a hostile document runs nothing, goes nowhere and keeps its harmless conte
   await openDocument(page, 'tests/fixtures/hostile.md');
   const loadedUrl = page.url();
 
-  // Touch what a reader might touch.
+  // Touch what a reader might touch. Each target is still on the page (minus its payload), so a
+  // missing one would make this check pass without clicking anything.
   for (const sel of ['#link-javascript', '#form-submit', '#doc-action', '#svg-onload']) {
     const target = page.locator(`#mdBody ${sel}`);
-    if (await target.count()) await target.first().click({ force: true });
+    await expect(target, `${sel} is on the page`).toHaveCount(1);
+    await target.click({ force: true });
   }
   const nodes = page.locator('#mdBody .mermaid svg .node');
   for (let i = 0; i < await nodes.count(); i++) await nodes.nth(i).click({ force: true });
@@ -278,6 +280,33 @@ test('a document cannot draw over the viewer\'s controls', async ({ page }) => {
     };
   });
   expect(hits).toEqual({ documentArea: 'cover', openFile: 'control', theme: 'control', outline: 'control', scrollTop: 'control', closeComments: 'control' });
+  expect(problems, problems.join('\n')).toEqual([]);
+});
+
+test('Mermaid directives in a document cannot restyle the viewer or loosen its security', async ({ page }) => {
+  const problems = collectProblems(page);
+  const requests = [];
+  page.on('request', (r) => { if (/example\.invalid/.test(r.url())) requests.push(r.url()); });
+  await page.route(/example\.invalid/, (route) => route.abort());
+  await openDocument(page, 'tests/fixtures/mermaid-directives.md');
+  await page.waitForTimeout(300);
+  const r = await page.evaluate(() => {
+    const svgs = [...document.querySelectorAll('#mdBody .mermaid svg')];
+    return {
+      diagrams: svgs.length,
+      // Positive control: each directive's CSS did reach its diagram, scoped under the diagram's id.
+      scoped: svgs.map((svg) => svg.querySelector('style').textContent.includes(`#${svg.id} .toolbar`)),
+      toolbar: getComputedStyle(document.querySelector('.toolbar')).display,
+      background: getComputedStyle(document.body).backgroundColor,
+      level: mermaid.mermaidAPI.getConfig().securityLevel,
+    };
+  });
+  expect(r.diagrams).toBe(3);
+  expect(r.scoped).toEqual([true, true, false]);
+  expect(r.toolbar).toBe('flex');
+  expect(r.background).not.toBe('rgb(255, 0, 0)');
+  expect(r.level).toBe('strict');
+  expect(requests, 'a directive\'s @import was fetched').toEqual([]);
   expect(problems, problems.join('\n')).toEqual([]);
 });
 
