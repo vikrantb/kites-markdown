@@ -74,15 +74,19 @@ that is suddenly "missing" after a reload is usually that, not the code.
 - **Treat every document as untrusted input.** Everything rendered from a document goes through
   `mdvSanitize` (DOMPurify, configured in `js/render.js`). Anywhere else, never put document text into
   `innerHTML` unescaped: use `textContent`, or `escapeHtml` for text and `mdvEscapeAttr` for a quoted
-  attribute value. Mermaid stays at `securityLevel: 'strict'`; `render.js` pins it at load.
+  attribute value. Mermaid stays at `securityLevel: 'strict'`; `render.js` pins it at load. DOMPurify's
+  `SAFE_FOR_XML` stays on (documents carry SVG and MathML); a hook keeps it from deleting text, so
+  only top-level HTML comments survive, and those get a space after any `<` that could start a tag.
 - **No inline handlers.** No `on*=` attribute in markup or in generated HTML, and no `javascript:`
   URL: the page's Content Security Policy (`script-src 'self' file:`) refuses them. A control says
   what it does with `data-action="<name>"` (plus an optional `data-arg`), and `js/actions.js` runs
   it: one capture-phase listener per event type and a registry. Another script adds its own with
   `mdvRegisterActions({ name: { click: (el, arg, event) => … } })`. An element that holds
-  document-derived HTML carries `data-mdv-document` (`#mdBody`, the diagram overlay); an action found
-  inside one runs only when its entry is marked `document: true`, so a document cannot press the
-  viewer's buttons.
+  document-derived markup carries `data-mdv-document` (`#mdBody`, the diagram overlay's
+  `#diagramZoomContainer`, the comment sidebar's `#mdvThreadList`); a new place that shows document
+  data goes inside one. An action there runs only on an element the viewer marked with
+  `mdvMarkOwnControl(el)` (render.js marks each code block's Copy button), and the sanitizer drops
+  `data-action`/`data-arg` from document HTML, so a document cannot press the viewer's buttons.
 - **A document is only linked to a file handle it was read from.** Any path that replaces the
   document must set `mdvFileHandle` to the matching handle or to `null`; paste and URL loading had
   this wrong until the initial import.
