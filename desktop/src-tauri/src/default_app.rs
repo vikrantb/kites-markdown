@@ -5,7 +5,9 @@
 //!   confirm. Their answer is final: nothing else is tried after it. On macOS 11, the older
 //!   `LSSetDefaultRoleHandlerForContentType`. The outcome is read back and reported, never assumed.
 //!   The rarer extensions (.mdown, .mkd, …) resolve to the app's own exported type (see Info.plist),
-//!   which only this app claims.
+//!   claimed at rank Owner. This asks only for the Markdown type, so it shows one confirmation, not two.
+//!   Where another editor claims those extensions by name (VS Code does), macOS keeps opening them with
+//!   it, and Get Info → Change All on one such file moves them (docs/desktop.md).
 //! - Windows: the default can only be chosen by the person, so this opens Settings → Default apps
 //!   at the app's own page. The installer registers the app there.
 //! - Linux: not automated; the message says how.
@@ -71,9 +73,20 @@ pub fn is_default() -> Option<bool> {
   }
 }
 
-/// macOS: the type a file with this extension resolves to, and whether that type is Markdown.
+/// macOS: what a file with this extension is to Launch Services.
 #[cfg(target_os = "macos")]
-pub fn extension_type(ext: &str) -> (String, bool) {
+pub struct ExtensionType {
+  /// The type identifier the extension resolves to (a `dyn.*` one when no app declares it).
+  pub identifier: String,
+  /// Whether that type is Markdown.
+  pub markdown: bool,
+  /// Whether this app is among the apps that can open it. `None` before macOS 12, which cannot say.
+  pub claimed: Option<bool>,
+}
+
+/// macOS: what a file with this extension is to Launch Services, and whether this app can open it.
+#[cfg(target_os = "macos")]
+pub fn extension_type(ext: &str) -> ExtensionType {
   mac::extension_type(ext)
 }
 
@@ -101,7 +114,7 @@ mod mac {
   use objc2_foundation::{NSBundle, NSError, NSOperatingSystemVersion, NSProcessInfo, NSString};
   use objc2_uniform_type_identifiers::UTType;
 
-  use super::{DefaultAppResult, MANUAL_STEPS_MAC};
+  use super::{DefaultAppResult, ExtensionType, MANUAL_STEPS_MAC};
 
   pub const MARKDOWN_TYPE: &str = "net.daringfireball.markdown";
   const IDENTIFIER: &str = "app.kitesmarkdown.viewer";
@@ -134,13 +147,20 @@ mod mac {
     UTType::typeWithIdentifier(&NSString::from_str(MARKDOWN_TYPE))
   }
 
-  /// The type macOS gives a file with this extension, and whether that type is Markdown.
-  pub fn extension_type(ext: &str) -> (String, bool) {
+  pub fn extension_type(ext: &str) -> ExtensionType {
     let Some(ty) = UTType::typeWithFilenameExtension(&NSString::from_str(ext)) else {
-      return (String::new(), false);
+      return ExtensionType { identifier: String::new(), markdown: false, claimed: Some(false) };
     };
     let markdown = markdown_type().map(|md| ty.conformsToType(&md)).unwrap_or(false);
-    (ty.identifier().to_string(), markdown)
+    let claimed = at_least_macos_12().then(|| {
+      NSWorkspace::sharedWorkspace()
+        .URLsForApplicationsToOpenContentType(&ty)
+        .iter()
+        .filter_map(|url| url.path())
+        .filter_map(|path| NSBundle::bundleWithPath(&path))
+        .any(|bundle| bundle.bundleIdentifier().map(|id| id.to_string() == IDENTIFIER).unwrap_or(false))
+    });
+    ExtensionType { identifier: ty.identifier().to_string(), markdown, claimed }
   }
 
   /// macOS 12 and later: asks macOS to make this app open `ty`. macOS shows the person a confirmation.

@@ -51,9 +51,12 @@ another program changes the file.
 | **Windows** | **File → Make Default for Markdown Files…**, or the welcome-screen button: both open Settings at the app's page. | Right-click a `.md` file → **Open with → Choose another app** → Kites Markdown → **Always**. Or **Settings → Apps → Default apps**, search for Kites Markdown. |
 
 The app opens `.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`, `.mdwn`, `.mdtxt` and `.mdtext`. On a Mac,
-`.md` and `.markdown` are macOS's own Markdown type, which the default above covers. The other six get the
-app's own type, a kind of Markdown that only Kites Markdown claims, so they open in it without a separate
-default. (Without that type, macOS gives those six extensions anonymous types that no app claims.)
+`.md` and `.markdown` are macOS's own Markdown type, and the default above covers them, with one
+confirmation. The other six get the app's own type, which is still Markdown. Without it, macOS gives those
+extensions anonymous types that no app claims, and the viewer is not even offered for them. They open in
+Kites Markdown when no other app claims them. Editors such as VS Code claim them by extension, so on a Mac
+with one of those, choose Kites Markdown once for one such file: **File → Get Info → Open with → Change
+All…**.
 
 On a Mac where nobody has chosen an app for Markdown files, macOS may start using Kites Markdown as soon
 as it has been opened once: an app that declares a file type becomes the automatic choice for it.

@@ -252,23 +252,38 @@ fn dialogs_answered() -> Vec<Value> {
   Vec::new()
 }
 
-/// macOS: for every extension the app claims (tauri.conf.json), the type macOS resolves it to and
-/// whether that type is Markdown. An extension that resolves to an anonymous `dyn.*` type never opens
-/// in the app on a double-click, whatever the default is.
-#[cfg(target_os = "macos")]
-fn file_types(app: &AppHandle) -> Value {
-  let extensions = app
-    .config()
-    .bundle
-    .file_associations
-    .iter()
+/// The config the bundler generated the Info.plist's document types from. The running app's own config
+/// does not carry the bundle section (`app.config().bundle.file_associations` is empty at run time).
+const TAURI_CONF: &str = include_str!("../tauri.conf.json");
+
+/// The file extensions the app claims (tauri.conf.json → bundle → fileAssociations → ext).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn claimed_extensions() -> Vec<String> {
+  let conf: Value = serde_json::from_str(TAURI_CONF).unwrap_or(Value::Null);
+  conf
+    .pointer("/bundle/fileAssociations")
+    .and_then(Value::as_array)
+    .into_iter()
     .flatten()
-    .flat_map(|a| a.ext.iter().map(|e| e.to_string()));
+    .filter_map(|a| a.get("ext").and_then(Value::as_array))
+    .flatten()
+    .filter_map(Value::as_str)
+    .map(str::to_string)
+    .collect()
+}
+
+/// macOS: for every extension the app claims, the type macOS resolves it to, whether that type is
+/// Markdown, and whether this app is among the apps that can open it. An extension that resolves to an
+/// anonymous `dyn.*` type, or to a type the app does not claim, never opens in the app on a double-click,
+/// whatever the default is.
+#[cfg(target_os = "macos")]
+fn file_types(_app: &AppHandle) -> Value {
   Value::Array(
-    extensions
+    claimed_extensions()
+      .into_iter()
       .map(|ext| {
-        let (ty, markdown) = crate::default_app::extension_type(&ext);
-        json!({ "ext": ext, "type": ty, "markdown": markdown })
+        let t = crate::default_app::extension_type(&ext);
+        json!({ "ext": ext, "type": t.identifier, "markdown": t.markdown, "claimed": t.claimed })
       })
       .collect(),
   )
@@ -314,6 +329,14 @@ mod tests {
 
   fn args(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
+  }
+
+  #[test]
+  fn the_claimed_extensions_come_from_the_bundle_config() {
+    let extensions = claimed_extensions();
+    for ext in ["md", "markdown", "mdown"] {
+      assert!(extensions.iter().any(|e| e == ext), "{ext} missing from {extensions:?}");
+    }
   }
 
   #[test]

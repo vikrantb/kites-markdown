@@ -13,8 +13,14 @@
     that asks. Without it, these six extensions resolve to anonymous dyn.* types that no app claims, and
     double-clicking such a file never opens the viewer.
 
-  The app claims both types (tauri.conf.json → fileAssociations → contentTypes). The self-test's `types`
-  check reads the extension list from that config and checks that every extension resolves to Markdown.
+  CFBundleDocumentTypes below REPLACES the one the bundler generates from tauri.conf.json's
+  fileAssociations (measured: a key set here overrides the generated key whole; arrays are not merged), so
+  the macOS claims live here. fileAssociations still drives Windows, and its `ext` list is the one the
+  self-test checks. Markdown is claimed at rank Default, since other apps edit it too. The app's own type
+  is claimed at rank Owner, because the app defines it.
+
+  The self-test's `types` check reads the extension list from tauri.conf.json and checks two things for
+  every extension: it resolves to Markdown, and this app is among the apps that can open it.
 -->
 <plist version="1.0">
 <dict>
@@ -44,6 +50,33 @@
           <string>text/x-markdown</string>
         </array>
       </dict>
+    </dict>
+  </array>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>KitesMarkdown.Document</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Default</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>net.daringfireball.markdown</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>KitesMarkdown.Document.OtherExtensions</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>app.kitesmarkdown.markdown</string>
+      </array>
     </dict>
   </array>
   <key>UTExportedTypeDeclarations</key>

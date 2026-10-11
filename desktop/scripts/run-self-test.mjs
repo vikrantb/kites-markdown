@@ -26,8 +26,9 @@
 // confirm() reached a dialog), kitchen-sink (the sample's features all rendered), assets (images in the
 // document's folder load, one in a dot-folder included; one outside the folder does not), save (the save
 // probe passed), no-inline-handlers (none left for the app's CSP to block), types (macOS: every extension
-// the app claims resolves to a Markdown type, not an anonymous dyn.* type that no app claims; launch with
-// open or default, so Launch Services has registered the build).
+// the app claims resolves to a Markdown type, not an anonymous dyn.* type that no app claims, and the app
+// is among the apps that can open that type; launch with open or default, so Launch Services has
+// registered the build).
 import { spawn, execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -205,6 +206,8 @@ function verify(report, exitCode) {
         want(types.map((t) => t.ext).join() === claimed.join(), `the app checked ${types.map((t) => t.ext).join(', ')}, the config claims ${claimed.join(', ')}`);
         const wrong = types.filter((t) => !t.markdown).map((t) => `.${t.ext} → ${t.type || 'no type'}`);
         want(wrong.length === 0, `extensions that do not resolve to Markdown, so a double-click never opens them here: ${wrong.join(', ')}`);
+        const unclaimed = types.filter((t) => t.claimed === false).map((t) => `.${t.ext} (${t.type})`);
+        want(unclaimed.length === 0, `extensions whose type the app does not claim, so it is not offered for them: ${unclaimed.join(', ')}`);
       }
     } else if (check === 'no-inline-handlers') {
       const h = v.inlineHandlers || {};
@@ -230,7 +233,7 @@ function summary(report) {
     `inline handlers left: ${v.inlineHandlers ? v.inlineHandlers.count : '?'}`,
     `console errors ${(v.log && v.log.consoleErrors.length) ?? '?'}, page errors ${(v.log && v.log.pageErrors.length) ?? '?'}, CSP violations while rendering ${(v.log && v.log.cspViolations.length) ?? '?'}`,
     `window title: ${report.document && report.document.windowTitle}; default handler: ${report.defaultHandler || 'n/a'}`,
-    `file types: ${Array.isArray(report.fileTypes) ? report.fileTypes.map((t) => `.${t.ext} ${t.markdown ? '✓' : '✗'} ${t.type}`).join(', ') : 'n/a'}`,
+    `file types: ${Array.isArray(report.fileTypes) ? report.fileTypes.map((t) => `.${t.ext} ${t.markdown && t.claimed !== false ? '✓' : '✗'} ${t.type}${t.claimed === false ? ' (not claimed)' : ''}`).join(', ') : 'n/a'}`,
   ].join('\n');
 }
 
