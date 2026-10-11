@@ -172,7 +172,7 @@ function buildSectionMinimap() {
     btn.dataset.targetId = h.id;
     btn.dataset.label = label;
     btn.setAttribute('aria-label', label);
-    btn.addEventListener('click', () => h.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    btn.addEventListener('click', () => mdvGoTo(h)); // as an outline link: unfolded, scrolled to, focused
     nav.appendChild(btn);
   });
   body.prepend(nav);
@@ -352,20 +352,13 @@ function mdvLinkDiagramNodes(wrapper) {
   wrapper.addEventListener('keydown', follow);
 }
 
-// Scroll to a heading, unfolding any collapsed section around it, then flash it so the eye finds it.
+// Go to a heading as the outline does (mdvGoTo in navigation.js: unfold the folded sections and open the closed
+// <details> around it, which updates each chevron and the scroll spy; scroll there; move the focus there), then flash
+// it so the eye finds it.
 function mdvJumpToSection(id) {
   const target = id && document.getElementById(id);
   if (!target) return;
-  for (let el = target.parentElement; el && el.id !== 'mdBody'; el = el.parentElement) {
-    if (el.classList.contains('section-content') && el.classList.contains('collapsed')) {
-      el.classList.remove('collapsed');
-      const heading = el.previousElementSibling;
-      const toggle = heading && heading.querySelector('.section-toggle');
-      if (toggle) toggle.classList.remove('collapsed');
-    }
-  }
-  target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  if (target.hasAttribute('tabindex')) target.focus({ preventScroll: true });
+  mdvGoTo(target);
   target.classList.remove('mdv-flash');
   void target.offsetWidth; // restart the animation when the same heading is chosen twice
   target.classList.add('mdv-flash');

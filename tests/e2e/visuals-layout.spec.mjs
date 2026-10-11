@@ -51,6 +51,21 @@ test('the section rail comes first and stays under the toolbar, showing where th
   expect(back.position).toBe('2 / 17');
 });
 
+// A segment used to scroll to its heading and nothing more: in a folded document that heading has no box, so the
+// click did nothing.
+test('a rail segment goes to its section as the outline does: unfolded, and with the focus', async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  const h1 = page.locator('#mdBody h1');
+  await h1.hover();
+  await h1.locator('.section-toggle').click();
+  await expect(page.locator('#architecture')).toBeHidden();
+  await page.locator('#mdBody .minimap-segment[data-target-id="architecture"]').click();
+  await expect(page.locator('#architecture')).toBeVisible();
+  await expect(h1.locator('.section-toggle')).toHaveAttribute('aria-expanded', 'true');
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('architecture');
+  await expect.poll(() => page.evaluate(() => document.getElementById('architecture').getBoundingClientRect().top)).toBeLessThan(140);
+});
+
 test('the title keeps its fold toggle with the section rail in place', async ({ page }) => {
   await open(page, 'kitchen-sink.md');
   const h1 = page.locator('#mdBody h1');

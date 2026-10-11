@@ -288,6 +288,27 @@ test('a linked node in the expanded view closes it and jumps (issue 14)', async 
   await expect.poll(() => page.evaluate(() => document.getElementById('capture').getBoundingClientRect().top)).toBeLessThan(140);
 });
 
+// The jump used to unfold by removing classes itself: the chevron still said "collapsed", and the scroll spy, never
+// told, kept the heading out of its list of visible headings.
+test('a linked node unfolds a folded section as the outline does: its chevron, the outline and the rail agree (issue 14)', async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  const filler = 'Line of text that fills the section. '.repeat(40);
+  await renderSource(page, `# Guide\n\n## Overview\n\n\`\`\`mermaid\ngraph LR\n  Install --> Usage\n\`\`\`\n\n## Setup\n\n${filler}\n\n### Install\n\n${filler}\n\n${filler}\n\n## Usage\n\n${filler}\n\n## Notes\n\n${filler}\n\n${filler}\n`);
+  const chevron = page.locator('#setup > .section-toggle');
+  await page.locator('#setup').hover();
+  await chevron.click();
+  await expect(chevron).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('#install')).toBeHidden();
+
+  await page.locator('#mdBody .mdv-node-link[data-mdv-section="install"]').click();
+  await expect(page.locator('#install')).toBeVisible();
+  await expect(chevron).toHaveAttribute('aria-expanded', 'true');
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('install');
+  await expect.poll(() => page.evaluate(() => document.querySelector('#tocList .toc-link.active')?.textContent)).toBe('Install');
+  await expect.poll(() => page.evaluate(() => [...document.querySelectorAll('#mdBody .minimap-segment.active')].map((s) => s.dataset.targetId)))
+    .toEqual(['setup']);
+});
+
 // ---------------------------------------------------------------------------------------------
 // Issue 15: frontmatter abbreviations
 // ---------------------------------------------------------------------------------------------
