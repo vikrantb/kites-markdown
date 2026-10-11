@@ -54,6 +54,7 @@ Before a document is loaded, the body shows a welcome screen with a drop zone, a
 | **Search** | Search (Ctrl+K) | Opens the search overlay. | `openSearch` |
 | Link icon | All links | Opens the links panel. Shown after a document loads. | `toggleLinksPanel` |
 | **Listen** | Read aloud | Opens the read-aloud player. Shown after a document loads. | `ttsToggle` |
+| Share icon | Export and copy | A menu: **Export HTML**, **Print / Save as PDF**, **Copy as rich text**, **Copy link to this section** (see [Export and copy](#export-and-copy)). Shown after a document loads. | `mdvExportHtml`, `mdvPrintDocument`, `mdvCopyRichText`, `mdvSectionLinkAction` |
 | Speech-bubble icon with a badge | Comments (Ctrl+Shift+C) | Opens the comments sidebar. The badge counts open (unresolved) threads. Shown after a document loads. | `mdvToggleSidebar`, `mdvRenderSidebar` |
 | File-plus icon | Open .md / set save location (Chromium) | Opens a file with write access. If a file is already loaded without a save location, links it to its file (an Open dialog; a Save dialog for pasted text) instead. | `mdvOpenOrSetSaveLocation` |
 | Folder icon | Set workspace folder | Asks once for a folder. Files from that folder can then be saved without further prompts. | `mdvPickWorkspace` |
@@ -364,13 +365,16 @@ The viewer also renders task lists, footnotes, definition lists, `==highlight==`
 
 ### Printing
 
-The print stylesheet (`@media print`) hides the toolbar, table of contents, minimap, scroll buttons, progress bar, search and shortcuts overlays, read-aloud player, settings panel, comments sidebar, lightbox, copy buttons and fold toggles, and sets the body text to 11pt.
+Two stylesheets print a document: the print block of `css/viewer.css` (the palette, the tables) and `css/print.css` (what prints, and where pages break). They apply however printing starts: the Export menu's **Print / Save as PDF**, the browser's own Print command (`Ctrl/Cmd+P`), or printing an exported page. What [Print / Save as PDF](#print--save-as-pdf) adds is described there.
 
+- Only the document prints. Everything around the reading column is hidden, not a list of known controls, so the toolbar, outline, section rail, menus, toasts, notices, sidebars and players stay off the paper, and so would a panel a later feature adds. Folded sections print unfolded; the "#" permalinks, comment chips, Copy buttons and fold chevrons do not print.
+- A title header opens the first page: the document's title (its first heading), the file's name and the date (`#mdvPrintHeader`, kept beside the document by `js/export.js`). While printing, the page's title is the document's, so a saved PDF is named after it.
 - Paper always gets the light palette, all of it (text, code, callouts, links), even from Sepia or Dark: the sepia and dark page tokens apply on screen only. Text prints in #111.
-- A table that scrolls inside its own box on screen is a plain table on paper: every row prints, across as many pages as it needs, with its header repeated and no row split.
-- Code blocks, diagrams, callouts and figures are kept whole across pages.
-- A diagram keeps the palette it was drawn in, and its card is printed with it (`print-color-adjust: exact`) even when the browser's "background graphics" option is off, so a diagram drawn in the dark theme prints as a dark card, readable. To print it light, switch to the light theme first.
-- `tests/e2e/visuals-print.spec.mjs` checks each theme under print media and a 60-row table in a real PDF.
+- Each `h1` after the first starts a new page. No heading ends a page, and neither does a line that introduces a block ("The release script:" before its code).
+- Tables, code blocks, diagrams, callouts, quotes, figures, display math and link cards are kept whole when they fit on a page. A table that does not fit flows across pages, as a plain table: every row prints, with its header repeated and no row split. Long code lines wrap instead of running off the paper.
+- A web link prints its address after its words, and a mail link its address (`data-mdv-print-url`, set after each render), unless the words already are the address.
+- A diagram keeps the palette it was drawn in, and its card is printed with it (`print-color-adjust: exact`) even when the browser's "background graphics" option is off, so a diagram drawn in the dark theme prints as a dark card, readable. **Print / Save as PDF** from the menu draws diagrams in the light palette first.
+- `tests/e2e/visuals-print.spec.mjs` checks each theme under print media and a 60-row table in a real PDF; `tests/e2e/export.spec.mjs` checks, in each theme, that only the document and its title header print and where pages break.
 
 ### Narrow screens
 
@@ -378,6 +382,44 @@ The print stylesheet (`@media print`) hides the toolbar, table of contents, mini
 - At 760 px or less, the fold toggles sit at the end of the heading's first line instead of in the left margin, so a wrapped heading's lines keep the text's left edge.
 - At 600 px or less, padding and heading sizes shrink, and the toolbar keeps its essentials: page width, focus mode, fold-all and the two save-location buttons (which need the File System Access API that phone browsers lack) are hidden, and so is the file name (the title heading names the document). The text-size control stays, without its size label. The floating scroll buttons are not shown. At 390 px nothing scrolls sideways (`tests/e2e/visuals.spec.mjs`, `tests/e2e/visuals-layout.spec.mjs`).
 - When the comments sidebar is open on a screen 1100 px wide or less, it overlays the content instead of pushing it aside.
+
+---
+
+## Export and copy
+
+The share icon in the toolbar opens the Export menu, which holds four actions (`js/export.js`, `js/copy.js`, `js/section-links.js`). Each starts from the document as you see it (`js/snapshot.js`): diagrams already drawn, math already typeset, nothing rendered again. Every action is a button, so the menu works from the keyboard. `tests/e2e/export.spec.mjs` covers each one, in a browser and with the desktop app's stand-in shell.
+
+### Export HTML
+
+Saves the document as **one HTML file that needs nothing else**, named after the source file (`kitchen-sink.md` becomes `kitchen-sink.html`). In the browser it is a download; in the desktop app on a Mac a Save panel asks where it goes (on Windows, WebView2's own download flow saves it).
+
+- **Styles:** the viewer's own stylesheets, inlined, in the theme on screen, at the reading size you chose. The web fonts are left out (the page falls back to system fonts, as the desktop app does); KaTeX's fonts are embedded, only the faces the document's math uses.
+- **Diagrams** are the SVG already drawn; a node that goes to a section is still a link. **Math** is KaTeX's HTML, with its MathML.
+- **Images:** a local image becomes a data: URI, read next to the document (its `?file=` address over http, the open folder in the browser, or the image the desktop window shows). An image on the web keeps its address. An image that cannot be read is replaced by a visible note that names it, and the confirmation says how many there were.
+- **Nothing runs:** no script, no `on…` attribute and no `javascript:` link (removed even if one slipped past the sanitizer), and a Content Security Policy that would refuse a script anyway. The viewer's controls (fold chevrons, Copy buttons, the section rail, comment chips) and every HTML comment (comment threads, anchors, narration) are left out. The title is the document's first heading.
+- **From a page opened as a file (`file://`)** the browser does not let the page read its own stylesheets, so the export carries portable inline styles instead (the ones rich-text copy uses) and shows math as MathML. The confirmation says so. *(Tested in Chrome.)*
+
+### Print / Save as PDF
+
+Opens the browser's print dialog, where **Save as PDF** is one of the destinations (`mdvPrintDocument`). From Sepia or Dark, it first draws the diagrams again in the light palette, so the whole page prints light, and puts your theme back when the dialog closes. What prints and where pages break is described under [Printing](#printing). In the desktop app the page's `window.print()` reaches the native print panel through Tauri's webview print command (on a Mac; WebView2 prints by itself on Windows); the app's capability file allows it. *(The desktop print panel was not exercised by an automated test.)*
+
+### Copy as rich text
+
+Copies the selection, or the whole document when nothing in it is selected, as both HTML and plain text, so it pastes formatted into email and document editors and as clean text everywhere else (`mdvCopyRichText`).
+
+- **HTML** carries its styles inline, in the light palette whatever the theme (mail and document editors are white and ignore stylesheets): code keeps a monospace font and its colours, tables their borders, callouts their colour bar. Colours are plain hex.
+- **A selection inside a block** keeps what made it one: a word copied from a code block is still code, a cell is still in a table.
+- **Diagrams** become PNG images, in Chrome and in the desktop app's WebKit alike (checked in the real app on a Mac); a browser that will not let a page draw a diagram on a canvas gets SVG images instead. Formulas become MathML. Local images are embedded as data: URIs. Link cards become plain links, checkboxes ☐/☑, and a `<details>` block its summary in bold and its content. The viewer's controls, comment chips and HTML comments are left out.
+- **Plain text** keeps the shape: `- ` and `1. ` list markers, `[x]` task items, `> ` quotes, tab-separated table cells (they paste into a spreadsheet as cells), `$TeX$` for math, `2^10` for superscripts, the address of a web link after its words, and `[Diagram: Flowchart]` where a diagram was.
+- It uses the asynchronous clipboard (`navigator.clipboard.write`), which needs a secure context; elsewhere it falls back to the copy command, with diagrams as SVG images.
+
+### Copy link to this section
+
+Each heading's **#** (shown when you hover the heading) copies the address of its section instead of jumping there; the address bar shows it too, so Back returns. The Export menu's **Copy link to this section** copies the section you are reading (the outline's current heading), for the keyboard.
+
+- **In a browser** the address is the page's own with the section as its fragment: `markdown-viewer.html?file=notes/plan.md#risks`. Opened, the document loads and goes to that section: folded sections around it unfold, a closed `<details>` opens, and the section stays at the top while the diagrams above it are drawn, until you scroll (`mdvGoToFragmentAfterRender`).
+- **In the desktop app** the address is the document's path with the fragment, percent-encoded (`/home/me/notes/plan.md#risks`): written as a link in a document, the app follows it, to that section when it is the same document. A `file:` URL cannot be such a link (markdown-it and the sanitizer drop `file:` links), so a Windows document, whose drive-letter paths are dropped the same way, gets its `file:` URL, for other programs. A link to a section of *another* document opens that document at its top for now: the desktop's link handling (`js/host.js`) opens a new window without the fragment.
+- Only the permalinks the viewer made for this render copy anything: a "#" that a document writes in its own HTML stays a plain link.
 
 ---
 
@@ -488,6 +530,8 @@ All reading features use standard web APIs. Saving to disk is the one area that 
 | Saving comments | as above | In place, with a check that the file did not change on disk | Downloads a copy when you press `Ctrl/Cmd+S` (`mdvDownloadFallback`); a change never downloads by itself | Same as Firefox |
 | Read aloud | Web Speech API `speechSynthesis` | Yes, with a 12-second pause/resume keep-alive for a Chrome cut-off bug (`ttsStartKeepAlive`) | Yes *(not tested)* | Yes *(not tested)* |
 | Copy buttons | `navigator.clipboard.writeText` | Yes in a secure context | *(not tested)* | *(not tested)* |
+| Export HTML | `Blob`, a download link; `CSSStyleSheet.cssRules` | Yes; from `file://` with portable styles | *(not tested)* | *(not tested)* |
+| Copy as rich text | `navigator.clipboard.write` with `ClipboardItem`; else `document.execCommand('copy')` | Yes in a secure context, with PNG diagrams | *(not tested)* | *(not tested in Safari)*; the desktop app's WebKit draws PNG diagrams |
 
 Notes:
 
