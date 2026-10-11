@@ -1400,11 +1400,13 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
 }
 .section-minimap:not(.is-track) .minimap-segment:hover::before { background: var(--bg-hover); color: var(--text-primary); }
 .section-minimap:not(.is-track) .minimap-segment.active::before { color: var(--accent-strong); }
-/* Track mode: the bars only, on ::before; the current one is taller, and so is the one under the pointer. */
+/* Track mode: the bars only, on ::before. They thicken as they are read: a hairline ahead, a bar once read, and the
+   current one tallest (and the one under the pointer), so an unread document reads as a ruler, not an empty bar. */
 .section-minimap.is-track .minimap-segment::before {
-  content: ''; height: 4px; padding: 0; border-radius: 4px;
+  content: ''; height: 3px; padding: 0; border-radius: 4px;
   background: linear-gradient(to right, var(--fill) calc(var(--p) * 100%), var(--rest) 0);
 }
+.section-minimap.is-track .minimap-segment.passed::before { height: 5px; }
 .section-minimap.is-track .minimap-segment.active::before { height: 7px; }
 .section-minimap.is-track .minimap-segment:hover::before { height: 7px; }
 .section-minimap.is-track .minimap-segment:not(.active):not(.passed):hover::before {
