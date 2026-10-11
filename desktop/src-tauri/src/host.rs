@@ -10,7 +10,7 @@ use tauri::{AppHandle, Manager, State, WebviewWindow};
 use crate::error::HostError;
 use crate::fsio::{self, Fingerprint, Loaded, SaveOutcome, Version};
 use crate::state::AppState;
-use crate::{default_app, dialogs, doc_windows, paths, selftest};
+use crate::{default_app, dialogs, doc_windows, folders, paths, selftest};
 
 /// A document as the page receives it.
 #[derive(Debug, Clone, Serialize)]
@@ -180,6 +180,30 @@ pub async fn mdv_open_dialog(app: AppHandle, window: WebviewWindow) -> Result<()
     doc_windows::open_paths(&handle, files, Some(label));
   });
   Ok(())
+}
+
+/// The Markdown files under a folder, for the file sidebar: never `.git`, `node_modules` or another
+/// dot-folder, at most 5,000 files and 8 folders deep (`folders::LIMITS`). Like reading, listing opens
+/// nothing, watches nothing and permits no save. The walk runs off the async runtime's threads.
+#[tauri::command]
+pub async fn mdv_list_directory(root: String) -> Result<folders::FolderListing, HostError> {
+  let root = folders::folder(Path::new(&root))?;
+  tauri::async_runtime::spawn_blocking(move || folders::list_markdown(&root, folders::LIMITS))
+    .await
+    .map_err(|e| HostError::new("io", format!("The folder could not be listed: {e}")))
+}
+
+/// Shows the folder panel and returns the chosen folder, or `None` when the person cancels.
+#[tauri::command]
+pub async fn mdv_choose_folder(app: AppHandle, window: WebviewWindow) -> Result<Option<String>, HostError> {
+  let (sender, receiver) = std::sync::mpsc::channel();
+  dialogs::pick_folder(&app, Some(window.label().to_owned()), move |folder| {
+    let _ = sender.send(folder);
+  });
+  let picked = tauri::async_runtime::spawn_blocking(move || receiver.recv().ok().flatten())
+    .await
+    .map_err(|e| HostError::new("io", format!("The folder panel failed: {e}")))?;
+  Ok(picked.map(|p| paths::display_path(&p)))
 }
 
 /// Opens a Markdown file (a link in a document) in its own window, or focuses the window that

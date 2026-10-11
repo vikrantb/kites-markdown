@@ -13,6 +13,7 @@ mod default_app;
 mod dialogs;
 mod doc_windows;
 mod error;
+mod folders;
 mod fsio;
 mod host;
 #[cfg(target_os = "macos")]
@@ -87,6 +88,8 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
       host::mdv_initial_document,
       host::mdv_read_document,
+      host::mdv_list_directory,
+      host::mdv_choose_folder,
       host::mdv_save_document,
       host::mdv_window_holds_text,
       host::mdv_open_dialog,

@@ -111,6 +111,7 @@ pnpm --dir desktop dev              # run it from source while you work on it
   ```bash
   node desktop/scripts/run-self-test.mjs --doc samples/kitchen-sink.md --save-probe --expect render,kitchen-sink,save
   node desktop/scripts/run-self-test.mjs --doc desktop/tests/fixtures/linked/doc.md --expect render,assets
+  node desktop/scripts/run-self-test.mjs --doc tests/fixtures/folder/README.md --expect render,folder
   ```
 
   On a Mac it then unregisters the build folder from Launch Services (`--keep-registration` keeps it), so a
@@ -142,6 +143,7 @@ js/host.js                                   the bridge in the page: window.mdvH
 | `doc_windows.rs` | One window per document: open, focus, reuse an empty window, reload, drop |
 | `host.rs` | The `mdv_*` commands the page calls |
 | `paths.rs` | Which paths are documents: existing Markdown files, canonicalized |
+| `folders.rs` | A folder's Markdown files for the folder sidebar (`mdv_list_directory`): breadth first, never into `.git`, `node_modules` or a dot-folder, never through a link to a folder, at most 5,000 files, 8 folders deep and 100,000 entries looked at |
 | `fsio.rs` | Reading (UTF-8, byte-order mark, size limit) and the atomic, conflict-checked save |
 | `registry.rs` | Which window shows which file, and which versions of it the page has seen |
 | `watch.rs` | Live reload: a folder watch per document, debounced, ignoring the app's own saves |
@@ -167,6 +169,8 @@ its own start waits for `DOMContentLoaded`. Read it when you use it, never while
 | `kind`, `currentPath`, `currentMtimeMs`, `currentVersion` | `'desktop'` or `'browser'`; the window's file, and the time and version token of the version on screen |
 | `initialDocument()` | the window's document `{path, name, text, mtimeMs, version, readOnly}`, or `null` (welcome screen) |
 | `readDocument(path)` | any Markdown file; rejects with `{code, message}` |
+| `listDirectory(root)` | the Markdown files under a folder, for the folder sidebar: `{root, name, entries: [{path, rel, name, depth, size, mtimeMs}], truncated, unreadable}`; rejects with `{code, message}` (`not-found`, `not-a-directory`, `io`) |
+| `chooseFolder()` | the native folder panel: the chosen folder's path, or `null` |
 | `saveDocument(path, text, expectedMtimeMs)` | `{ok:true, mtimeMs, version}` or `{ok:false, reason:'conflict' \| 'not-allowed' \| 'io', currentMtimeMs?, currentVersion?, message}`; never rejects |
 | `openPath(path)`, `openDialog()` | open a Markdown file (or focus its window); the native Open panel |
 | `openExternal(url)` | `http:`, `https:` and `mailto:` only, in the default app |
@@ -209,8 +213,11 @@ included), counts what rendered, checks that the bridge refuses what it must, ea
 save into an existing sibling file, naming that file's real version, must be refused as `not-allowed`
 and leave the file unchanged), calls `confirm()` and `alert()` on macOS (the shell answers them without
 showing anything in this mode, and must have), optionally saves, edits the file "from outside" and saves
-a stale version (expecting live reload and a conflict), and finally renders a document with an `onerror`
-handler to prove it does not run. The shell adds the window title and the asset scope, writes the JSON
+a stale version (expecting live reload and a conflict), lists the document's folder through `mdv_list_directory` and
+opens the folder sidebar on it (`--expect folder` checks the listing of `tests/fixtures/folder` against its
+`expected.json`, with a `.git` and a `node_modules` folder added), and finally renders a document with an `onerror`
+handler to prove it does not run. It puts back what the viewer remembers between launches (recent documents, the
+folder) before it reports, so a run leaves nothing behind in the installed app. The shell adds the window title and the asset scope, writes the JSON
 and exits 0 or 1 (1 after 60 s without a report, and 1 if the report cannot be written).
 
 **CI** (`.github/workflows/desktop.yml`) builds a universal macOS app and a Windows x64 installer with a
@@ -234,6 +241,9 @@ to run script, and the page must not be able to reach beyond its own document.
 2. **The page's only door is the bridge.** A window may call Tauri's core functions and the `mdv_*`
    commands, nothing else: no file-system, shell, opener or dialog API. Each command checks its input:
    - reading and opening accept only existing files with a Markdown extension (after resolving links);
+   - listing a folder (the folder sidebar) accepts only an existing folder, canonicalized, and returns only the names,
+     sizes and times of the Markdown files under it, within the limits above; like reading, it opens nothing,
+     watches nothing and permits no save;
    - saving accepts only the calling window's own file, and only over the exact version (the bytes) the
      page's text was made from;
    - external links accept only `http:`, `https:` and `mailto:`.
@@ -281,4 +291,5 @@ document was opened.
 - **Fonts:** the app uses the viewer's fallback fonts (system fonts): it loads nothing from the internet, so
   the web fonts the browser build uses are left out.
 - **Not in v1:** tabs, Quick Look previews, a document icon of its own for `.md` files, an "Open Recent"
-  menu, and printing from the menu.
+  entry in the native menu bar (the recent documents are in the toolbar's clock menu and on the welcome screen), and
+  printing from the menu.

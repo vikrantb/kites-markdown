@@ -10,6 +10,20 @@
   if (window.__mdvSelfTestStarted) return;
   window.__mdvSelfTestStarted = true;
 
+  // What the viewer remembers between launches lives in the app's localStorage, which the installed app on this
+  // machine shares. It is read now, before the page's scripts run, and put back before the report, so a self-test
+  // leaves no recent documents or folder state behind.
+  const REMEMBERED = ['mdv-recents', 'mdv-folder', 'mdv-folder-panel'];
+  const remembered = {};
+  try { for (const key of REMEMBERED) remembered[key] = localStorage.getItem(key); } catch (_) { /* storage off */ }
+  function restoreRemembered() {
+    try {
+      for (const key of REMEMBERED) {
+        if (remembered[key] == null) localStorage.removeItem(key); else localStorage.setItem(key, remembered[key]);
+      }
+    } catch (_) { /* storage off */ }
+  }
+
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const call = (command, args) => window.__TAURI__.core.invoke(command, args || {});
   const clip = (s, n) => (String(s).length > (n || 200) ? String(s).slice(0, n || 200) + '…' : String(s));
@@ -106,6 +120,41 @@
     attempt.siblingUnchanged = !!after && after.text === before.text;
     attempt.refused = attempt.refused && attempt.siblingUnchanged;
     return attempt;
+  }
+
+  // The folder sidebar, end to end in the real app: the shell's mdv_list_directory lists the document's folder (the
+  // runner adds a .git and a node_modules folder to it for --expect folder), refuses a file, and the sidebar draws
+  // the listing with the document marked.
+  async function probeFolder(host) {
+    const path = host.currentPath || '';
+    const root = path.replace(/[\\/][^\\/]*$/, '');
+    const out = { root };
+    try {
+      const listing = await call('mdv_list_directory', { root });
+      out.listed = listing.entries.map((e) => e.rel);
+      out.truncated = listing.truncated;
+      out.unreadable = listing.unreadable;
+    } catch (e) {
+      out.error = clip((e && (e.message || e.code)) || e);
+    }
+    try {
+      await call('mdv_list_directory', { root: path });
+      out.fileRefused = { refused: false, code: 'accepted' };
+    } catch (e) {
+      out.fileRefused = { refused: !!e && e.code === 'not-a-directory', code: e && e.code };
+    }
+    if (typeof mdvTreeToggle === 'function' && typeof mdvFolderState === 'object') {
+      if (!mdvTreeShown()) await mdvTreeToggle();
+      await waitFor(() => mdvFolderState.kind && !mdvFolderState.loading, 15000, 'the folder sidebar').catch(() => null);
+      const current = document.querySelector('#mdvFolderTree .is-current');
+      out.sidebar = {
+        files: document.querySelectorAll('#mdvFolderTree [data-path]').length,
+        current: current ? current.dataset.path : null,
+        status: (document.getElementById('mdvFolderStatus') || {}).textContent || '',
+      };
+      mdvTreeShow(false);
+    }
+    return out;
   }
 
   // alert() and confirm() must reach a dialog. WebKit answers confirm() false by itself unless the shell
@@ -220,6 +269,7 @@
       };
       report.log = before;
       report.bridge = await probeBridge(host);
+      report.folder = await probeFolder(host);
       report.dialogs = options.dialogProbe ? probeDialogs() : { probed: false };
       report.save = options.saveProbe ? await probeSave(host) : null;
       report.sanitization = await probeSanitization();
@@ -247,6 +297,7 @@
       f.push('the bridge did not refuse as it must: ' + wrong.map(([k, v]) => `${k} (${v.missing || `${v.code || 'accepted'}, expected ${v.expected}`})`).join(', '));
     }
     if (report.dialogs && report.dialogs.probed && report.dialogs.confirmReturned !== true) f.push('confirm() did not reach a dialog');
+    if (report.folder && report.folder.error) f.push('the document\'s folder could not be listed: ' + report.folder.error);
     if (report.save && !report.save.ok) f.push('saving or live reload failed: ' + Object.entries(report.save.checks).filter(([, v]) => !v).map(([k]) => k).join(', '));
     if (report.sanitization) {
       if (report.sanitization.executed) f.push('script in a document ran');
@@ -254,12 +305,14 @@
     }
     report.ok = f.length === 0;
     report.totalMs = Math.round(performance.now() - started);
+    restoreRemembered();
     await host.reportSelfTest(report);
   }
 
   const begin = () => run().catch((e) => {
     const host = window.mdvHost;
     const failure = { ok: false, failures: ['self-test crashed: ' + clip(e && e.stack ? e.stack : e, 600)] };
+    restoreRemembered();
     if (host && host.reportSelfTest) host.reportSelfTest(failure);
   });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', begin);

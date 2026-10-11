@@ -8,6 +8,8 @@
     "core:event:default",
     "allow-mdv-initial-document",
     "allow-mdv-read-document",
+    "allow-mdv-list-directory",
+    "allow-mdv-choose-folder",
     "allow-mdv-save-document",
     "allow-mdv-window-holds-text",
     "allow-mdv-open-dialog",

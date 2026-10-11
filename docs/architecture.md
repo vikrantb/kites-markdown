@@ -28,7 +28,9 @@ Related documents:
 > [!NOTE]
 > Since the split into files, the styles live in `css/viewer.css` and the script in the `js/*.js` files, concatenated in load order. Line numbers in this document refer to the pre-split single file and are kept for orientation: find a function by name. The script order is listed in `../CLAUDE.md`.
 >
-> The last script, `js/host.js`, is the desktop bridge: `window.mdvHost`. In a browser it is a no-op. In the desktop app it renders the window's document, wraps `renderMarkdown` to load relative images through the asset protocol, handles link clicks and live reload, and routes saves to the shell. See [desktop.md](desktop.md).
+> `js/folder.js` and the five scripts after it (`folder-tree`, `recents`, `quick-open`, `folder-search`, `link-preview`) are a folder of documents: `window.mdvFolder`, the folder sidebar, recent documents, quick open, search in files and link previews ([features.md](features.md#a-folder-of-documents)). They load after `host.js` and before `app.js`, add their keyboard rows to `MDV_SHORTCUTS` once every script has loaded, follow every render with one `MutationObserver` on `#mdBody` (`mdvFolderNoteShown`), and show documents only through `mdvOpenDocument`.
+>
+> The script before them, `js/host.js`, is the desktop bridge: `window.mdvHost`. In a browser it is a no-op. In the desktop app it renders the window's document, wraps `renderMarkdown` to load relative images through the asset protocol, handles link clicks and live reload, and routes saves to the shell. See [desktop.md](desktop.md).
 
 ## 1. The shape of the program
 
@@ -518,7 +520,8 @@ stays text.
 | Mod+B | Not while typing | Toggle TOC (slide-in panel at widths of 900px or less) | `app.js`: `toggleToc` |
 | Mod+`\` | Same | Toggle full page width | `app.js`: `toggleWidth` |
 | Mod+`.` | Same | Toggle focus mode | `app.js`: `toggleFocus` |
-| Mod+Shift+F | Same | Fold or unfold all sections | `app.js`: `toggleAllSections` |
+| Mod+Shift+F | Same | Search in files while the folder sidebar is shown; otherwise fold or unfold all sections | `folder-search.js` (its row comes before `app.js`'s): `mdvXsOpen` / `toggleAllSections` |
+| Mod+P | Same; inside quick open it closes it | Go to a file (quick open) | `quick-open.js`: `mdvQoToggle` |
 | Mod+Shift+R | Same | Show or close the read-aloud player | `app.js`: `ttsToggle` |
 | Mod+O | Same | Open the file picker (`#fileInput`) | `app.js` |
 | `?` (no Mod) | Same; inside the shortcuts sheet it closes it | Toggle the shortcuts sheet | `app.js`: `toggleShortcuts` |
@@ -566,6 +569,9 @@ Notes:
 | `mdv-basepath` | string, a trailing `/` is added | `toggleSettings` (fills the input), `loadFromUrl` (second fetch candidate) | `saveBasePath` |
 | `mdv-author-name` | string, default `You` | comment state init (3510) | **nothing**: no UI or code path writes it |
 | `mdv-tts-rate` | `0.75` … `2`; anything else means 1x | read-aloud state init (`mdvStoredRate`) | `ttsCycleSpeed` |
+| `mdv-folder-panel` | `open` / `closed`: the folder sidebar | `folder-tree.js` at load, `mdvFolderRestore` | `mdvTreeShow` |
+| `mdv-folder` | desktop app: the folder chosen for the sidebar | `mdvFolderDesktopDefault` | `mdvFolderRemember` |
+| `mdv-recents` | desktop app: the recent documents, `[{kind: 'path', name, path, folder, at}]` | `mdvRecentsLoad` | `mdvRecentsSave` |
 
 Apart from `mdv-tts-rate`, none of these accesses is wrapped in `try/catch`. If storage throws, for
 example when site data is blocked, the reads at lines 1750–1751 stop the whole script (inferred).
@@ -576,6 +582,8 @@ example when site data is blocked, the reads at lines 1750–1751 stop the whole
 |---|---|---|---|---|
 | `mdv-viewer` (`MDV_DB`) | 1 | `handles` (`MDV_STORE`, out-of-line keys) | `current` | `FileSystemFileHandle` of the last writable file |
 | | | | `workspace` | `FileSystemDirectoryHandle` of the workspace folder |
+| | | | `folder` | `FileSystemDirectoryHandle` of the folder in the folder sidebar (`mdvFolderRemember`, `mdvFolderRestore`) |
+| | | | `mdv-recents` | the recent documents, `[{kind: 'handle', name, path, handle, folder, at}]` (`mdvRecentsSave`) |
 
 - Opened by `mdvOpenDb`, which creates the store in `onupgradeneeded`.
 - `mdvPutHandle(key, handle)` writes. Callers: `readFile` (`current`, on a workspace match),

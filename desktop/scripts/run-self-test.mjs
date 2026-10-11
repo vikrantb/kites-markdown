@@ -28,7 +28,10 @@
 // probe passed), no-inline-handlers (none left for the app's CSP to block), types (macOS: every extension
 // the app claims resolves to a Markdown type, not an anonymous dyn.* type that no app claims, and the app
 // is among the apps that can open that type; launch with open or default, so Launch Services has
-// registered the build).
+// registered the build); folder (the document's folder, with a .git and a node_modules folder added to the scratch
+// copy, is listed by mdv_list_directory exactly as tests/fixtures/folder/expected.json says, a file is refused as
+// not a folder, and the sidebar draws the listing with the document marked; use it with
+// --doc tests/fixtures/folder/README.md).
 import { spawn, execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -58,6 +61,10 @@ function findApp() {
   return existsSync(exe) ? exe : null;
 }
 
+// The folder fixture's expectations, shared with the browser tests (tests/e2e/folder.spec.mjs).
+const FOLDER_EXPECTED = JSON.parse(readFileSync(join(desktop, '..', 'tests', 'fixtures', 'folder', 'expected.json'), 'utf8'));
+const SIBLING = 'kites-self-test-sibling.md';
+
 function programOf(app) {
   return app.endsWith('.app') ? join(app, 'Contents', 'MacOS', 'kites-markdown') : app;
 }
@@ -74,7 +81,14 @@ function scratchCopy(doc) {
   if (basename(folder) === 'samples') cpSync(doc, join(copyFolder, basename(doc)));
   else cpSync(folder, copyFolder, { recursive: true });
   if (existsSync(outside)) cpSync(outside, join(scratch, 'work', 'outside.png'));
-  writeFileSync(join(copyFolder, 'kites-self-test-sibling.md'), '# A sibling of the document\n\nThe self-test must not be able to save into this file.\n');
+  writeFileSync(join(copyFolder, SIBLING), '# A sibling of the document\n\nThe self-test must not be able to save into this file.\n');
+  // Folders the sidebar must skip, which git cannot hold (.git) or ignores (node_modules).
+  if (checks.includes('folder')) {
+    for (const [rel, text] of Object.entries(FOLDER_EXPECTED.addedAtRunTime)) {
+      mkdirSync(dirname(join(copyFolder, rel)), { recursive: true });
+      writeFileSync(join(copyFolder, rel), text);
+    }
+  }
   return { scratch, doc: join(copyFolder, basename(doc)) };
 }
 
@@ -209,6 +223,17 @@ function verify(report, exitCode) {
         const unclaimed = types.filter((t) => t.claimed === false).map((t) => `.${t.ext} (${t.type})`);
         want(unclaimed.length === 0, `extensions whose type the app does not claim, so it is not offered for them: ${unclaimed.join(', ')}`);
       }
+    } else if (check === 'folder') {
+      const f = v.folder || {};
+      const expected = FOLDER_EXPECTED.listed.concat(SIBLING).sort();
+      const listed = Array.isArray(f.listed) ? f.listed.slice().sort() : null;
+      want(!f.error, `mdv_list_directory failed: ${f.error}`);
+      want(!!listed && listed.join('\n') === expected.join('\n'), `the folder listed ${JSON.stringify(f.listed)}, expected ${JSON.stringify(expected)}`);
+      want(f.truncated === false && f.unreadable === 0, `the listing was cut short (truncated ${f.truncated}) or missed folders (unreadable ${f.unreadable})`);
+      want(f.fileRefused && f.fileRefused.refused === true, `listing a file instead of a folder was not refused as not-a-directory (${f.fileRefused && f.fileRefused.code})`);
+      want(f.sidebar && f.sidebar.files === expected.length, `the sidebar drew ${f.sidebar && f.sidebar.files} files, expected ${expected.length}`);
+      const caseless = (p) => (report.app && report.app.os !== 'linux' ? String(p).toLowerCase() : String(p));
+      want(f.sidebar && typeof f.sidebar.current === 'string' && caseless(f.sidebar.current) === caseless(v.path), `the sidebar did not mark the document: ${f.sidebar && f.sidebar.current} (document ${v.path})`);
     } else if (check === 'no-inline-handlers') {
       const h = v.inlineHandlers || {};
       want(h.count === 0, `${h.count} inline event handlers remain, and the app's CSP blocks them: ${(h.examples || []).join(', ')}`);
@@ -231,6 +256,7 @@ function summary(report) {
     `dialogs: ${v.dialogs && v.dialogs.probed ? `confirm() returned ${v.dialogs.confirmReturned}; the shell answered ${(report.dialogs && report.dialogs.answeredByShell || []).length}` : 'not probed on this platform'}`,
     `save probe: ${v.save ? JSON.stringify(v.save.checks) : 'not run'}`,
     `inline handlers left: ${v.inlineHandlers ? v.inlineHandlers.count : '?'}`,
+    `folder: ${v.folder ? (v.folder.error ? `error: ${v.folder.error}` : `listed ${(v.folder.listed || []).length} (truncated ${v.folder.truncated}), a file refused as ${v.folder.fileRefused && v.folder.fileRefused.code}, sidebar ${v.folder.sidebar ? `${v.folder.sidebar.files} files, current ${v.folder.sidebar.current}` : 'not drawn'}`) : 'not probed'}`,
     `console errors ${(v.log && v.log.consoleErrors.length) ?? '?'}, page errors ${(v.log && v.log.pageErrors.length) ?? '?'}, CSP violations while rendering ${(v.log && v.log.cspViolations.length) ?? '?'}`,
     `window title: ${report.document && report.document.windowTitle}; default handler: ${report.defaultHandler || 'n/a'}`,
     `file types: ${Array.isArray(report.fileTypes) ? report.fileTypes.map((t) => `.${t.ext} ${t.markdown && t.claimed !== false ? '✓' : '✗'} ${t.type}${t.claimed === false ? ' (not claimed)' : ''}`).join(', ') : 'n/a'}`,

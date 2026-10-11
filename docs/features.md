@@ -42,6 +42,8 @@ Before a document is loaded, the body shows a welcome screen with a drop zone, a
 
 | Control | Tooltip | What it does | Implementing function |
 |---|---|---|---|
+| Folder icon (left edge) | Files in a folder | Shows or hides the [folder sidebar](#a-folder-of-documents); with no folder open, opens one first. Hidden at 600 px or less, with the clock icon: phone browsers cannot list a folder. | `mdvTreeToggle`, `mdvFolderOpen` |
+| Clock icon | Recent documents | The [recent documents](#recent-documents) menu, with **Clear the list**. | `mdvRecentsOpenMenu` |
 | Title | — | Shows the file name. | `renderMarkdown` |
 | Breadcrumb | — | Shows the file path if the title contains `/`. When you scroll, it shows the current heading. Hidden at 900 px wide or less. | `renderMarkdown`, `setupScrollSpy` |
 | Reading meta | — | Word count and estimated minutes at 230 words per minute. Hidden at 900 px wide or less. | `renderMarkdown` |
@@ -106,6 +108,106 @@ These two buttons only matter for comments:
 
 - **File-plus icon** (`mdvOpenOrSetSaveLocation`). With no document loaded, it opens a writable file. With a document that has no writable handle and was read from a file (opened with Open, by drag and drop or through `?file=`), it opens an **Open** dialog: pick that same file, and the first save checks that it still holds the version you opened (a file changed since, or a different file, gets a conflict notice instead of being overwritten). Pasted text gets a **Save As** dialog and is written into that new file straight away. Unsaved comment changes are saved straight away too. In browsers without the File System Access API, and for a file whose comments are read-only, it opens the file chooser.
 - **Folder icon** (`mdvPickWorkspace`). You pick a folder once with read-write permission. The handle is stored in IndexedDB (`mdv-viewer` database, `handles` store, key `workspace`). Later, when you open a file whose name matches a file at the top level of that folder, the viewer links to it with no prompt (`mdvTryWorkspaceMatch` uses `getFileHandle(filename)`, so subfolders are not searched).
+
+---
+
+## A folder of documents
+
+For a reader of notes that live in folders of related documents (status reports, handoffs, proposals): a sidebar of
+the folder's Markdown files, quick open, search in files, recent documents and link previews. `js/folder.js` is the
+folder itself (`window.mdvFolder`); `folder-tree.js`, `quick-open.js`, `folder-search.js`, `recents.js` and
+`link-preview.js` are built on it, with their styles in `css/folder.css`. They show a document only through
+`mdvOpenDocument` (`js/files.js`). Tests: `tests/e2e/folder.spec.mjs`; the desktop app's own walk: the shell's unit
+tests (`desktop/src-tauri/src/folders.rs`) and its self-test (`--expect folder`).
+
+### Opening a folder
+
+- **Browser (Chromium):** the folder button asks for a folder with `showDirectoryPicker` (read access only). Firefox and
+  Safari cannot list a folder; the sidebar says so.
+- **Desktop app:** the folder button opens the document's own folder, or the folder you chose before when it holds the
+  document; **Open another folder…** (in the sidebar) shows the native folder panel (`mdv_choose_folder`). The shell
+  lists it (`mdv_list_directory`).
+- **What is listed:** Markdown files (`.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`, `.mdwn`, `.mdtxt`, `.mdtext`),
+  never inside `.git`, `node_modules` or any folder whose name starts with a dot. The listing stops at 5,000 files,
+  8 folders deep, or 100,000 folder entries looked at, and says so. Both builds walk the same way, breadth first, so a
+  limit keeps the files nearest the top.
+- **Remembered:** the browser keeps the folder's handle in IndexedDB (`folder`) and lists it again on the next visit
+  when the browser still allows it; otherwise the sidebar offers **Reconnect**, and the browser asks again on that click.
+  The desktop app keeps the folder's path (`mdv-folder`) and whether the sidebar was open (`mdv-folder-panel`), and a new
+  window opens with it.
+- **Kept current:** the folder is listed again when the window comes back into focus (at most every 5 s), and by the
+  sidebar's refresh button.
+
+### Folder sidebar
+
+- A panel at the left edge, before the outline (which moves over for it; at 900 px or less it slides in over the
+  page). Its header names the folder and holds **Go to a file**, **Search in files**, **refresh**, **Open another
+  folder…** and **hide**.
+- A tree of the folder's Markdown files: folders first, then files, each by name (numbers in numeric order); each
+  folder shows how many files it holds; `.md` is left off the names and other extensions are tagged. A folder of 40
+  files or fewer opens fully; a larger one opens down to the current document.
+- The document on screen is marked and kept in view, whichever way it was opened (`mdvFolderNoteShown`).
+- **Click** (or Enter) opens a file through `mdvOpenDocument`; in the desktop app **Cmd/Ctrl-click** opens it in its own
+  window, as a link does. At 900 px or less the panel closes after a pick.
+- **Filter:** typing narrows the tree to the files whose paths hold every word typed, with the words marked, and says
+  how many match. Down moves into the tree, Enter opens the first match, Esc clears it.
+- **Keyboard (WAI-ARIA tree):** one row is in the Tab order; Up and Down move, Right opens a folder (then moves into it),
+  Left closes it (then moves to its parent), Home and End, Enter or Space opens, typing a name's first letters moves
+  to it. Rows carry `role="treeitem"`, `aria-level`, `aria-setsize`, `aria-posinset`, folders `aria-expanded`, and the
+  current document `aria-selected` and `aria-current`.
+- Names from the file system are always set as text.
+
+### Quick open
+
+`Ctrl/Cmd+P`, or the sidebar's **Go to a file**: a dialog that finds a file from a few letters of its name or path. Every
+letter typed must appear in order; a path ranks higher when the letters start words, run together, or fall in the file's
+own name, and words separated by spaces must each match (`hnd ui` finds `handoffs/2026-10-08-ui.md`). With nothing
+typed it lists the recent documents first. Up and Down move, Enter opens, `Ctrl/Cmd+Enter` opens in a new window in the
+desktop app, Esc closes. With no folder open it searches the recent documents, and the desktop app opens the document's
+folder for it (`mdvQoOpen`, `mdvFuzzy`).
+
+### Search in files
+
+`Ctrl/Cmd+Shift+F` while the folder sidebar is shown, or the sidebar's **Search in files**: full text over every file in
+the folder, grouped by file, with each file's match count and up to five matching lines (line number, about 130
+characters around the words, the words marked). Enter or a click opens the file and goes to the match: the rendered
+block that holds it is unfolded, scrolled into view and flashed, and the words themselves are highlighted for four
+seconds (the CSS Custom Highlight API; nothing in the document changes). Enter right after typing searches, then goes.
+
+- **Lazily and in the background:** the files are read the first time the dialog opens, eight at a time, in slices of
+  about 12 ms, so the page never waits; a newer query stops an older one. Each later opening reads again only the files
+  whose size or time changed, so documents rewritten while you read are searched as they are now.
+- **Limits:** a file over 1 MB, and anything past 64 MB in all, is not read (the dialog says how many); at most 200 files
+  are listed. The comment block at the end of a file (`MDV-COMMENTS`) is not searched.
+- `Ctrl/Cmd+Shift+F` still folds or unfolds every section while the sidebar is not shown (`toggleAllSections`).
+
+### Recent documents
+
+The last 15 documents you had on screen, newest first, on the welcome screen (with **Open a folder…** and **Clear**)
+and in the toolbar's clock menu (with **Clear the list**); each shows its name, its folder and when you opened it, and a
+click opens it again. Recorded whichever way a document was opened (`mdvRecentsNote`, from `mdvFolderOn('shown')`).
+
+- **Desktop app:** every document, by path (`localStorage` `mdv-recents`). An empty window opens a recent document as a
+  double-click would (`mdvHost.openPath`); a window that shows a document opens it in place; Cmd/Ctrl-click opens it in
+  its own window.
+- **Browser:** documents read through a file handle (opened from a folder, with the file-plus button, or reopened at
+  startup), kept as the handle (IndexedDB `mdv-recents`); the browser may ask again for permission on the click. A file
+  dropped on the page or picked with the plain **Open** button comes with no handle and cannot be opened again, so it
+  is not listed.
+- A recent document that is gone is taken off the list with a note.
+
+### Link previews
+
+Resting the pointer on a link to another Markdown document, or reaching it with Tab, shows after a moment a card with
+that document's title (its frontmatter `title`, else its first heading, else its file name), its first paragraph and
+where it is. Links get one when they lead to a Markdown file in the open folder, and in the desktop app to any Markdown
+file. The card replaces the link's address tooltip; it goes away when the pointer leaves the link and the card, on any
+key, on a scroll or a click.
+
+The other document is untrusted input like any document: only its block structure is parsed (`md.block.parse`), its
+title and paragraph go through markdown-it and the render path's DOMPurify configuration with images and media also
+removed (`mdvPreviewSanitize`), links become text, images their alt text, nothing in the card loads from the network,
+and the card is a `[data-mdv-document]` container.
 
 ---
 
@@ -426,6 +528,11 @@ Everything the viewer stores stays in the browser:
 | `localStorage` | `mdv-tts-rate` | read-aloud speed, 0.75 to 2 | `ttsCycleSpeed` |
 | IndexedDB `mdv-viewer`, store `handles` | `current` | handle of the last writable file | `mdvPutHandle` |
 | IndexedDB `mdv-viewer`, store `handles` | `workspace` | handle of the workspace folder | `mdvPutHandle` |
+| IndexedDB `mdv-viewer`, store `handles` | `folder` | handle of the folder shown in the folder sidebar (browser) | `mdvFolderRemember` |
+| IndexedDB `mdv-viewer`, store `handles` | `mdv-recents` | the recent documents, with their file handles (browser) | `mdvRecentsSave` |
+| `localStorage` | `mdv-recents` | the recent documents, by path (desktop app) | `mdvRecentsSave` |
+| `localStorage` | `mdv-folder` | the folder chosen for the folder sidebar (desktop app) | `mdvFolderRemember` |
+| `localStorage` | `mdv-folder-panel` | `open` or `closed`: whether the folder sidebar was shown | `mdvTreeShow` |
 
 Not remembered: table-of-contents visibility, page width, focus mode, the read-aloud position, and which sections are collapsed.
 
@@ -450,7 +557,8 @@ The global shortcuts come from one table, `MDV_SHORTCUTS` in `js/app.js`, which 
 | `Ctrl/Cmd+B` | Toggle table of contents | anywhere except text fields | → `toggleToc` |
 | `Ctrl/Cmd+\` | Toggle page width | anywhere except text fields | → `toggleWidth` |
 | `Ctrl/Cmd+.` | Toggle focus mode | anywhere except text fields | → `toggleFocus` |
-| `Ctrl/Cmd+Shift+F` | Fold or unfold all sections | anywhere except text fields | → `toggleAllSections` |
+| `Ctrl/Cmd+Shift+F` | Search in files while the folder sidebar is shown; otherwise fold or unfold all sections | anywhere except text fields | → `mdvXsOpen` / `toggleAllSections` (row added by `folder-search.js`) |
+| `Ctrl/Cmd+P` | Go to a file (quick open); inside it, close it | anywhere except text fields | → `mdvQoToggle` (row added by `quick-open.js`) |
 | `Ctrl/Cmd+Shift+R` | Open or close the read-aloud player | anywhere except text fields | → `ttsToggle` |
 | `Ctrl/Cmd+O` | Open a file (read-only picker) | anywhere except text fields | → clicks the hidden file input |
 | `?` | Show or hide the shortcuts sheet | anywhere except text fields | global `keydown` listener → `toggleShortcuts` |
@@ -484,6 +592,8 @@ All reading features use standard web APIs. Saving to disk is the one area that 
 | `?file=` auto-load | `fetch` | Only over `http(s)`, not `file://` | Same | Same |
 | Writable open, save in place, automatic reopen | File System Access API: `showOpenFilePicker`, `showSaveFilePicker`, `FileSystemHandle.queryPermission`/`requestPermission`, `createWritable` | Yes | No | No |
 | Workspace folder | `showDirectoryPicker`, handles kept in IndexedDB | Yes | No (toast: "This browser does not support workspace folders") | No |
+| Folder sidebar, quick open of the folder's files, search in files, link previews | `showDirectoryPicker`, `FileSystemDirectoryHandle.entries()`/`resolve()`, handles kept in IndexedDB | Yes | No: the sidebar says a Chromium browser is needed (recent documents and quick open of them still need a file handle) | No |
+| Word highlight after search in files | CSS Custom Highlight API (`CSS.highlights`) | Yes | No (the block is still flashed) *(not tested)* | 17.2 and later *(not tested)* |
 | Adding comments | DOM only (the anchor hash is computed in JavaScript) | Yes | Yes *(not tested)* | Yes *(not tested)* |
 | Saving comments | as above | In place, with a check that the file did not change on disk | Downloads a copy when you press `Ctrl/Cmd+S` (`mdvDownloadFallback`); a change never downloads by itself | Same as Firefox |
 | Read aloud | Web Speech API `speechSynthesis` | Yes, with a 12-second pause/resume keep-alive for a Chrome cut-off bug (`ttsStartKeepAlive`) | Yes *(not tested)* | Yes *(not tested)* |

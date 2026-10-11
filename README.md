@@ -36,6 +36,13 @@ width and font size, light, sepia and dark themes, in-document search, a panel l
 abbreviation tooltips, an image lightbox, and **read-aloud** (text-to-speech with per-section
 navigation). See [docs/features.md](docs/features.md).
 
+**A folder of documents:** open a folder and its Markdown files appear in a sidebar you can filter and
+drive from the keyboard; **Cmd/Ctrl+P** goes to any file from a few letters of its name, **Cmd/Ctrl+Shift+F**
+searches every file and takes you to the match, the last 15 documents are one click away on the welcome
+screen and in the toolbar, and resting on a link to another document previews its title and first
+paragraph. In a browser this needs Chrome, Edge or another Chromium browser; the desktop app opens the
+document's own folder.
+
 ## Comments inside the file
 
 Comments are threads attached to blocks of the document and stored **inside the markdown file
