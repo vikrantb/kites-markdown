@@ -7,7 +7,7 @@
 //!   (a double-click, `open -a` on macOS, the registered command on Windows). This proves the path a
 //!   real double-click takes.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,8 @@ const SAVE_PROBE_FLAG: &str = "--self-test-save-probe";
 const ENV_OUT: &str = "KITES_MARKDOWN_SELF_TEST_OUT";
 const ENV_SAVE_PROBE: &str = "KITES_MARKDOWN_SELF_TEST_SAVE_PROBE";
 const TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a claimed finish may take to end the process before the timeout thread ends it.
+const FINISH_GRACE: Duration = Duration::from_secs(10);
 /// The message self-test.js passes to confirm(); the shell must have answered it (macOS).
 const CONFIRM_PROBE: &str = "kites-self-test: confirm probe";
 
@@ -132,6 +134,11 @@ pub fn start_timeout(app: &AppHandle) {
     let state = app.state::<AppState>();
     let Some(test) = state.self_test.as_ref() else { return };
     if !test.claim_finish() {
+      // The page reported, and its finish ends the process. If it has not after a grace period, the
+      // finish failed somewhere; a self-test must never be left running.
+      std::thread::sleep(FINISH_GRACE);
+      eprintln!("self-test: the finish did not end the process");
+      exit(&app, 1);
       return;
     }
     let report = json!({
@@ -210,10 +217,28 @@ pub fn finish(app: &AppHandle, label: &str, viewer: Value) -> Result<(), String>
     "elapsedMs": test.started.elapsed().as_millis() as u64,
     "viewer": viewer,
   });
-  write_report(&test.out, &report).map_err(|e| format!("could not write {}: {e}", test.out.display()))?;
-  println!("self-test: {} ({})", if ok { "PASS" } else { "FAIL" }, test.out.display());
-  exit(app, if ok { 0 } else { 1 });
+  let code = conclude(&test.out, &report, ok);
+  exit(app, code);
   Ok(())
+}
+
+/// Writes the report and returns the exit status: 0 for a pass, 1 for a failure or for a report that
+/// could not be written. The caller always exits with it: once the finish is claimed, nothing else would.
+fn conclude(out: &Path, report: &Value, ok: bool) -> i32 {
+  match write_report(out, report) {
+    Ok(()) => {
+      println!("self-test: {} ({})", if ok { "PASS" } else { "FAIL" }, out.display());
+      if ok {
+        0
+      } else {
+        1
+      }
+    }
+    Err(e) => {
+      eprintln!("self-test: FAIL, could not write {}: {e}", out.display());
+      1
+    }
+  }
 }
 
 #[cfg(target_os = "macos")]
@@ -237,7 +262,7 @@ fn app_info(app: &AppHandle, test: &SelfTest) -> Value {
   })
 }
 
-fn write_report(out: &std::path::Path, report: &Value) -> std::io::Result<()> {
+fn write_report(out: &Path, report: &Value) -> std::io::Result<()> {
   if let Some(dir) = out.parent() {
     if !dir.as_os_str().is_empty() {
       std::fs::create_dir_all(dir)?;
@@ -281,5 +306,18 @@ mod tests {
     .unwrap()
     .unwrap();
     assert!(t.save_probe);
+  }
+
+  #[test]
+  fn a_report_that_cannot_be_written_still_ends_the_test_as_a_failure() {
+    let dir = crate::fsio::tests::Scratch::new("selftest", "report");
+    let report = json!({ "ok": true });
+    let out = dir.join("result.json");
+    assert_eq!(conclude(&out, &report, true), 0);
+    assert!(out.exists());
+    assert_eq!(conclude(&dir.join("failed.json"), &report, false), 1);
+    // A folder cannot be created under a file, so this report cannot be written.
+    let blocked = out.join("inside-a-file.json");
+    assert_eq!(conclude(&blocked, &report, true), 1);
   }
 }

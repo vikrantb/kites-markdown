@@ -151,14 +151,20 @@ pub fn focus(app: &AppHandle, label: &str) {
   }
 }
 
-/// The label of the focused window, or of any window.
-pub fn focused_label(app: &AppHandle) -> Option<String> {
-  let windows = app.webview_windows();
-  windows
-    .iter()
+/// The label of the document window that has the focus, if one has. Commands that act on "this window"
+/// (Close Window, Reload) use it, so they never fall on some other window.
+pub fn focused_document(app: &AppHandle) -> Option<String> {
+  app
+    .webview_windows()
+    .into_iter()
     .find(|(_, w)| w.is_focused().unwrap_or(false))
-    .or_else(|| windows.iter().next())
-    .map(|(l, _)| l.clone())
+    .map(|(l, _)| l)
+}
+
+/// The label of the focused window, or of any window: where to attach a dialog, or to place a new
+/// window next to.
+pub fn focused_label(app: &AppHandle) -> Option<String> {
+  focused_document(app).or_else(|| app.webview_windows().into_keys().next())
 }
 
 fn start_watching(app: &AppHandle, label: &str, path: &Path) {
