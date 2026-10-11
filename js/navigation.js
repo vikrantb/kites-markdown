@@ -276,9 +276,10 @@ mdvNarrow.addEventListener('change', mdvSyncTocInert);
 //
 // The same decision drives the section rail (built by buildSectionMinimap in enhancements.js), and only this code
 // marks it. The rail once ran its own scroll listener with its own rule (the last h2 above the line), which disagreed
-// with the outline at the bottom of a page and past a closed <details>.
+// with the outline at the bottom of a page and past a closed <details>. Its fill (how far the reader is through the
+// current section) is measured in the same frame, so it never needs a listener of its own either.
 const mdvSpy = { headings: [], visible: null, links: new Map(), minimap: null, rail: [], railStart: '',
-                 railFrom: null, active: null, home: '', frame: 0 };
+                 railFrom: null, railCurrent: null, railEnd: null, railProgress: '', active: null, home: '', frame: 0 };
 
 function setupScrollSpy() {
   const body = document.getElementById('mdBody');
@@ -295,6 +296,9 @@ function setupScrollSpy() {
   mdvSpy.visible = null;
   mdvSpy.active = null;
   mdvSpy.railFrom = null;
+  mdvSpy.railCurrent = null;
+  mdvSpy.railEnd = null;
+  mdvSpy.railProgress = '';
   mdvScrollSpySchedule();
 }
 
@@ -336,6 +340,7 @@ function mdvScrollSpyUpdate() {
     }
   }
   mdvSetActiveHeading(found >= 0 ? list[found] : null, found);
+  mdvMarkRailProgress(line);
 }
 
 function mdvSetActiveHeading(h, index) {
@@ -360,7 +365,8 @@ function mdvSetActiveHeading(h, index) {
 // The rail shows h2 sections. The current one is the h2 at or above the current heading, within its h1 (an h1's own
 // introduction has none); every section before the reader's is read ("passed"). For the track form, which has no
 // room for labels, the rail also names the current section (otherwise the h1 the reader is in, or before any
-// heading the document's first h1) and its position.
+// heading the document's first h1) and its position. In an h1's introduction the outline marks the h1, and the rail
+// marks its title (.at-intro) instead of no section at all.
 function mdvMarkRail(h, index) {
   const nav = mdvSpy.minimap, rail = mdvSpy.rail;
   if (!nav) return;
@@ -382,7 +388,39 @@ function mdvMarkRail(h, index) {
   });
   nav.dataset.current = current ? current.seg.dataset.label : h1 ? mdvHeadingText(h1) : mdvSpy.railStart;
   nav.dataset.position = current ? `${at + 1} / ${rail.length}` : `${rail.length} sections`;
+  nav.classList.toggle('at-intro', !current && !!h1);
+  // The current section ends where the next visible h1 or h2 starts (none: at the end of the document).
+  mdvSpy.railCurrent = current;
+  mdvSpy.railEnd = null;
+  const visible = mdvSpy.visible || [];
+  for (let i = current ? visible.indexOf(current.heading) + 1 : 0; i > 0 && i < visible.length; i++) {
+    if (visible[i].tagName === 'H1' || visible[i].tagName === 'H2') { mdvSpy.railEnd = visible[i]; break; }
+  }
   mdvKeepInView(current && current.seg, nav);
+}
+
+// How far the reader is through the current section, from 0 to 1: --mdv-rail-progress on the rail, which fills the
+// current segment that far (CSS). Measured in scroll positions, so it moves with every frame of scrolling: a section
+// starts when its heading reaches the reading line and ends when the next one does, or, for the sections that end
+// the page, when the page cannot scroll any further (at the bottom of the page the current section is read to its
+// end). Runs in the scroll spy's frame, after it has decided the current section.
+function mdvMarkRailProgress(line) {
+  const nav = mdvSpy.minimap;
+  if (!nav) return;
+  const current = mdvSpy.railCurrent;
+  let p = 0;
+  if (current) {
+    const y = window.scrollY;
+    const last = document.documentElement.scrollHeight - window.innerHeight;
+    const start = current.heading.getBoundingClientRect().top + y - line;
+    const end = Math.min(mdvSpy.railEnd ? mdvSpy.railEnd.getBoundingClientRect().top + y - line : Infinity, last);
+    p = end <= start ? 1 : Math.min(1, Math.max(0, (y - start) / (end - start)));
+  }
+  const value = p.toFixed(3);
+  if (value !== mdvSpy.railProgress) {
+    mdvSpy.railProgress = value;
+    nav.style.setProperty('--mdv-rail-progress', value);
+  }
 }
 
 function mdvMark(el, on) {

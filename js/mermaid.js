@@ -80,6 +80,7 @@ async function mdvRenderDiagram(el, palette) {
       svgEl.classList.add('mdv-diagram');
       mdvIsolateSvgIds(svgEl, id + '-', true);
       try { mdvFinishDiagram(svgEl, diagramType, palette); } catch (e) { console.warn('diagram finish:', e); }
+      if (wrapper) mdvSizeDiagram(wrapper, svgEl, diagramType);
     }
     el.classList.add('rendered');
     el.classList.remove('mermaid-error');
@@ -138,6 +139,35 @@ function mdvMakeDiagramExpandable(wrapper) {
     openDiagramOverlay(wrapper);
   });
 }
+
+// ---------- Size on the page ----------
+// A diagram is drawn at its natural size when the page has room for it, and shrinks to fit when it has not, but never
+// below MDV_DIAGRAM_MIN_SCALE of that size: shrunk further, its labels fall under about 10 px (at phone width a
+// sequence diagram was drawn at 49 %, its labels at 5 to 8 px; a 1,100 px flowchart at 30 %, at 4 px). Below that
+// floor its card scrolls sideways instead, shaded on the side it continues to (--mdv-diagram-min).
+// A wide drawing may also use the page's margins: its card grows past the text column, up to the drawing's natural
+// width (--mdv-wide-w, on a card marked .mdv-wide), when the window has room. Only a drawing wider than MDV_DIAGRAM_WIDE
+// does: the column's card
+// is 654 px wide inside, so anything narrower is drawn at 85 % or more in it, and a card that overhung the column by
+// a few pixels would only look misaligned. css/viewer.css reads both properties. A Gantt chart is laid out for the
+// width it was given (mdvMermaidConfig), so that width is its floor.
+const MDV_DIAGRAM_MIN_SCALE = 0.7;
+const MDV_DIAGRAM_WIDE = 768;
+function mdvSizeDiagram(wrapper, svg, type) {
+  const vb = svg.viewBox && svg.viewBox.baseVal;
+  const natural = vb && vb.width > 0 ? vb.width : 0;
+  const floor = type === 'gantt' ? natural : natural * MDV_DIAGRAM_MIN_SCALE;
+  if (natural) wrapper.style.setProperty('--mdv-diagram-min', Math.ceil(floor) + 'px');
+  else wrapper.style.removeProperty('--mdv-diagram-min');
+  const wide = natural > MDV_DIAGRAM_WIDE;
+  wrapper.classList.toggle('mdv-wide', wide);
+  if (wide) wrapper.style.setProperty('--mdv-wide-w', Math.ceil(natural) + 'px');
+  else wrapper.style.removeProperty('--mdv-wide-w');
+}
+
+// A Gantt chart's axis carries a date label every few days whatever its width; narrower than this, on a phone, the
+// labels ran into each other ("Oct 03ct 05…") and the task names spilled across the bars.
+const MDV_GANTT_MIN_WIDTH = 600;
 
 // The width a diagram has on the page. Mermaid sizes a Gantt chart to its own hidden render container (the whole
 // window) unless told otherwise, and the result is then shrunk to the column with unreadably small text.
@@ -527,7 +557,8 @@ function mdvMermaidConfig(p, contentWidth) {
     class: { useMaxWidth: true },
     er: { useMaxWidth: true, fontSize: 13, entityPadding: 16, minEntityWidth: 110 },
     gantt: {
-      useMaxWidth: true, useWidth: contentWidth, barHeight: 24, barGap: 6, topPadding: 56, leftPadding: 90,
+      useMaxWidth: true, useWidth: contentWidth && Math.max(contentWidth, MDV_GANTT_MIN_WIDTH),
+      barHeight: 24, barGap: 6, topPadding: 56, leftPadding: 90,
       rightPadding: 40, gridLineStartPadding: 40, fontSize: 12, sectionFontSize: 13, numberSectionStyles: 2,
     },
     pie: { useMaxWidth: true, textPosition: 0.68 },
