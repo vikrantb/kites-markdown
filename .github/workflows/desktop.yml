@@ -95,7 +95,7 @@ jobs:
           node desktop/scripts/run-self-test.mjs --app "$APP" --doc samples/kitchen-sink.md --save-probe --expect render,kitchen-sink,save --out self-test/macos-kitchen-sink.json
           node desktop/scripts/run-self-test.mjs --app "$APP" --doc desktop/tests/fixtures/linked/doc.md --expect render,assets --out self-test/macos-assets.json
           # The way Finder opens a double-clicked file: Launch Services hands the app the file.
-          node desktop/scripts/run-self-test.mjs --app "$APP" --doc samples/kitchen-sink.md --launch open --expect render,kitchen-sink --out self-test/macos-open.json
+          node desktop/scripts/run-self-test.mjs --app "$APP" --doc samples/kitchen-sink.md --launch open --expect render,kitchen-sink,types --out self-test/macos-open.json
 
       # Windows: install silently, check what the installer registered, then self-test the installed app.
       - name: Install silently (Windows)

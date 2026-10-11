@@ -10,7 +10,10 @@
 //                    macOS bundle under src-tauri/target, or src-tauri/target/release/kites-markdown(.exe).
 //   --save-probe     also check saving, conflict detection and live reload (writes to the scratch copy)
 //   --launch <how>   args (default): pass --self-test on the command line;
-//                    open (macOS): `open -a <app>` with the file, the path Finder takes on a double-click;
+//                    open (macOS): `open -a <app>` with the file, the path Finder takes for Open With;
+//                    default (macOS): `open` with the file and no app named, so macOS picks the app exactly
+//                    as for a Finder double-click. It first checks that the app macOS picks IS --app, and
+//                    fails at once otherwise. For an installed app that has been made the default.
 //                    registry (Windows): the open command the installer registered for .md files, the
 //                    command Explorer runs on a double-click.
 //   --out <json>     where to keep the report (default: a file in the system temp folder)
@@ -22,7 +25,9 @@
 // Checks (--expect): render (no errors, every diagram drawn, the bridge refused what it must, and on macOS
 // confirm() reached a dialog), kitchen-sink (the sample's features all rendered), assets (images in the
 // document's folder load, one in a dot-folder included; one outside the folder does not), save (the save
-// probe passed), no-inline-handlers (none left for the app's CSP to block).
+// probe passed), no-inline-handlers (none left for the app's CSP to block), types (macOS: every extension
+// the app claims resolves to a Markdown type, not an anonymous dyn.* type that no app claims; launch with
+// open or default, so Launch Services has registered the build).
 import { spawn, execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -105,10 +110,17 @@ async function selfTest() {
   const probe = flag('--save-probe');
   console.log(`app:      ${app}\ndocument: ${doc}\nlaunch:   ${launch}${probe ? ' (with the save probe)' : ''}`);
   let result;
-  if (launch === 'open') {
-    if (!app.endsWith('.app')) throw new Error('--launch open needs a .app bundle');
+  if (launch === 'open' || launch === 'default') {
+    if (!app.endsWith('.app')) throw new Error(`--launch ${launch} needs a .app bundle`);
     const env = [`--env`, `KITES_MARKDOWN_SELF_TEST_OUT=${out}`].concat(probe ? ['--env', 'KITES_MARKDOWN_SELF_TEST_SAVE_PROBE=1'] : []);
-    result = await run('open', ['-W', '-n', '-a', app, ...env, doc], {}, 120_000);
+    if (launch === 'default') {
+      const opener = appMacOSOpens(doc);
+      if (resolve(opener || '/') !== resolve(app)) {
+        rmSync(scratch, { recursive: true, force: true });
+        throw new Error(`a double-click on ${basename(doc)} opens ${opener || 'nothing'}, not ${app}: make it the default first`);
+      }
+    }
+    result = await run('open', ['-W', '-n', ...(launch === 'open' ? ['-a', app] : []), ...env, doc], {}, 120_000);
   } else if (launch === 'registry') {
     const { command, exe } = registeredCommand();
     console.log(`registered command: ${command}`);
@@ -128,6 +140,12 @@ async function selfTest() {
 }
 
 const LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
+
+// The app macOS opens this file with (what a Finder double-click opens), as a path.
+function appMacOSOpens(file) {
+  const script = `ObjC.import('AppKit'); const u = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL($.NSURL.fileURLWithPath(${JSON.stringify(file)})); u.isNil() ? '' : u.path.js`;
+  return execFileSync('osascript', ['-l', 'JavaScript', '-e', script], { encoding: 'utf8' }).trim();
+}
 
 // Running a .app registers it with Launch Services. A build outside /Applications is unregistered again.
 function forgetBuild(app) {
@@ -178,6 +196,16 @@ function verify(report, exitCode) {
       want((i.broken || []).some((s) => s.includes('../outside.png')), 'the image outside the document folder loaded; the asset scope is too wide');
     } else if (check === 'save') {
       want(v.save && v.save.ok === true, `the save probe failed: ${JSON.stringify(v.save && v.save.checks)}`);
+    } else if (check === 'types') {
+      const conf = JSON.parse(readFileSync(join(desktop, 'src-tauri', 'tauri.conf.json'), 'utf8'));
+      const claimed = (conf.bundle.fileAssociations || []).flatMap((a) => a.ext);
+      const types = report.fileTypes;
+      want(Array.isArray(types), 'the report has no file types (the types check is macOS-only)');
+      if (Array.isArray(types)) {
+        want(types.map((t) => t.ext).join() === claimed.join(), `the app checked ${types.map((t) => t.ext).join(', ')}, the config claims ${claimed.join(', ')}`);
+        const wrong = types.filter((t) => !t.markdown).map((t) => `.${t.ext} → ${t.type || 'no type'}`);
+        want(wrong.length === 0, `extensions that do not resolve to Markdown, so a double-click never opens them here: ${wrong.join(', ')}`);
+      }
     } else if (check === 'no-inline-handlers') {
       const h = v.inlineHandlers || {};
       want(h.count === 0, `${h.count} inline event handlers remain, and the app's CSP blocks them: ${(h.examples || []).join(', ')}`);
@@ -202,6 +230,7 @@ function summary(report) {
     `inline handlers left: ${v.inlineHandlers ? v.inlineHandlers.count : '?'}`,
     `console errors ${(v.log && v.log.consoleErrors.length) ?? '?'}, page errors ${(v.log && v.log.pageErrors.length) ?? '?'}, CSP violations while rendering ${(v.log && v.log.cspViolations.length) ?? '?'}`,
     `window title: ${report.document && report.document.windowTitle}; default handler: ${report.defaultHandler || 'n/a'}`,
+    `file types: ${Array.isArray(report.fileTypes) ? report.fileTypes.map((t) => `.${t.ext} ${t.markdown ? '✓' : '✗'} ${t.type}`).join(', ') : 'n/a'}`,
   ].join('\n');
 }
 

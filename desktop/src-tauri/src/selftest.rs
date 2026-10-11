@@ -214,6 +214,7 @@ pub fn finish(app: &AppHandle, label: &str, viewer: Value) -> Result<(), String>
     },
     "dialogs": { "answeredByShell": dialogs, "ok": dialogs_ok },
     "defaultHandler": crate::default_app::current_handler(),
+    "fileTypes": file_types(app),
     "elapsedMs": test.started.elapsed().as_millis() as u64,
     "viewer": viewer,
   });
@@ -249,6 +250,33 @@ fn dialogs_answered() -> Vec<Value> {
 #[cfg(not(target_os = "macos"))]
 fn dialogs_answered() -> Vec<Value> {
   Vec::new()
+}
+
+/// macOS: for every extension the app claims (tauri.conf.json), the type macOS resolves it to and
+/// whether that type is Markdown. An extension that resolves to an anonymous `dyn.*` type never opens
+/// in the app on a double-click, whatever the default is.
+#[cfg(target_os = "macos")]
+fn file_types(app: &AppHandle) -> Value {
+  let extensions = app
+    .config()
+    .bundle
+    .file_associations
+    .iter()
+    .flatten()
+    .flat_map(|a| a.ext.iter().map(|e| e.to_string()));
+  Value::Array(
+    extensions
+      .map(|ext| {
+        let (ty, markdown) = crate::default_app::extension_type(&ext);
+        json!({ "ext": ext, "type": ty, "markdown": markdown })
+      })
+      .collect(),
+  )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn file_types(_app: &AppHandle) -> Value {
+  Value::Null
 }
 
 fn app_info(app: &AppHandle, test: &SelfTest) -> Value {

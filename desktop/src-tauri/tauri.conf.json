@@ -57,7 +57,7 @@
     "fileAssociations": [
       {
         "ext": ["md", "markdown", "mdown", "mkd", "mkdn", "mdwn", "mdtxt", "mdtext"],
-        "contentTypes": ["net.daringfireball.markdown"],
+        "contentTypes": ["net.daringfireball.markdown", "app.kitesmarkdown.markdown"],
         "name": "KitesMarkdown.Document",
         "description": "Markdown document",
         "mimeType": "text/markdown",

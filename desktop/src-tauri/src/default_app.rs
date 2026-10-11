@@ -1,8 +1,11 @@
 //! Making Kites Markdown the app that opens Markdown files.
 //!
 //! - macOS: Launch Services, for the type `net.daringfireball.markdown` (what `.md` files are).
-//!   `NSWorkspace.setDefaultApplication(at:toOpen:)` on macOS 12 and later, then the older
+//!   On macOS 12 and later, `NSWorkspace.setDefaultApplication(at:toOpen:)`, which asks the person to
+//!   confirm. Their answer is final: nothing else is tried after it. On macOS 11, the older
 //!   `LSSetDefaultRoleHandlerForContentType`. The outcome is read back and reported, never assumed.
+//!   The rarer extensions (.mdown, .mkd, …) resolve to the app's own exported type (see Info.plist),
+//!   which only this app claims.
 //! - Windows: the default can only be chosen by the person, so this opens Settings → Default apps
 //!   at the app's own page. The installer registers the app there.
 //! - Linux: not automated; the message says how.
@@ -68,6 +71,12 @@ pub fn is_default() -> Option<bool> {
   }
 }
 
+/// macOS: the type a file with this extension resolves to, and whether that type is Markdown.
+#[cfg(target_os = "macos")]
+pub fn extension_type(ext: &str) -> (String, bool) {
+  mac::extension_type(ext)
+}
+
 /// Whether this process runs from an installed app bundle (not a bare binary from a build folder).
 pub fn is_installed_app() -> bool {
   #[cfg(target_os = "macos")]
@@ -125,6 +134,52 @@ mod mac {
     UTType::typeWithIdentifier(&NSString::from_str(MARKDOWN_TYPE))
   }
 
+  /// The type macOS gives a file with this extension, and whether that type is Markdown.
+  pub fn extension_type(ext: &str) -> (String, bool) {
+    let Some(ty) = UTType::typeWithFilenameExtension(&NSString::from_str(ext)) else {
+      return (String::new(), false);
+    };
+    let markdown = markdown_type().map(|md| ty.conformsToType(&md)).unwrap_or(false);
+    (ty.identifier().to_string(), markdown)
+  }
+
+  /// macOS 12 and later: asks macOS to make this app open `ty`. macOS shows the person a confirmation.
+  /// `None` when macOS reports success, otherwise what it said.
+  fn ask_macos(ty: &UTType) -> Option<String> {
+    let (tx, rx) = mpsc::channel::<Option<String>>();
+    let block = RcBlock::new(move |error: *mut NSError| {
+      // SAFETY: the completion handler receives either null or a valid NSError.
+      let message = unsafe { error.as_ref() }.map(|e| e.localizedDescription().to_string());
+      let _ = tx.send(message);
+    });
+    let app_url = NSBundle::mainBundle().bundleURL();
+    NSWorkspace::sharedWorkspace().setDefaultApplicationAtURL_toOpenContentType_completionHandler(
+      &app_url,
+      ty,
+      Some(&block),
+    );
+    // The person answers a dialog, so allow time for that.
+    match rx.recv_timeout(Duration::from_secs(120)) {
+      Ok(message) => message,
+      Err(_) => Some("macOS did not answer in time.".into()),
+    }
+  }
+
+  /// macOS 11: Launch Services' own call, which does not ask.
+  fn set_with_launch_services(ours: &str) -> Option<String> {
+    let uti = NSString::from_str(MARKDOWN_TYPE);
+    let id = NSString::from_str(ours);
+    // SAFETY: both arguments are valid CFStrings for the duration of the call (toll-free bridged).
+    let status = unsafe {
+      LSSetDefaultRoleHandlerForContentType(
+        Retained::as_ptr(&uti) as *const c_void,
+        ROLES_ALL,
+        Retained::as_ptr(&id) as *const c_void,
+      )
+    };
+    (status != 0).then(|| format!("Launch Services returned {status}."))
+  }
+
   pub fn current_handler() -> Option<String> {
     if at_least_macos_12() {
       let ty = markdown_type()?;
@@ -153,46 +208,20 @@ mod mac {
         handler: current_handler(),
       };
     };
-    let mut detail: Option<String> = None;
-
-    if at_least_macos_12() {
-      if let Some(ty) = markdown_type() {
-        let (tx, rx) = mpsc::channel::<Option<String>>();
-        let block = RcBlock::new(move |error: *mut NSError| {
-          // SAFETY: the completion handler receives either null or a valid NSError.
-          let message = unsafe { error.as_ref() }.map(|e| e.localizedDescription().to_string());
-          let _ = tx.send(message);
-        });
-        let app_url = NSBundle::mainBundle().bundleURL();
-        NSWorkspace::sharedWorkspace().setDefaultApplicationAtURL_toOpenContentType_completionHandler(
-          &app_url,
-          &ty,
-          Some(&block),
-        );
-        // macOS may ask the person to confirm, so allow time for that.
-        match rx.recv_timeout(Duration::from_secs(120)) {
-          Ok(None) => {}
-          Ok(Some(e)) => detail = Some(e),
-          Err(_) => detail = Some("macOS did not answer in time.".into()),
-        }
+    let detail = if at_least_macos_12() {
+      // macOS asks the person to confirm, and their answer is final. When they keep their current app,
+      // or the request fails, nothing else is tried: Launch Services' older call would override that
+      // answer without asking. It no longer works there anyway: on macOS 27 it returned 0 and the
+      // handler did not change.
+      match markdown_type() {
+        Some(ty) => ask_macos(&ty),
+        None => Some("macOS does not know the Markdown type.".into()),
       }
-    }
-
-    if current_handler().as_deref() != Some(ours.as_str()) {
-      let uti = NSString::from_str(MARKDOWN_TYPE);
-      let id = NSString::from_str(&ours);
-      // SAFETY: both arguments are valid CFStrings for the duration of the call (toll-free bridged).
-      let status = unsafe {
-        LSSetDefaultRoleHandlerForContentType(
-          Retained::as_ptr(&uti) as *const c_void,
-          ROLES_ALL,
-          Retained::as_ptr(&id) as *const c_void,
-        )
-      };
-      if status != 0 && detail.is_none() {
-        detail = Some(format!("Launch Services returned {status}."));
-      }
-    }
+    } else if current_handler().as_deref() != Some(ours.as_str()) {
+      set_with_launch_services(&ours)
+    } else {
+      None
+    };
 
     let handler = current_handler();
     if handler.as_deref().map(|h| h.eq_ignore_ascii_case(&ours)).unwrap_or(false) {

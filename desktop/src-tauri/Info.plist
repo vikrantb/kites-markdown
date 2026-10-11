@@ -1,9 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Merged into the app's Info.plist by the bundler. It declares (imports) the Markdown type, so macOS
-  maps every Markdown extension to net.daringfireball.markdown even where no other app declares it.
-  The app does not own the type, so it imports it rather than exporting it.
+  Merged into the app's Info.plist by the bundler. Two declarations, because macOS decides which type a
+  file extension means, and only one declaration of a type identifier counts:
+
+  - net.daringfireball.markdown (.md, .markdown) is IMPORTED: the app does not own it. Current macOS
+    declares this type itself, for exactly these two extensions, and a system declaration overrides an
+    app's import, so extensions added here would be ignored (measured: .mdown resolved to a dyn.* type
+    with all eight listed). The import matters only where the system does not declare the type.
+  - app.kitesmarkdown.markdown (.mdown, .mkd, .mkdn, .mdwn, .mdtxt, .mdtext) is EXPORTED: the app owns
+    this identifier. It conforms to net.daringfireball.markdown, so it is still Markdown to every app
+    that asks. Without it, these six extensions resolve to anonymous dyn.* types that no app claims, and
+    double-clicking such a file never opens the viewer.
+
+  The app claims both types (tauri.conf.json → fileAssociations → contentTypes). The self-test's `types`
+  check reads the extension list from that config and checks that every extension resolves to Markdown.
 -->
 <plist version="1.0">
 <dict>
@@ -26,17 +37,37 @@
         <array>
           <string>md</string>
           <string>markdown</string>
+        </array>
+        <key>public.mime-type</key>
+        <array>
+          <string>text/markdown</string>
+          <string>text/x-markdown</string>
+        </array>
+      </dict>
+    </dict>
+  </array>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>app.kitesmarkdown.markdown</string>
+      <key>UTTypeDescription</key>
+      <string>Markdown document</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>net.daringfireball.markdown</string>
+        <string>public.plain-text</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
           <string>mdown</string>
           <string>mkd</string>
           <string>mkdn</string>
           <string>mdwn</string>
           <string>mdtxt</string>
           <string>mdtext</string>
-        </array>
-        <key>public.mime-type</key>
-        <array>
-          <string>text/markdown</string>
-          <string>text/x-markdown</string>
         </array>
       </dict>
     </dict>

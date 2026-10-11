@@ -47,10 +47,13 @@ another program changes the file.
 
 | | From the app | By hand |
 |---|---|---|
-| **Mac** | **Kites Markdown → Make Default for Markdown Files…**, or **Make Kites Markdown the default** on the welcome screen. macOS may ask you to confirm. | In Finder, select any `.md` file → **File → Get Info** (⌘I) → **Open with:** Kites Markdown → **Change All…** → **Continue**. |
+| **Mac** | **Kites Markdown → Make Default for Markdown Files…**, or **Make Kites Markdown the default** on the welcome screen. macOS asks you to confirm: choose **Use "Kites Markdown"**. If you keep your current app, Kites Markdown leaves your choice alone and tells you which app still opens them. | In Finder, select any `.md` file → **File → Get Info** (⌘I) → **Open with:** Kites Markdown → **Change All…** → **Continue**. |
 | **Windows** | **File → Make Default for Markdown Files…**, or the welcome-screen button: both open Settings at the app's page. | Right-click a `.md` file → **Open with → Choose another app** → Kites Markdown → **Always**. Or **Settings → Apps → Default apps**, search for Kites Markdown. |
 
-The app opens `.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`, `.mdwn`, `.mdtxt` and `.mdtext`.
+The app opens `.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn`, `.mdwn`, `.mdtxt` and `.mdtext`. On a Mac,
+`.md` and `.markdown` are macOS's own Markdown type, which the default above covers. The other six get the
+app's own type, a kind of Markdown that only Kites Markdown claims, so they open in it without a separate
+default. (Without that type, macOS gives those six extensions anonymous types that no app claims.)
 
 On a Mac where nobody has chosen an app for Markdown files, macOS may start using Kites Markdown as soon
 as it has been opened once: an app that declares a file type becomes the automatic choice for it.
@@ -122,7 +125,7 @@ desktop/
   scripts/make-icons.mjs                     app-icon.svg → src-tauri/icons/
   src-tauri/tauri.conf.json                  identity, CSP, asset protocol, file associations, installers
   src-tauri/capabilities/default.json        what a window may call: Tauri core + the mdv_* commands
-  src-tauri/Info.plist                       declares the Markdown type (net.daringfireball.markdown)
+  src-tauri/Info.plist                       imports net.daringfireball.markdown; exports the app's own type for the rarer extensions
   src-tauri/windows/hooks.nsh                Windows: Open with, Default apps, a quoted open command
   src-tauri/src/                             the shell (Rust): see below
 js/host.js                                   the bridge in the page: window.mdvHost
