@@ -279,7 +279,7 @@ Everything below runs in this order on page load.
 | `tooltipHideTimer` | 2675 | `showLinkTooltip`, `hideLinkTooltip`, tooltip `mouseenter` |
 | `CALLOUT_TYPES` | 2817 | `transformCalloutBlocks` (NOTE, TIP, IMPORTANT, WARNING, CAUTION, TLDR, DECISION, COST) |
 | `MDV_NOT_TEXT_TAGS`, `MDV_NOT_TEXT_CLASSES` | `navigation.js` | `mdvExcludedFromText`: what is not the author's words (the viewer's controls, a link card's icon, address and badge, `aria-hidden` copies, MathML annotations, `<style>`/`<script>`/`<template>` matched by `localName` so SVG's count too) |
-| `mdvSpy` | `navigation.js` | The scroll spy: the render's headings, visible headings, TOC links by id, the section rail and its segments with their `h2`s (`rail`), the rail's name before the first heading (`railStart`), the visible-heading list the rail was last marked from (`railFrom`), the active heading, the breadcrumb's home text, the pending animation frame. Set by `setupScrollSpy`, read by `mdvScrollSpyUpdate`, `mdvSetActiveHeading` and `mdvMarkRail` |
+| `mdvSpy` | `navigation.js` | The scroll spy: the render's headings, visible headings, TOC links by id, the section rail and its segments with their `h2`s (`rail`), the rail's name before the first heading (`railStart`), the visible-heading list the rail was last marked from (`railFrom`), the rail's current section and the heading that ends it (`railCurrent`, `railEnd`) and the fill last written (`railProgress`), the active heading, the breadcrumb's home text, the pending animation frame. Set by `setupScrollSpy`, read by `mdvScrollSpyUpdate`, `mdvSetActiveHeading`, `mdvMarkRail` and `mdvMarkRailProgress` |
 | `mdvModal` | `navigation.js` | The open dialog `{ el, returnTo, tabStart, inerted, hidden }`, or `null`. `mdvOpenModal`, `mdvCloseModal`, the Tab trap, the focus guard, the shortcut handler |
 | `mdvNarrow` | `navigation.js` | `matchMedia('(max-width: 900px)')`, the stylesheet's breakpoint: `toggleToc` and `mdvSyncTocInert` |
 | `mdvSearchStale` | `navigation.js` | The search index is out of date; `mdvSearchIndex` rebuilds it on the next search |
@@ -792,7 +792,8 @@ template string and is not code. Anonymous handlers follow the table.
 | `mdvColorHex(value, under)` | `js/mermaid.js` | Any CSS colour → `#rrggbb` (hex directly, anything else through a probe element and a one-pixel canvas, a translucent colour composited over `under`) |
 | `mdvMermaidConfig(palette, width)` | `js/mermaid.js` | The `mermaid.initialize` options: `base` theme variables, per-diagram settings, `themeCSS` |
 | `mdvMermaidThemeCss(palette)` | `js/mermaid.js` | The CSS Mermaid embeds in each SVG (shapes, labels, section colours) |
-| `mdvDiagramContentWidth()` | `js/mermaid.js` | The column width a diagram gets, for Gantt charts |
+| `mdvDiagramContentWidth()` | `js/mermaid.js` | The column width a diagram gets, for Gantt charts (laid out at least `MDV_GANTT_MIN_WIDTH`, 600 px, wide) |
+| `mdvSizeDiagram(wrapper, svg, type)` | `js/mermaid.js` | The least a drawing may shrink to (`--mdv-diagram-min`, 70 % of its natural width; a Gantt chart's own width) and, for one wider than 768 px, its natural width (`--mdv-wide-w`, `.mdv-wide`), which lets its card use the page's margins |
 | `mdvDiagramTypeTitle(type)` | `js/mermaid.js` | `diagramType` → readable title |
 | `openDiagramOverlay(wrapper)` | `js/diagram-overlay.js` | Clones the SVG into the expanded view, titles it, fits it, moves focus into the dialog |
 | `mdvRefreshDiagramOverlay(wrapper)` | `js/diagram-overlay.js` | After a redraw: swaps the new drawing into an open view, keeping zoom and position |
@@ -835,7 +836,8 @@ Functions marked with a file name instead of a line were added or rewritten afte
 | `mdvHeadingVisible(h)` | `navigation.js` | Whether a heading can be seen: `checkVisibility()` (not in a folded section or a closed `<details>`), else `getClientRects()` |
 | `mdvScrollSpyUpdate()` | `navigation.js` | Binary search for the last visible heading above the reading line (the last one on screen at the very bottom of a page that scrolls) |
 | `mdvSetActiveHeading(h, index)` | `navigation.js` | Active outline link (`aria-current`) and breadcrumb text when the current heading changes; the rail (`mdvMarkRail`) then, and also when the visible headings change |
-| `mdvMarkRail(h, index)` | `navigation.js` | The only writer of the section rail's state: the current segment (the `h2` at or above the current heading, within its `h1`; `.active`, `aria-current`), the read ones (`.passed`), and `data-current`/`data-position` for the track |
+| `mdvMarkRail(h, index)` | `navigation.js` | The only writer of the section rail's state: the current segment (the `h2` at or above the current heading, within its `h1`; `.active`, `aria-current`), the read ones (`.passed`), `data-current`/`data-position` for the track, and `.at-intro` in an `h1`'s introduction |
+| `mdvMarkRailProgress(line)` | `navigation.js` | How far the reader is through the current section, 0 to 1, as `--mdv-rail-progress` on the rail (the current segment's fill); runs in the scroll spy's frame, so the rail has no listener of its own |
 | `mdvMark(el, on)`, `mdvKeepInView(el, scroller)` | `navigation.js` | Toggle `.active` and `aria-current`; scroll only the outline or the rail so the entry is visible |
 | `buildSectionMinimap()` | `js/enhancements.js` | A rail of `h2` segments (only when there are 3 or more), the first element of `#mdBody`, sticky under the toolbar; labels (`mdvHeadingText`) drawn by CSS from `data-label`; a segment goes to its `h2` through `mdvGoTo`. The scroll spy marks where the reader is |
 | `mdvFitMinimap()` | `js/enhancements.js` | Label mode or track mode (`.is-track`) by segment width (72 px) |
