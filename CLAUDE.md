@@ -22,7 +22,7 @@ keep it that way: no product names, private paths or project-specific examples.
 | `legacy/` | The superseded first viewer. Reference only; do not develop it. |
 | `docs/` | The documentation. Start with `docs/architecture.md`; the plan is `docs/roadmap.md`. |
 | `samples/` | Fixtures: `kitchen-sink.md` exercises every supported syntax, `diagram-gallery.md` every Mermaid diagram type, `commented.md` the comment format, and `repro-*.md` files reproduce open bugs. |
-| `scripts/check-js.mjs` | $0 syntax check of every `js/` script, parsed as a classic script (`pnpm check`). `scripts/check-inline-js.py` now only checks the legacy viewer. |
+| `scripts/check-js.mjs` | $0 syntax check of every `js/` script, parsed as a classic script, and a check that no two scripts declare the same top-level name (they share one global scope, so one would replace the other) (`pnpm check`). `scripts/check-inline-js.py` now only checks the legacy viewer. |
 
 ## Run
 
@@ -42,7 +42,7 @@ keep it that way: no product names, private paths or project-specific examples.
 
 ## Verify a change
 
-1. `pnpm check` must pass: every `js/` script parses. It checks syntax only.
+1. `pnpm check` must pass: every `js/` script parses, and no top-level name is declared by two scripts. It checks nothing else.
 1. `pnpm test` must pass: every sample renders in both themes with no page or console errors, every Mermaid
    block becomes an SVG, math has no errors, and the viewer works from `file://`. Screenshots land in `test-results/`.
 2. Open `samples/kitchen-sink.md` and `samples/commented.md` in Chrome, in **both themes**:
