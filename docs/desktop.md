@@ -66,12 +66,15 @@ as it has been opened once: an app that declares a file type becomes the automat
   email links open in your browser or mail app; links within the page scroll. Links to other kinds of file
   are not opened (a short notice says so), and the window never navigates away from the document.
 - **Images** with a relative path (`![chart](images/chart.png)`) load from the document's folder and the
-  folders below it.
+  folders below it, dot-folders such as `.github/` and `.gitbook/assets/` included. Images elsewhere on
+  the disk do not load.
 - **Live reload:** when another program saves the file, the window shows the new version and keeps your
-  place in it.
+  place in it. If you have comment changes that are not in the file yet, the window waits and offers
+  **Reload** instead, and so does **View → Reload**: loading the file's version is then your choice.
 - **Comments** (still experimental, see the [README](../README.md)) are saved into the file itself.
-- **Paste:** pasting Markdown into an empty window shows it; it is not saved anywhere. A window that shows
-  a file keeps showing that file.
+- **Paste:** pasting Markdown into an empty window shows it; it is not saved anywhere. That window then
+  keeps it: a file you open later opens in a new window. A window that shows a file keeps showing that
+  file.
 
 ## Uninstall
 
@@ -142,8 +145,11 @@ js/host.js                                   the bridge in the page: window.mdvH
 
 **How files arrive.** macOS sends an "open documents" event (Finder double-click, Open With, `open -a`),
 at launch or later; the app collects files that arrive before it is ready and opens them once it is.
-Windows and Linux pass the file on the command line; a second launch hands its command line to the
-running app (single instance) and exits. Within the app: File → Open…, links, and dropped files.
+Launch Services keeps the app to one instance there, so the app opens no channel of its own. Windows and
+Linux pass the file on the command line; a second launch hands its command line to the running app
+(single instance, within the same user session) and exits, and the running app opens the file from a
+thread of its own (creating a window inside that hand-over can deadlock on Windows). Within the app:
+File → Open…, links, and dropped files.
 
 **The bridge** (`window.mdvHost`, in `js/host.js`) is the only contract between the page and the shell.
 In a browser `kind` is `'browser'` and every method is a no-op that returns `null`. It is loaded last
@@ -152,10 +158,10 @@ check it when you use it, never while the scripts load.
 
 | Call | Does |
 |---|---|
-| `kind`, `currentPath`, `currentMtimeMs` | `'desktop'` or `'browser'`; the window's file and the version the page has |
-| `initialDocument()` | the window's document `{path, name, text, mtimeMs, readOnly}`, or `null` (welcome screen) |
+| `kind`, `currentPath`, `currentMtimeMs`, `currentVersion` | `'desktop'` or `'browser'`; the window's file, and the time and version token of the version on screen |
+| `initialDocument()` | the window's document `{path, name, text, mtimeMs, version, readOnly}`, or `null` (welcome screen) |
 | `readDocument(path)` | any Markdown file; rejects with `{code, message}` |
-| `saveDocument(path, text, expectedMtimeMs)` | `{ok:true, mtimeMs}` or `{ok:false, reason:'conflict' \| 'not-allowed' \| 'io', currentMtimeMs?, message}`; never rejects |
+| `saveDocument(path, text, expectedMtimeMs)` | `{ok:true, mtimeMs, version}` or `{ok:false, reason:'conflict' \| 'not-allowed' \| 'io', currentMtimeMs?, currentVersion?, message}`; never rejects |
 | `openPath(path)`, `openDialog()` | open a Markdown file (or focus its window); the native Open panel |
 | `openExternal(url)` | `http:`, `https:` and `mailto:` only, in the default app |
 | `resourceUrl(absPath)` | an asset-protocol URL for an image |
@@ -167,33 +173,47 @@ check it when you use it, never while the scripts load.
 The comment code saves through one function, `mdvWriteDocument(text)`, which in the app calls
 `mdvHost.saveDocument(mdvHost.currentPath, text, mdvHost.currentMtimeMs)`.
 
-**Saving.** The shell writes only to the file the calling window opened. It compares the file with the
-version the page edited (its modification time, and its bytes when it has them, since some file systems
-keep times to the second) and refuses on any difference: nothing is overwritten. The write goes to a
-temporary file in the same folder, is flushed to disk, keeps the original's permissions and is renamed over
-the original. A read-only file, or one that is not UTF-8 text, is not written.
+**Versions.** Every document the shell sends carries a version token that names its exact bytes. The
+page keeps the token of the version on screen; a save names the version its text was made from (the
+comment code names it by its time, and the bridge looks up the token it was handed with that time; a
+time it was never handed names nothing, and the save is refused). Times decide nothing: some file systems
+keep them to the second or coarser, so another program's edit can keep the old time.
+
+**Saving.** The shell writes only to the file the calling window opened, and only while the file still
+holds exactly the bytes of the version the save names: on any difference it refuses and writes nothing,
+and the refusal names the version on disk, so the page can offer to overwrite exactly that one. The new
+text goes to a temporary file in the same folder, created no more readable than the document, flushed to
+disk, given the original's permissions, and renamed over the original after one more look at the file (an
+edit that lands while the text is being flushed is kept, and the save is refused). A file you may not
+write (read-only, or writable only by others), or one that is not UTF-8 text, is not written.
 
 **Live reload.** Each open document is watched through its folder, filtered by name, so editors that save
 by writing a new file and renaming it still count. Events are debounced (300 ms). A change that is the
-app's own save is recognised and not echoed. If a comment is being saved when a change arrives, the page
-does not swap the text under it: the save is refused as a conflict and a **Reload** button appears.
+app's own save is recognised and not echoed. If the page has comment changes that are not in the file (a
+save in flight, or one that was refused), it does not swap the text under them: a **Reload** button
+appears, and a save made meanwhile names the version on screen, so the shell refuses it rather than write
+over the other program's change. **View → Reload** asks the same way.
 
 **Self-test mode** is how CI proves the whole chain on each platform:
 `kites-markdown --self-test <file.md> --self-test-out <result.json> [--self-test-save-probe]`, or
 `KITES_MARKDOWN_SELF_TEST_OUT=<result.json>` with a file opened the way the system opens it. The shell
 injects two scripts into the page (only in this mode): one records every console error, uncaught error,
 failed resource and CSP violation from the first instant; the other waits for the render (diagrams
-included), counts what rendered, checks that the bridge refuses what it must, optionally saves, edits the
-file "from outside" and saves a stale version (expecting live reload and a conflict), and finally renders
-a document with an `onerror` handler to prove it does not run. The shell adds the window title and the
-asset scope, writes the JSON and exits 0 or 1 (or 1 after 60 s without a report).
+included), counts what rendered, checks that the bridge refuses what it must, each for its own reason (a
+save into an existing sibling file, naming that file's real version, must be refused as `not-allowed`
+and leave the file unchanged), calls `confirm()` and `alert()` on macOS (the shell answers them without
+showing anything in this mode, and must have), optionally saves, edits the file "from outside" and saves
+a stale version (expecting live reload and a conflict), and finally renders a document with an `onerror`
+handler to prove it does not run. The shell adds the window title and the asset scope, writes the JSON
+and exits 0 or 1 (1 after 60 s without a report, and 1 if the report cannot be written).
 
-**CI** (`.github/workflows/desktop.yml`) builds a universal macOS app and a Windows x64 installer, runs the
-shell's unit tests, and runs the self-test: on macOS from the command line and through `open -a` (the
-Finder path); on Windows after a silent install, from the command line and through the open command the
-installer registered for `.md` (the Explorer path), after checking every registry entry; it then
-uninstalls and checks that nothing is left. On a `v*` tag a separate job attaches the installers to a
-**draft** release, for the owner to publish.
+**CI** (`.github/workflows/desktop.yml`) builds a universal macOS app and a Windows x64 installer with a
+pinned Rust toolchain and `--locked`, runs the shell's unit tests, and runs the self-test: on macOS from
+the command line and through `open -a` (the Finder path); on Windows after a silent install, from the
+command line and through the open command the installer registered for `.md` (the Explorer path), after
+checking every registry entry; it then uninstalls and checks that nothing is left for any of the eight
+extensions. Every action is pinned to a commit. On a `v*` tag a separate job attaches the installers that
+run built and self-tested to a **draft** release, for the owner to publish; nothing is rebuilt for it.
 
 ## Security model
 
@@ -208,15 +228,29 @@ to run script, and the page must not be able to reach beyond its own document.
 2. **The page's only door is the bridge.** A window may call Tauri's core functions and the `mdv_*`
    commands, nothing else: no file-system, shell, opener or dialog API. Each command checks its input:
    - reading and opening accept only existing files with a Markdown extension (after resolving links);
-   - saving accepts only the calling window's own file, and only if it has not changed since it was read;
+   - saving accepts only the calling window's own file, and only over the exact version (the bytes) the
+     page's text was made from;
    - external links accept only `http:`, `https:` and `mailto:`.
 3. **The window never leaves the app.** Navigation to anything but the app's own page is refused, and
    requests for new windows are refused (a web link opens in the browser instead).
-4. **Images load only from each open document's folder and below** (the asset protocol's scope), never from
-   elsewhere on the disk.
-5. **Native dialogs are driven by the shell.** (The Tauri dialog plugin is deliberately not used: it
-   would replace `alert` and `confirm` in the page with asynchronous versions, and a
-   `if (!confirm('Delete…?')) return;` would then always proceed.)
+4. **Images load only from the folders of the documents opened in this session, and below them** (the
+   asset protocol's scope). A page asks only for images inside its own document's folder, so the shell
+   never even looks at another path for it (on Windows, looking at a network path would connect to that
+   host). The scope itself only grows during a session: Tauri cannot take a folder back, so the folder of a
+   document opened earlier stays readable as images until the app quits. Images cannot run script.
+5. **Dialogs are native.** `alert()` and `confirm()` in the page show a native alert and wait for it: on
+   macOS the shell answers WebKit's dialog requests itself (WKWebView shows nothing otherwise, and every
+   `confirm()` would answer Cancel at once); on Windows WebView2 shows its own. The Tauri dialog plugin is
+   deliberately not used: it would replace `alert` and `confirm` with asynchronous versions, and a
+   `if (!confirm('Delete…?')) return;` would then always proceed.
+6. **A save never exposes or loses more than the file allows.** The temporary file holding the new text
+   is created with the document's own permissions, so a private document's new text is never readable by
+   others while it is written. A file whose permissions forbid you to write it is not replaced, even where
+   the folder would allow it.
+7. **No shared channel between users.** On macOS the app has no single-instance socket: the usual one is a
+   fixed path in the shared `/tmp`, where another user's process could answer first, receive the paths of
+   the files you open, and stop every launch. Launch Services keeps the app to one instance instead. On
+   Windows the single-instance channel lives in your own session.
 
 **Privacy:** remote images (`https:`) load, as in a browser, so the server hosting one learns that the
 document was opened.
@@ -231,6 +265,11 @@ document was opened.
 - **Images outside the document's folder** (for example `../images/x.png`) do not load.
 - **A save replaces the file.** Hard links to it then point at the old version, and macOS extended
   attributes (Finder tags, for example) are not carried over.
+- **The last instant of a save.** The file is checked once more just before the new text is renamed over
+  it, but no file system offers a rename that compares first: an edit another program makes in that
+  instant is still replaced.
+- **On a Mac, running the program file itself** (`…/Kites Markdown.app/Contents/MacOS/kites-markdown`)
+  starts a second instance; opening files the usual ways (Finder, `open`, the Dock) does not.
 - **Encodings:** UTF-8 files are read and saved; UTF-16 and other non-UTF-8 files are shown but not saved
   into.
 - **Fonts:** the app uses the viewer's fallback fonts (system fonts): it loads nothing from the internet, so
