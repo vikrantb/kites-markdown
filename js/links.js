@@ -213,13 +213,13 @@ function buildLinksPanel(links) {
       a.appendChild(label);
       if (type !== 'anchor') a.appendChild(url);
 
-      // Click anchor links: scroll to target
+      // A section link goes to its target as an outline entry does (see In-document links, below)
       if (type === 'anchor') {
         a.addEventListener('click', (e) => {
           e.preventDefault();
-          const target = document.getElementById(item.href.slice(1));
-          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          const target = mdvLinkTarget(item.href);
           toggleLinksPanel();
+          if (target) mdvGoTo(target);
         });
       }
 
@@ -228,6 +228,48 @@ function buildLinksPanel(links) {
     container.appendChild(group);
   }
 }
+
+// ============================================
+// In-document links
+// ============================================
+// A link to a place in the document (href="#…": a heading, a footnote, any element with that id) goes there as an
+// outline entry does, through mdvGoTo (navigation.js): the folded sections around the target unfold, a closed
+// <details> around it opens, the page scrolls and the focus moves there. The browser's own jump only scrolled, and a
+// target inside a folded section has no box, so nothing happened. The links panel's section links go the same way.
+
+// The element an in-document link points at, found as the browser finds a fragment: an id equal to the fragment as
+// written, else an <a name> equal to it; then the same for the percent-decoded fragment. Only inside the document:
+// a link that names one of the viewer's own elements is left to the browser.
+function mdvLinkTarget(href) {
+  if (typeof href !== 'string' || href.length < 2 || href[0] !== '#') return null;
+  const body = document.getElementById('mdBody');
+  const raw = href.slice(1);
+  let decoded = raw;
+  try { decoded = decodeURIComponent(raw); } catch (e) { /* not valid percent-encoding: only the fragment as written */ }
+  for (const name of new Set([raw, decoded])) {
+    const byId = document.getElementById(name);
+    if (byId && body.contains(byId)) return byId;
+    const byName = body.querySelector(`a[name="${CSS.escape(name)}"]`);
+    if (byName) return byName;
+  }
+  return null;
+}
+
+// One listener for the page's lifetime. A click with a modifier key (a new tab or window) keeps the browser's
+// behaviour, and so does the "#" permalink after each heading, whose point is the address it puts in the location
+// bar. The address changes as the browser's jump changed it, so Back returns to where the reader was.
+document.getElementById('mdBody').addEventListener('click', (e) => {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const a = e.target.closest && e.target.closest('a[href^="#"]');
+  if (!a || a.classList.contains('header-anchor')) return;
+  const target = mdvLinkTarget(a.getAttribute('href'));
+  if (!target) return;
+  e.preventDefault();
+  if (location.hash !== a.hash) {
+    try { history.pushState(history.state, '', a.hash); } catch (err) { /* an address that cannot change: the jump still happens */ }
+  }
+  mdvGoTo(target);
+});
 
 // ============================================
 // Copy code

@@ -1412,7 +1412,8 @@ function mdvRenderSidebar() {
       if (quote) {
         quote.style.cursor = 'pointer';
         quote.title = 'Show in the document';
-        quote.addEventListener('click', () => host.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+        // As a search result shows its block (mdvGoTo, navigation.js): unfolded if folded, centred, flashed
+        quote.addEventListener('click', () => mdvGoTo(host, { flash: true }));
       }
     }
   });

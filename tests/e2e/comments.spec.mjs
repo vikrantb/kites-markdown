@@ -299,6 +299,28 @@ test('thread cards keep their reply box and buttons visible when the sidebar is 
   expect(clipped, 'cards whose content is cut off').toBe(0);
 });
 
+// The quote used to scroll to its block and nothing more: a block inside a folded section has no box, so nothing
+// happened. It now goes there as the outline and search do (mdvGoTo): unfolded, centred, flashed.
+test('a thread card\'s quote shows its block even in a folded section, and the outline marks that section', async ({ page }) => {
+  const errors = await openViewer(page);
+  const fill = 'A sentence that gives this paragraph some length. '.repeat(3);
+  const doc = `# Guide\n\n## Setup\n\n${fill}\n\n### Install\n\n${[1, 2, 3, 4, 5].map((n) => `Step ${n}. ${fill}`).join('\n\n')}\n\n` +
+    `The commented paragraph, deep in its section.\n\n${fill}\n\n## Usage\n\n${Array(12).fill(fill).join('\n\n')}\n`;
+  await page.evaluate((d) => { window.h = window.__t.fakeHandle('jump.md', d); window.__t.open(d, 'jump.md', window.h); }, doc);
+  await page.evaluate(() => mdvAddComment(window.__t.para('The commented paragraph'), null, 'A note on it'));
+  await threads(page, 1);
+  const setup = page.locator('#setup > .section-toggle');
+  await setup.click();
+  const host = page.locator('#mdBody p', { hasText: 'The commented paragraph' });
+  await expect(host).toBeHidden();
+  await page.locator('#mdvThreadList .mdv-quote').click();
+  await expect(host).toBeVisible();
+  await expect(setup).toHaveAttribute('aria-expanded', 'true');
+  await expect.poll(() => page.evaluate(() => document.querySelector('#tocList .toc-link.active')?.textContent)).toBe('Install');
+  expect(await page.evaluate(() => document.activeElement.textContent.startsWith('The commented paragraph'))).toBe(true);
+  expect(errors).toEqual([]);
+});
+
 test('comment data from a file cannot inject markup into the sidebar', async ({ page }) => {
   const errors = await openViewer(page);
   await page.evaluate(() => {

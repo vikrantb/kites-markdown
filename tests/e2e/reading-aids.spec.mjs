@@ -443,6 +443,52 @@ test('after a document without headings, the next document shows its outline aga
   await expect(page.locator('#tocSidebar')).not.toHaveClass(/hidden/);
 });
 
+// A document whose links point into sections the reader can fold: a heading link, and a footnote at the very end.
+const FILL = 'Line of text that fills the section. '.repeat(40);
+const JUMPS = `# Guide\n\nSee [the install steps](#install) and a note.[^1]\n\n## Setup\n\n${FILL}\n\n### Install\n\n${FILL}\n\n${FILL}\n\n## Usage\n\n${FILL}\n\n## Notes\n\n${FILL}\n\n${FILL}\n\n[^1]: The note's own text.\n`;
+
+// The browser's own jump (and, before, the links panel) only scrolled: a target inside a folded section has no box, so
+// nothing happened.
+test('an in-document link goes to its target as the outline does: unfolded, focused, marked, and in the address', async ({ page }) => {
+  await openViewer(page);
+  await render(page, JUMPS);
+  const setup = page.locator('#setup > .section-toggle');
+  await setup.click();
+  await expect(page.locator('#install')).toBeHidden();
+  await page.locator('#mdBody a:not(.header-anchor)[href="#install"]').click();
+  await expect(page.locator('#install')).toBeVisible();
+  await expect(setup).toHaveAttribute('aria-expanded', 'true');
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('install');
+  await expect.poll(() => activeEntry(page)).toBe('Install');
+  expect(await page.evaluate(() => location.hash)).toBe('#install'); // as the browser's own jump left it, so Back returns
+
+  // A footnote at the end of the document, in a folded last section.
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+  const notes = page.locator('#notes > .section-toggle');
+  await notes.click();
+  await expect(page.locator('#fn1')).toBeHidden();
+  await page.locator('#mdBody a[href="#fn1"]').click();
+  await expect(page.locator('#fn1')).toBeVisible();
+  await expect(notes).toHaveAttribute('aria-expanded', 'true');
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('fn1');
+  await expect.poll(() => activeEntry(page)).toBe('Notes');
+});
+
+test('a section link in the links panel goes to its target as the outline does: unfolded, focused and marked', async ({ page }) => {
+  await openViewer(page);
+  await render(page, JUMPS);
+  const setup = page.locator('#setup > .section-toggle');
+  await setup.click();
+  await expect(page.locator('#install')).toBeHidden();
+  await page.locator('#linksPanelBtn').click();
+  await page.locator('#linksPanelContent a.links-panel-item[href="#install"]').click();
+  await expect(page.locator('#install')).toBeVisible();
+  await expect(setup).toHaveAttribute('aria-expanded', 'true');
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('install');
+  await expect.poll(() => activeEntry(page)).toBe('Install');
+  await expect(page.locator('#linksPanel')).not.toHaveClass(/show/);
+});
+
 test('an outline link moves the keyboard focus to its heading and unfolds it', async ({ page }) => {
   await openViewer(page);
   await render(page, '# Long\n\n' + LONG);
