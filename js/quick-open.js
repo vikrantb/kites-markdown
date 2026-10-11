@@ -4,14 +4,22 @@
 // A dialog over the page: type a few letters of a file's name or path ("hnd ui" finds
 // handoffs/2026-10-08-ui.md), move with Up and Down, open with Enter (Cmd/Ctrl+Enter: its own window in the
 // desktop app), close with Esc. It searches the open folder's files and the recent documents; with nothing
-// typed it lists the recent documents first, then the folder's files.
+// typed it lists the recent documents first, then the folder's files, the most recently changed first.
+// A listing more than a few seconds old is taken again as the dialog opens, so a file an agent has just written
+// can be found at once; the list follows when the new listing arrives, keeping a row the reader moved to.
 //
 // The match is fuzzy: every letter typed must appear in order in the path, and a path scores higher when the
 // letters start words (after / - _ . or a space, or at a capital), run together, or fall in the file's own name.
 // Space-separated words must each match. Names are shown as text, with the matched letters marked.
 
 const MDV_QO_LIMIT = 60;
-const mdvQo = { overlay: null, input: null, list: null, status: null, items: [], focus: -1 };
+const mdvQo = {
+  overlay: null, input: null, list: null, status: null, items: [], focus: -1,
+  // Recent documents (browser) whose folder has the open folder's name and whose path it lists, but which are a
+  // different file (another folder of the same name): found out with isSameEntry, for the folder opened as openId.
+  differs: new WeakSet(), differsFor: 0,
+  moved: false, // the reader moved to a row with the arrows (since they last typed)
+};
 
 function mdvQoBuild() {
   const overlay = document.createElement('div');
@@ -56,7 +64,7 @@ function mdvQoBuild() {
   overlay.appendChild(box);
   document.body.appendChild(overlay);
   Object.assign(mdvQo, { overlay, input, list, status });
-  input.addEventListener('input', () => mdvQoRender());
+  input.addEventListener('input', () => { mdvQo.moved = false; mdvQoRender(); });
   input.addEventListener('keydown', mdvQoKeys);
   list.addEventListener('click', (e) => {
     const row = e.target.closest('[role="option"]');
@@ -116,15 +124,40 @@ function mdvQoScore(terms, rel, name) {
   return { score: total, positions };
 }
 
+// A browser recent document is the open folder's file at its path when its folder has the open folder's name and
+// it is the same file (isSameEntry, checked as the dialog opens; until then the name and path decide).
+function mdvQoRecentInFolder(r) {
+  const s = mdvFolderState;
+  if (s.kind === 'desktop') return r.kind === 'path' && mdvFolderInside(r.path, s.root) ? r.path : null;
+  if (s.kind !== 'browser' || r.kind !== 'handle' || !r.path || !s.byPath.has(r.path) || r.folder !== s.rootName) return null;
+  return mdvQo.differsFor === s.openId && mdvQo.differs.has(r) ? null : r.path;
+}
+
+async function mdvQoCheckRecents() {
+  const s = mdvFolderState;
+  if (s.kind !== 'browser') return;
+  if (mdvQo.differsFor !== s.openId) { mdvQo.differs = new WeakSet(); mdvQo.differsFor = s.openId; }
+  const openId = s.openId;
+  let changed = false;
+  for (const r of mdvRecent.items || []) {
+    const path = mdvQoRecentInFolder(r);
+    const entry = path && s.byPath.get(path);
+    if (!entry || !entry.handle || !r.handle || typeof entry.handle.isSameEntry !== 'function') continue;
+    let same = false;
+    try { same = await entry.handle.isSameEntry(r.handle); } catch (e) { same = false; }
+    if (s.openId !== openId) return;
+    if (!same) { mdvQo.differs.add(r); changed = true; }
+  }
+  if (changed && mdvQoIsOpen()) mdvQoRender({ keepFocus: true });
+}
+
 function mdvQoCandidates() {
   const out = [];
   const seen = new Set();
   const s = mdvFolderState;
   const recents = (mdvRecent.items || []);
   recents.forEach((r, i) => {
-    let path = null;
-    if (s.kind === 'desktop' && r.kind === 'path' && mdvFolderInside(r.path, s.root)) path = r.path;
-    else if (s.kind === 'browser' && r.kind === 'handle' && r.path && s.byPath.has(r.path) && r.folder === s.rootName) path = r.path;
+    const path = mdvQoRecentInFolder(r);
     const entry = path ? s.byPath.get(path) || s.entries.find((e) => mdvFolderSamePath(e.path, path)) : null;
     if (entry) {
       seen.add(entry.path);
@@ -136,6 +169,23 @@ function mdvQoCandidates() {
   for (const e of s.entries) if (!seen.has(e.path)) out.push({ kind: 'file', entry: e, rel: e.rel, name: e.name, recent: -1 });
   return out;
 }
+
+// With nothing typed: the recent documents in the order they were read, then the folder's files, the most recently
+// changed first (a file whose time is not known yet keeps its place in the tree's order, after them).
+function mdvQoNewestFirst(all) {
+  const recent = all.filter((c) => c.recent >= 0);
+  const files = all.filter((c) => c.recent < 0).map((c, i) => ({ c, i }));
+  files.sort((a, b) => {
+    const ta = a.c.entry.mtimeMs, tb = b.c.entry.mtimeMs;
+    if (ta != null && tb != null && ta !== tb) return tb - ta;
+    if ((ta != null) !== (tb != null)) return ta != null ? -1 : 1;
+    return a.i - b.i;
+  });
+  return recent.concat(files.map((f) => f.c));
+}
+
+// The identity of a row, to keep the reader on it when the list is drawn again.
+function mdvQoKey(c) { return c ? (c.kind === 'file' ? 'f:' + c.entry.path : c.recentEntry) : null; }
 
 // ------- Drawing -------
 function mdvQoMarked(text, positions, offset) {
@@ -156,12 +206,15 @@ function mdvQoMarked(text, positions, offset) {
   return frag;
 }
 
-function mdvQoRender() {
+// keepFocus: the list is drawn again because the folder or the files' times changed, not because the reader typed;
+// a row the reader moved to with the arrows stays the focused one (otherwise the first row is, as after typing).
+function mdvQoRender({ keepFocus = false } = {}) {
+  const was = keepFocus && mdvQo.moved ? mdvQoKey(mdvQo.items[mdvQo.focus]) : null;
   const q = mdvQo.input.value.trim();
   const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
   const all = mdvQoCandidates();
   let ranked;
-  if (!terms.length) ranked = all.map((c) => ({ c, positions: new Set(), score: 0 }));
+  if (!terms.length) ranked = mdvQoNewestFirst(all).map((c) => ({ c, positions: new Set(), score: 0 }));
   else {
     ranked = [];
     for (const c of all) {
@@ -201,15 +254,17 @@ function mdvQoRender() {
   });
   mdvQo.list.replaceChildren(frag);
   mdvQo.input.setAttribute('aria-expanded', String(shown.length > 0));
-  mdvQoSetFocus(shown.length ? 0 : -1);
+  const keep = was == null ? -1 : mdvQo.items.findIndex((c) => mdvQoKey(c) === was);
+  mdvQoSetFocus(keep >= 0 ? keep : shown.length ? 0 : -1);
   mdvQoRenderStatus(ranked.length, shown.length, terms.length > 0);
 }
 
 function mdvQoRenderStatus(total, shown, typed) {
   const s = mdvFolderState;
   let text;
+  // The folder searched is named: in the desktop app it is the document's own folder unless the reader chose another.
   if (s.loading && !s.entries.length) text = 'Listing the folder…';
-  else if (!total) text = typed ? 'No file matches' : (s.kind ? 'This folder has no Markdown files' : 'Open a folder to go to its files');
+  else if (!total) text = typed ? (s.kind ? `No file in “${s.rootName}” matches` : 'No file matches') : (s.kind ? 'This folder has no Markdown files' : 'Open a folder to go to its files');
   else text = total > shown ? `${shown} of ${total.toLocaleString()} files` : `${total.toLocaleString()} file${total === 1 ? '' : 's'}`;
   mdvQo.status.textContent = text;
   let open = mdvQo.list.parentElement.querySelector('.mdv-palette-open-folder');
@@ -235,8 +290,8 @@ function mdvQoSetFocus(i) {
 function mdvQoKeys(e) {
   if (e.isComposing || e.keyCode === 229) return;
   const n = mdvQo.items.length;
-  if (e.key === 'ArrowDown' && n) { e.preventDefault(); mdvQoSetFocus((mdvQo.focus + 1) % n); }
-  else if (e.key === 'ArrowUp' && n) { e.preventDefault(); mdvQoSetFocus(mdvQo.focus <= 0 ? n - 1 : mdvQo.focus - 1); }
+  if (e.key === 'ArrowDown' && n) { e.preventDefault(); mdvQo.moved = true; mdvQoSetFocus((mdvQo.focus + 1) % n); }
+  else if (e.key === 'ArrowUp' && n) { e.preventDefault(); mdvQo.moved = true; mdvQoSetFocus(mdvQo.focus <= 0 ? n - 1 : mdvQo.focus - 1); }
   else if (e.key === 'Enter') { e.preventDefault(); if (n) mdvQoChoose(Math.max(0, mdvQo.focus), e); }
 }
 
@@ -254,18 +309,29 @@ function mdvQoIsOpen() { return !!(mdvModal && mdvQo.overlay && mdvModal.el === 
 
 function mdvQoOpen() {
   if (!mdvQo.overlay) mdvQoBuild();
+  const s = mdvFolderState;
   // The desktop app knows the document's folder: with no folder open yet, it is the one to search.
-  if (!mdvFolderState.kind && mdvFolderIsDesktop() && mdvFolderDesktopDefault()) mdvFolderOpen();
-  mdvRecentsLoad().then(() => { if (mdvQoIsOpen()) mdvQoRender(); });
+  if (!s.kind && mdvFolderIsDesktop() && mdvFolderDesktopDefault()) mdvFolderOpen();
+  // Agents write files while the reader works: a listing more than a few seconds old is taken again.
+  else if (s.kind && !s.loading && Date.now() - s.listedAt > MDV_FOLDER_STALE_MS) mdvFolderRefresh();
+  mdvRecentsLoad().then(() => { if (mdvQoIsOpen()) { mdvQoRender({ keepFocus: true }); mdvQoCheckRecents(); } });
   mdvQo.input.value = '';
+  mdvQo.moved = false;
   mdvQoRender();
   mdvOpenModal(mdvQo.overlay, { label: 'Go to a file', focus: mdvQo.input });
+  mdvFolderLearnTimes();
 }
 
 function mdvQoClose(opts) { if (mdvQo.overlay) mdvCloseModal(mdvQo.overlay, opts); }
 function mdvQoToggle() { if (mdvQoIsOpen()) mdvQoClose(); else mdvQoOpen(); }
 
-mdvFolderOn('change', () => { if (mdvQoIsOpen()) mdvQoRender(); });
+mdvFolderOn('change', () => {
+  if (!mdvQoIsOpen()) return;
+  mdvQoRender({ keepFocus: true });
+  if (!mdvFolderState.loading) mdvFolderLearnTimes();
+});
+// The files' times arrived: only the order with nothing typed depends on them.
+mdvFolderOn('times', () => { if (mdvQoIsOpen() && !mdvQo.input.value.trim()) mdvQoRender({ keepFocus: true }); });
 
 mdvRegisterActions({
   'folder-quick-open':   { click: () => mdvQoOpen() },
