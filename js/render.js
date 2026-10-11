@@ -119,6 +119,7 @@ function renderMarkdown(source, title) {
   // reported in its place (callers such as loadFromUrl must never mistake it for a missing file).
   let meta = null;
   let content;
+  const codeKey = mdvRandomKey();
   window._frontmatter = null;
   window._narrations = [];
   try {
@@ -132,13 +133,14 @@ function renderMarkdown(source, title) {
 
     let dashboardHtml = '';
     try { dashboardHtml = renderFrontmatterDashboard(meta); } catch (e) { console.warn('frontmatter dashboard:', e); }
-    content = mdvSanitize(dashboardHtml + md.render(parsed.body));
+    content = mdvSanitize(dashboardHtml + md.render(parsed.body, { mdvCodeKey: codeKey }));
   } catch (err) {
     console.error('Render error:', err);
     content = mdvRenderErrorHtml(err, source);
   }
   if (typeof content === 'string') body.innerHTML = content;
   else body.replaceChildren(content);
+  mdvWireCodeBlocks(body, codeKey);
   body.style.display = 'block';
   welcome.style.display = 'none';
   document.getElementById('fabContainer').style.display = 'flex';
@@ -200,17 +202,19 @@ function mdvRenderErrorHtml(err, source) {
 // - HTML comments at the top level of the document: comment anchors (MDV-ANCHOR) and narration
 //   (narrate:) are read from them (see the comment hook below);
 // - KaTeX output, including its MathML (<semantics>, <annotation>) and style attributes;
-// - the viewer's own markup: classes, ids, data-* (data-action on code-block buttons), aria-*;
+// - classes, ids, data-* and aria-* attributes;
 // - inline SVG, minus its scripts and handlers.
-// Also removed: <style>, which would restyle the whole viewer, and any id or name that would take
-// over one of the viewer's own elements (a document's <div id="ttsPlayer"> would otherwise
-// capture the player's updates).
+// Also removed: <style>, which would restyle the whole viewer; data-action and data-arg, which name
+// the viewer's own actions (js/actions.js); and any id or name that would take over one of the
+// viewer's own elements (a document's <div id="ttsPlayer"> would otherwise capture the player's
+// updates).
 // SAFE_FOR_XML stays at its default (on): DOMPurify's documentation says to turn it off only for
 // content with no SVG or MathML, and documents have both.
 const MDV_SANITIZE_CONFIG = {
   ADD_TAGS: ['#comment', 'semantics', 'annotation'],
   ADD_ATTR: ['target'],
   FORBID_TAGS: ['style', 'form', 'script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'base', 'meta', 'link'],
+  FORBID_ATTR: ['data-action', 'data-arg'],
   FORCE_BODY: true,            // parse as <body> content, so a comment that starts the file is kept
   // renderMarkdown inserts the sanitized nodes themselves rather than an HTML string. (A later pass
   // that rewrites innerHTML, such as transformCalloutBlocks, re-parses markup DOMPurify has already
@@ -263,11 +267,14 @@ if (mdvPurifier) {
   try { md.set({ html: false }); } catch (e) { /* markdown-it itself is missing; reported below */ }
 }
 
-// The ids of the viewer's own elements: everything outside the [data-mdv-document] containers.
+// The ids of the viewer's own elements: everything outside the [data-mdv-document] containers, and
+// the containers themselves. A document element named like a container would otherwise win
+// getElementById over any container that comes after #mdBody in the page (#mdvThreadList does).
 function mdvChromeIds() {
   const ids = new Set();
   for (const el of document.querySelectorAll('[id]')) {
-    if (!el.closest('[data-mdv-document]')) ids.add(el.id);
+    const parent = el.parentElement;
+    if (!parent || !parent.closest('[data-mdv-document]')) ids.add(el.id);
   }
   return ids;
 }
@@ -281,6 +288,41 @@ function mdvSanitize(html) {
     return mdvPurifier.sanitize(html, MDV_SANITIZE_CONFIG);
   } finally {
     mdvSanitizeChromeIds = null;
+  }
+}
+
+// ============================================
+// Code blocks: the viewer's own Copy buttons
+// ============================================
+// A document can draw a Copy button too: in its own HTML (the sanitizer drops its data-action) or
+// in a Mermaid label (Mermaid keeps data-* attributes), next to code whose text is partly hidden.
+// So copying is wired only for code blocks markdown-it rendered from a fence in this render: each
+// one carries a key made for this render, which a document cannot know, and the button inside it
+// is marked as the viewer's own control (actions.js runs nothing else inside the document).
+function mdvRandomKey() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+try {
+  md.core.ruler.push('mdv_code_key', (state) => {
+    const key = state.env && state.env.mdvCodeKey;
+    if (!key) return;
+    for (const token of state.tokens) if (token.type === 'fence') token.attrSet('data-mdv-code', key);
+  });
+} catch (err) {
+  console.warn('code blocks: markdown-it is not available', err);
+}
+
+function mdvWireCodeBlocks(container, key) {
+  for (const code of container.querySelectorAll('code[data-mdv-code]')) {
+    const own = code.getAttribute('data-mdv-code') === key;
+    code.removeAttribute('data-mdv-code');
+    const button = own ? code.querySelector(':scope > .code-header > .copy-btn') : null;
+    if (!button) continue;
+    button.dataset.action = 'copy-code';
+    mdvMarkOwnControl(button);
   }
 }
 

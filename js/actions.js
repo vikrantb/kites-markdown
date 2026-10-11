@@ -22,23 +22,33 @@
 //   (browse-file, copy-link) therefore still hides the click from every listener above it.
 // - Only the nearest [data-action] element is dispatched, so a control inside another control
 //   (the Browse button inside the drop zone) never triggers both.
-// - Content rendered from a document lives inside [data-mdv-document] containers (#mdBody, the
-//   diagram overlay). A data-action found there runs only if its entry is marked
-//   `document: true` (copy-code, which the viewer itself adds to code blocks). A document that
-//   writes <button data-action="pick-workspace"> gets nothing.
+// - Markup built from document data lives inside [data-mdv-document] containers: #mdBody, the
+//   diagram overlay's #diagramZoomContainer, and the comment sidebar's #mdvThreadList. A
+//   data-action found there runs only on an element the viewer marked as its own control with
+//   mdvMarkOwnControl (render.js marks the Copy button of each code block it rendered). The mark
+//   lives in a WeakSet, not in the markup, so nothing a document writes can carry it: a
+//   <button data-action="pick-workspace"> in the document, in a diagram label or in comment data
+//   gets nothing. Any new place that shows document-derived markup goes inside such a container.
 
 const mdvActions = Object.create(null);
 const mdvActionEventTypes = new Set();
+const mdvOwnControls = new WeakSet();
 
 function mdvRegisterActions(entries) {
   for (const [name, entry] of Object.entries(entries)) {
     mdvActions[name] = entry;
     for (const type of Object.keys(entry)) {
-      if (type === 'document' || mdvActionEventTypes.has(type)) continue;
+      if (mdvActionEventTypes.has(type)) continue;
       mdvActionEventTypes.add(type);
       document.addEventListener(type, (event) => mdvDispatchAction(type, event), true);
     }
   }
+}
+
+// For a control the viewer itself puts inside a [data-mdv-document] container.
+function mdvMarkOwnControl(el) {
+  mdvOwnControls.add(el);
+  return el;
 }
 
 function mdvDispatchAction(type, event) {
@@ -47,7 +57,7 @@ function mdvDispatchAction(type, event) {
   if (!el) return;
   const entry = mdvActions[el.dataset.action];
   if (!entry || typeof entry[type] !== 'function') return;
-  if (!entry.document && el.closest('[data-mdv-document]')) return;
+  if (el.closest('[data-mdv-document]') && !mdvOwnControls.has(el)) return;
   entry[type](el, el.dataset.arg, event);
 }
 
@@ -109,6 +119,6 @@ mdvRegisterActions({
   // Notices about features that are off (render.js)
   'dismiss-notice':     { click: (el) => { const n = el.closest('.mdv-notice'); if (n) n.remove(); } },
 
-  // Code blocks: the viewer adds this button inside rendered documents (core.js, highlight).
-  'copy-code':          { click: (el) => { if (el.closest('pre')) copyCode(el); }, document: true },
+  // Code blocks: render.js wires this on the Copy button of each code block it rendered.
+  'copy-code':          { click: (el) => copyCode(el) },
 });

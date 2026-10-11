@@ -102,10 +102,12 @@ test('a hostile document runs nothing, goes nowhere and keeps its harmless conte
       scriptUrls: all.flatMap((el) => ['href', 'src', 'xlink:href', 'action'].map((n) => el.getAttribute(n)).filter(Boolean))
         .filter((v) => /^javascript:/i.test(v.trim())),
       chromeLabelOwner: document.getElementById('ttsSectionLabel').closest('#ttsPlayer') !== null,
-      documentLabel: (() => {
-        const el = [...body.querySelectorAll('div')].find((d) => d.textContent.startsWith('A document element named'));
-        return el ? { kept: true, id: el.id } : { kept: false };
-      })(),
+      chromeThreadList: document.getElementById('mdvThreadList').closest('#mdvSidebar') !== null,
+      // The document's elements named like the player's label and like the three containers that
+      // hold document content (#mdBody, the diagram overlay's, the comment sidebar's thread list).
+      // Leaf divs only: the section wrapper around them starts with the same text.
+      documentLabels: [...body.querySelectorAll('div')]
+        .filter((d) => !d.children.length && d.textContent.startsWith('A document element named')).map((d) => d.id),
       toolbarVisible: getComputedStyle(document.querySelector('.toolbar')).display !== 'none',
       h1: body.querySelector('h1')?.textContent,
       tables: [...body.querySelectorAll('table th')].filter((th) => th.textContent === 'Kind').length,
@@ -120,7 +122,8 @@ test('a hostile document runs nothing, goes nowhere and keeps its harmless conte
   expect(dom.handlers).toEqual([]);
   expect(dom.scriptUrls).toEqual([]);
   expect(dom.chromeLabelOwner, 'the read-aloud label is still the player\'s').toBe(true);
-  expect(dom.documentLabel, 'the document element is kept, without the viewer\'s id').toEqual({ kept: true, id: '' });
+  expect(dom.chromeThreadList, 'the thread list is still the sidebar\'s').toBe(true);
+  expect(dom.documentLabels, 'the document elements are kept, without the viewer\'s ids').toEqual(['', '', '', '']);
   expect(dom.toolbarVisible, 'a document <style> hid the toolbar').toBe(true);
   expect(dom.h1).toContain('A hostile document');
   expect(dom.tables).toBe(1);
@@ -147,21 +150,104 @@ test('the Content Security Policy refuses inline script that reaches the page an
   expect((await page.evaluate(() => window.__mdvCsp)).map((v) => v.directive)).toContain('script-src-attr');
 });
 
-test('a comment card that breaks out of its attribute still cannot run script', async ({ page }) => {
+test('a comment card that breaks out of its attribute runs nothing', async ({ page }) => {
   await recordPayloads(page);
   await recordCspViolations(page);
+  await stubFilePickers(page);
   await openDocument(page, 'tests/fixtures/comment-sidebar-injection.md');
   await page.locator('#mdvToggleBtn').click();
   await expect(page.locator('#mdvSidebar')).toHaveClass(/open/);
-  const card = page.locator('#mdvThreadList .mdv-comment').first();
+  const card = page.locator('#mdvThreadList .mdv-comment');
+  await expect(card).toHaveCount(1);
   await card.hover();
+  await card.click();
   await page.waitForTimeout(300);
+  expect(await payloadHits(page), 'a handler from comment data ran').toEqual([]);
+  expect(await page.evaluate(() => window.__mdvPickerCalls)).toEqual([]);
+  // comments.js escapes the value without its quotes (stream C's), so at this commit the attribute
+  // does land; the CSP is what refuses it. Once C escapes quotes, nothing lands and nothing is refused.
+  const landed = await page.locator('#mdvThreadList [onmouseover]').count();
+  const refused = (await page.evaluate(() => window.__mdvCsp)).some((v) => v.directive === 'script-src-attr');
+  expect({ landed, refused }).toEqual(landed ? { landed: 1, refused: true } : { landed: 0, refused: false });
+});
+
+test('no surface lets a document press the viewer\'s buttons', async ({ page, context }) => {
+  // The document names viewer actions in attributes through every route document data takes: its
+  // own HTML, a fake code block, a guessed code-block key, a Mermaid label (shown again in the
+  // diagram overlay), and comment fields that break out of an attribute in the sidebar.
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await stubFilePickers(page);
+  await recordPayloads(page);
+  const problems = collectProblems(page);
+  await page.route(/example\.invalid/, (route) => route.abort());
+  await openDocument(page, 'tests/fixtures/press-the-buttons.md');
+  await page.evaluate(() => navigator.clipboard.writeText('clipboard before'));
+  const state = () => page.evaluate(async () => ({
+    pickers: window.__mdvPickerCalls.slice(),
+    theme: document.documentElement.getAttribute('data-theme'),
+    focus: document.body.classList.contains('focus-mode'),
+    clipboard: await navigator.clipboard.readText(),
+  }));
+  const before = await state();
+  expect(before).toEqual({ pickers: [], theme: 'light', focus: false, clipboard: 'clipboard before' });
+
+  const overlay = page.locator('#diagramOverlay');
+  const clickEach = async (selector, label) => {
+    const names = [];
+    for (const el of await page.locator(selector).all()) {
+      names.push(label || await el.getAttribute('data-mdv-probe'));
+      await el.click({ force: true });
+      // A click inside a diagram opens the overlay; close it so the next click reaches the page.
+      if (selector.startsWith('#mdBody') && await overlay.evaluate((o) => o.classList.contains('show'))) {
+        await page.keyboard.press('Escape');
+        await expect(overlay).not.toHaveClass(/show/);
+      }
+    }
+    return names.sort();
+  };
+  const clicked = {};
+  clicked.body = await clickEach('#mdBody [data-mdv-probe]');
+  await page.locator('#mdBody .diagram-expand-btn').click();
+  await expect(overlay).toHaveClass(/show/);
+  clicked.overlay = await clickEach('#diagramZoomContainer [data-mdv-probe]');
+  await page.keyboard.press('Escape');
+  await page.locator('#mdvToggleBtn').click();
+  await expect(page.locator('#mdvSidebar')).toHaveClass(/open/);
+  clicked.cards = await clickEach('#mdvThreadList .mdv-comment', 'card');
+  await page.waitForTimeout(300);
+
+  // The routes were all exercised: each probe is on the page and was clicked.
+  expect(clicked).toEqual({
+    body: ['forged-key', 'mermaid', 'mermaid-copy', 'raw-copy', 'raw-html'],
+    overlay: ['mermaid', 'mermaid-copy'],
+    cards: ['card', 'card'],
+  });
+  expect(await state(), 'the viewer\'s state after every click').toEqual(before);
   expect(await payloadHits(page)).toEqual([]);
-  // comments.js escapes the value without its quotes (see the PR); until it does, the attribute
-  // lands in the sidebar and the CSP is what stops it.
-  if (await page.locator('#mdvThreadList [onmouseover]').count()) {
-    expect((await page.evaluate(() => window.__mdvCsp)).map((v) => v.directive)).toContain('script-src-attr');
-  }
+
+  const dom = await page.evaluate(() => ({
+    // An element that names an action, outside every container of document content.
+    outside: [...document.querySelectorAll('[data-mdv-probe][data-action]')]
+      .filter((el) => !el.closest('[data-mdv-document]')).map((el) => el.dataset.mdvProbe),
+    // The sanitizer drops a document's data-action and data-arg; only Mermaid's labels keep theirs.
+    sanitizedActions: [...document.querySelectorAll('#mdBody [data-mdv-probe]')]
+      .filter((el) => el.hasAttribute('data-action') && !el.closest('.mermaid')).map((el) => el.dataset.mdvProbe),
+    keyAttributes: document.querySelectorAll('#mdBody [data-mdv-code]').length,
+  }));
+  expect(dom).toEqual({ outside: [], sanitizedActions: [], keyAttributes: 0 });
+
+  // Positive controls: the viewer's own Copy button and toolbar button still work, and the
+  // instruments (clipboard, picker stub) see them.
+  await page.keyboard.press('Escape');
+  await page.locator('#mdvSidebar .mdv-sidebar-close').click();
+  const genuine = page.locator('#mdBody pre', { hasText: 'const genuine = true;' }).locator('.copy-btn');
+  await expect(genuine).toHaveCount(1);
+  await genuine.click();
+  await expect(genuine).toHaveText('Copied!');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('const genuine = true;');
+  await page.locator('#mdvWorkspaceBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__mdvPickerCalls.slice())).toEqual(['showDirectoryPicker']);
+  expect(problems, problems.join('\n')).toEqual([]);
 });
 
 test('comments next to markup characters survive the sanitizer, and so does the text around them', async ({ page }) => {

@@ -33,7 +33,7 @@ const md = window.markdownit({
       try { hl = hljs.highlight(str, { language: lang }).value; } catch (_) {}
     }
     if (!hl) hl = md.utils.escapeHtml(str);
-    return `<div class="code-header"><span>${md.utils.escapeHtml(label)}</span><button class="copy-btn" data-action="copy-code">Copy</button></div><code class="hljs language-${md.utils.escapeHtml(lang || '')}">${hl}</code>`;
+    return `<div class="code-header"><span>${md.utils.escapeHtml(label)}</span><button class="copy-btn">Copy</button></div><code class="hljs language-${md.utils.escapeHtml(lang || '')}">${hl}</code>`;
   }
 });
 

@@ -270,7 +270,8 @@
     <span class="mdv-status" id="mdvSidebarStatus"></span>
     <button class="mdv-sidebar-close" data-action="toggle-comments" aria-label="Close comments">&times;</button>
   </div>
-  <div class="mdv-thread-list" id="mdvThreadList"></div>
+  <!-- The thread cards are built from the document's comment data: a document container. -->
+  <div class="mdv-thread-list" id="mdvThreadList" data-mdv-document></div>
 </aside>
 
 <!-- TTS Player bar -->

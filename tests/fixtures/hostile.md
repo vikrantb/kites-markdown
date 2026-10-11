@@ -42,6 +42,12 @@ in the viewer none may run, and the harmless content around them must still rend
 
 <div id="ttsSectionLabel">A document element named like the read-aloud player's label</div>
 
+<div id="mdBody">A document element named like the viewer's document container</div>
+
+<div id="diagramZoomContainer">A document element named like the diagram overlay's container</div>
+
+<div id="mdvThreadList">A document element named like the comment sidebar's thread list</div>
+
 <button id="doc-action" data-action="pick-workspace">A button that names a viewer action</button>
 
 ## Diagram
