@@ -316,6 +316,37 @@ test('a heading inside a closed <details> never becomes the current heading', as
   expect(await page.textContent('#breadcrumb')).toBe('Before');
 });
 
+// The section rail used to decide the current section by its own rule as well: the last h2 above the reading line,
+// by getClientRects(). It disagreed with the outline at the bottom of a page and past a closed <details>.
+const railState = (page) => page.evaluate(() => {
+  const nav = document.querySelector('#mdBody .section-minimap');
+  return {
+    active: [...nav.querySelectorAll('.minimap-segment.active')].map((s) => s.dataset.label),
+    current: nav.dataset.current, position: nav.dataset.position,
+  };
+});
+
+test('the section rail marks the section the outline marks, at the bottom of the page and past a closed <details>', async ({ page }) => {
+  await openViewer(page);
+  const parts = Array.from({ length: 6 }, (_, i) => `## Part ${i + 1}\n\n${'Line of text that fills the section. '.repeat(60)}\n`).join('\n');
+  await render(page, `# Long\n\n${parts}\n## Tail A\n\nShort.\n\n## Tail B\n\nShort.\n\n## Tail C\n\nShort.\n`);
+  await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
+  await frames(page);
+  expect(await activeEntry(page)).toBe('Tail C');
+  expect(await railState(page)).toEqual({ active: ['Tail C'], current: 'Tail C', position: '9 / 9' });
+
+  const lines = Array.from({ length: 30 }, (_, i) => `Line ${i + 1} of the section.`).join('\n\n');
+  await render(page, `# Doc\n\n## Before\n\n${lines}\n\n<details><summary>More options</summary>\n\n## Hidden part\n\nHidden text.\n\n</details>\n\n${'Text after the details.\n\n'.repeat(4)}## After\n\n${lines}\n\n## End\n\n${lines}\n`);
+  await page.evaluate(() => {
+    const s = document.querySelector('#mdBody summary');
+    window.scrollTo({ top: s.getBoundingClientRect().top + scrollY - 150, behavior: 'instant' });
+  });
+  await frames(page);
+  expect(await page.evaluate(() => document.querySelector('#mdBody details').open)).toBe(false);
+  expect(await activeEntry(page)).toBe('Before');
+  expect(await railState(page)).toEqual({ active: ['Before'], current: 'Before', position: '1 / 4' });
+});
+
 test('a hidden outline is out of the Tab order, wide and narrow', async ({ page }) => {
   await openViewer(page);
   await render(page, '# Guide\n\n## One\n\nText.\n\n## Two\n\nText.\n');

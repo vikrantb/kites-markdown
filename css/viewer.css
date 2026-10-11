@@ -1317,7 +1317,8 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
    sticks under the toolbar while reading, so read / current / ahead is always in view. The column's top padding
    shrinks to make room for it.
    With room each segment carries its label (data-label); otherwise (.is-track, set by enhancements.js) the segments
-   become a track and the rail names the current section (data-current) and where it is (data-position). */
+   become a track and the rail names the current section (data-current) and where it is (data-position). The
+   scroll spy (navigation.js) marks .active and .passed segments and sets data-current and data-position. */
 .content-wrapper:has(.section-minimap) { padding-top: 14px; }
 .section-minimap {
   position: sticky; top: calc(var(--toolbar-height) + 6px); z-index: 40;

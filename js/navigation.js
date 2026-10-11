@@ -270,20 +270,28 @@ mdvNarrow.addEventListener('change', mdvSyncTocInert);
 // add an IntersectionObserver that was never disconnected), the cost per frame does not grow with the
 // document, and it is right in both directions: a band observer only noticed headings entering the band,
 // so scrolling back up into a long section kept the section below highlighted.
-const mdvSpy = { headings: [], visible: null, links: new Map(), segments: new Map(), minimap: null,
-                 active: null, home: '', frame: 0 };
+//
+// The same decision drives the section rail (built by buildSectionMinimap in enhancements.js), and only this code
+// marks it. The rail once ran its own scroll listener with its own rule (the last h2 above the line), which disagreed
+// with the outline at the bottom of a page and past a closed <details>.
+const mdvSpy = { headings: [], visible: null, links: new Map(), minimap: null, rail: [], railStart: '',
+                 railFrom: null, active: null, home: '', frame: 0 };
 
 function setupScrollSpy() {
   const body = document.getElementById('mdBody');
   mdvSpy.headings = [...body.querySelectorAll('h1,h2,h3,h4,h5,h6')];
   mdvSpy.links = new Map([...document.querySelectorAll('#tocList .toc-link')].map(a => [a.dataset.target, a]));
-  // The minimap (built in enhancements.js) is driven from here too: segments are found by data-target-id.
+  // The rail's segments, each with the h2 it names by data-target-id, in the rail's order.
   mdvSpy.minimap = body.querySelector('.section-minimap');
-  mdvSpy.segments = new Map(mdvSpy.minimap
-    ? [...mdvSpy.minimap.querySelectorAll('[data-target-id]')].map(s => [s.dataset.targetId, s]) : []);
+  const h2s = new Map(mdvSpy.headings.filter(h => h.tagName === 'H2').map(h => [h.id, h]));
+  mdvSpy.rail = mdvSpy.minimap ? [...mdvSpy.minimap.querySelectorAll('[data-target-id]')]
+    .map(seg => ({ seg, heading: h2s.get(seg.dataset.targetId) })).filter(r => r.heading) : [];
+  const h1 = mdvSpy.headings.find(h => h.tagName === 'H1');
+  mdvSpy.railStart = (h1 && mdvHeadingText(h1)) || 'Start';
   mdvSpy.home = document.getElementById('breadcrumb').textContent;
   mdvSpy.visible = null;
   mdvSpy.active = null;
+  mdvSpy.railFrom = null;
   mdvScrollSpySchedule();
 }
 
@@ -328,24 +336,50 @@ function mdvScrollSpyUpdate() {
 }
 
 function mdvSetActiveHeading(h, index) {
-  if (h === mdvSpy.active) return;
-  const prev = mdvSpy.active;
-  mdvSpy.active = h;
-  mdvMark(prev && mdvSpy.links.get(prev.id), false);
-  const link = h && mdvSpy.links.get(h.id);
-  mdvMark(link, true);
-  mdvKeepInView(link, document.getElementById('tocSidebar'));
-  document.getElementById('breadcrumb').textContent = h ? mdvHeadingText(h) : mdvSpy.home;
-
-  // The minimap shows h2 sections: the h2 at or above the current heading.
-  let h2 = null;
-  for (let i = index; h && i >= 0; i--) {
-    const t = mdvSpy.visible[i].tagName;
-    if (t === 'H2') { h2 = mdvSpy.visible[i]; break; }
-    if (t === 'H1') break;
+  const moved = h !== mdvSpy.active;
+  if (moved) {
+    const prev = mdvSpy.active;
+    mdvSpy.active = h;
+    mdvMark(prev && mdvSpy.links.get(prev.id), false);
+    const link = h && mdvSpy.links.get(h.id);
+    mdvMark(link, true);
+    mdvKeepInView(link, document.getElementById('tocSidebar'));
+    document.getElementById('breadcrumb').textContent = h ? mdvHeadingText(h) : mdvSpy.home;
   }
-  for (const [id, seg] of mdvSpy.segments) mdvMark(seg, !!h2 && id === h2.id);
-  mdvKeepInView(h2 && mdvSpy.segments.get(h2.id), mdvSpy.minimap);
+  // Folding and <details> change which headings can be seen, and so the h2 the current heading falls under: a new
+  // list of visible headings marks the rail again even when the current heading stays. So does a new render.
+  if (moved || mdvSpy.railFrom !== mdvSpy.visible) {
+    mdvSpy.railFrom = mdvSpy.visible;
+    mdvMarkRail(h, index);
+  }
+}
+
+// The rail shows h2 sections. The current one is the h2 at or above the current heading, within its h1 (an h1's own
+// introduction has none); every section before the reader's is read ("passed"). For the track form, which has no
+// room for labels, the rail also names the current section (otherwise the h1 the reader is in, or before any
+// heading the document's first h1) and its position.
+function mdvMarkRail(h, index) {
+  const nav = mdvSpy.minimap, rail = mdvSpy.rail;
+  if (!nav) return;
+  let h2 = null, h1 = null;
+  for (let i = index; h && i >= 0; i--) {
+    const x = mdvSpy.visible[i];
+    if (x.tagName === 'H2') { h2 = x; break; }
+    if (x.tagName === 'H1') { h1 = x; break; }
+  }
+  // `at`: how many rail sections start before the reader's section (the h2, or else the current heading).
+  const from = h2 || h;
+  let at = 0;
+  while (from && at < rail.length && rail[at].heading !== from &&
+         (rail[at].heading.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING)) at++;
+  const current = h2 && rail[at] && rail[at].heading === h2 ? rail[at] : null;
+  rail.forEach((r, i) => {
+    mdvMark(r.seg, r === current);
+    r.seg.classList.toggle('passed', i < at);
+  });
+  nav.dataset.current = current ? current.seg.dataset.label : h1 ? mdvHeadingText(h1) : mdvSpy.railStart;
+  nav.dataset.position = current ? `${at + 1} / ${rail.length}` : `${rail.length} sections`;
+  mdvKeepInView(current && current.seg, nav);
 }
 
 function mdvMark(el, on) {
@@ -354,7 +388,7 @@ function mdvMark(el, on) {
   if (on) el.setAttribute('aria-current', 'location'); else el.removeAttribute('aria-current');
 }
 
-// Scrolls only `scroller` (the outline, the minimap) so `el` is visible in it. Never the window, and
+// Scrolls only `scroller` (the outline, the rail) so `el` is visible in it. Never the window, and
 // never smoothly: a smooth scrollIntoView here could cut short the page's own smooth scroll to a heading.
 function mdvKeepInView(el, scroller) {
   if (!el || !scroller) return;

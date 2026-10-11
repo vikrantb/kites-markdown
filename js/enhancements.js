@@ -147,8 +147,11 @@ function mdvHeadingLabel(h) {
 // segments become a track, and the rail names the current section and its position instead. Labels are drawn by
 // CSS from data attributes (known issue 11), so search, read-aloud and copy never pick them up, and the rail sits
 // outside every section, so the blocks inside them keep their place among their siblings (comments.js records it).
+// This file builds the rail and fits it to its width. Where the reader is (the current segment, the ones read, the
+// name and position the track shows) is marked by the scroll spy in navigation.js, the one place that decides the
+// current section, so the rail and the outline always agree.
 const MDV_MINIMAP_MIN_LABEL = 72; // px: a segment narrower than this shows a track instead of a label
-let mdvMinimap = null; // { nav, segments, headings, title, resize }
+let mdvMinimap = null; // { nav, segments, resize }
 
 function buildSectionMinimap() {
   if (mdvMinimap && mdvMinimap.resize) mdvMinimap.resize.disconnect();
@@ -174,14 +177,12 @@ function buildSectionMinimap() {
   });
   body.prepend(nav);
 
-  const h1 = body.querySelector('h1');
-  mdvMinimap = { nav, segments: [...nav.children], headings: h2s, title: h1 ? mdvHeadingLabel(h1) : 'Start' };
+  mdvMinimap = { nav, segments: [...nav.children] };
   if (typeof ResizeObserver === 'function') {
     mdvMinimap.resize = new ResizeObserver(() => mdvFitMinimap());
     mdvMinimap.resize.observe(nav);
   }
   mdvFitMinimap();
-  mdvUpdateMinimap();
 }
 
 // Labels when every segment has room for one, a track otherwise.
@@ -192,35 +193,6 @@ function mdvFitMinimap() {
   if (!width) return; // not laid out (a hidden document)
   m.nav.classList.toggle('is-track', width / m.segments.length < MDV_MINIMAP_MIN_LABEL);
 }
-
-// The current section is the last H2 above the reading line (the same line the outline uses), so the rail is right
-// scrolling up as well as down. Folded headings are skipped.
-function mdvUpdateMinimap() {
-  const m = mdvMinimap;
-  if (!m || !m.nav.isConnected) return;
-  const line = Math.max(80, window.innerHeight * 0.3);
-  let current = -1;
-  m.headings.forEach((h, i) => {
-    const r = h.getClientRects();
-    if (r.length && r[0].top <= line) current = i;
-  });
-  m.segments.forEach((seg, i) => {
-    seg.classList.toggle('active', i === current);
-    seg.classList.toggle('passed', i < current);
-    if (i === current) seg.setAttribute('aria-current', 'location');
-    else seg.removeAttribute('aria-current');
-  });
-  m.nav.dataset.current = current >= 0 ? m.segments[current].dataset.label : m.title;
-  m.nav.dataset.position = current >= 0 ? `${current + 1} / ${m.segments.length}` : `${m.segments.length} sections`;
-}
-
-let mdvMinimapFrame = 0;
-function mdvScheduleMinimap() {
-  if (!mdvMinimapFrame) mdvMinimapFrame = requestAnimationFrame(() => { mdvMinimapFrame = 0; mdvUpdateMinimap(); });
-}
-// One listener for the page's lifetime; each render only swaps what it reads.
-window.addEventListener('scroll', mdvScheduleMinimap, { passive: true });
-window.addEventListener('resize', mdvScheduleMinimap, { passive: true });
 
 // ============================================
 // Abbreviation Tooltips from frontmatter
