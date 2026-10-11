@@ -1489,40 +1489,65 @@ html:has(.section-minimap) { scroll-padding-top: calc(var(--toolbar-height) + 64
   display: inline-block; height: auto; max-width: 100%;
   animation: mdv-fade-in 0.28s ease-out;
 }
-/* A drawing keeps a legible size. mermaid.js gives each card the least its drawing may shrink to (--mdv-diagram-min:
-   70 % of its natural width; a Gantt chart's own width) and, for a drawing wider than 768 px, that natural width
-   (--mdv-wide-w, on a card marked .mdv-wide). Such a card grows into the page's margins when the window has room, up
-   to its drawing's natural width and centred on the column, so the drawing is not shrunk; it stays 40 px clear of the
-   content area's sides, which keeps it out from under the floating scroll buttons. Where even the page is too
-   narrow (a phone), the drawing stops shrinking at its floor and scrolls sideways inside its card (below). Only cards
-   at the column's own level grow: one inside a list, a quote or a callout keeps its box. The expanded view's copy is
-   not in a card, so neither rule reaches it. */
-.content-wrapper { container-type: inline-size; }
-:is(.md-body, .section-content) > .mermaid-wrapper.mdv-wide {
-  --mdv-card-w: max(100%, min(calc(var(--mdv-wide-w) + 2 * var(--mdv-card-pad) + 2px), calc(100cqw - 80px)));
-  width: var(--mdv-card-w);
-  margin-left: calc((100% - var(--mdv-card-w)) / 2);
+/* A drawing keeps a legible size (mdvSizeDiagram in mermaid.js sets its widths on its card).
+   On screen, a card at the column's own level grows into the page's margins when that makes it at least a fifth wider
+   than the column: up to its drawing's natural width (--mdv-wide-w), centred on the column and 40 px clear of the
+   content area's sides (--mdv-area, measured by mermaid.js), which keeps it out from under the floating scroll
+   buttons. A smaller gain would leave the card overhanging the text by a few pixels for little more drawing (at
+   1180 px, 36 px a side for 10 %), so it keeps the column. In clamp(), the factor 1000 makes a step: 0 below that
+   gain, the whole gain above it. One inside a list, a quote or a callout keeps its box, the expanded view's copy is
+   not in a card, and paper keeps the column. The three widths are registered so they do not inherit: a resize
+   restyles each card, not the drawing inside it. */
+@property --mdv-area { syntax: '<length>'; inherits: false; initial-value: 0px; }
+@property --mdv-card-want { syntax: '<length-percentage>'; inherits: false; initial-value: 100%; }
+@property --mdv-card-w { syntax: '<length-percentage>'; inherits: false; initial-value: 100%; }
+@media screen {
+  :is(.md-body, .section-content) > .mermaid-wrapper {
+    --mdv-card-want: max(100%, min(calc(var(--mdv-wide-w) + 2 * var(--mdv-card-pad) + 2px), calc(var(--mdv-area) - 80px)));
+    --mdv-card-w: calc(100% + clamp(0px, (var(--mdv-card-want) - 120%) * 1000, var(--mdv-card-want) - 100%));
+    width: var(--mdv-card-w);
+    margin-left: calc((100% - var(--mdv-card-w)) / 2);
+  }
 }
-.mermaid-wrapper .mermaid.rendered > svg { min-width: var(--mdv-diagram-min, 0px); }
+/* On a laptop or a desktop a drawing is always whole: it shrinks to fit its card however small that makes it, and the
+   expand button shows it at full size. Only a phone's screen gives it a floor (--mdv-diagram-min, 70 % of its natural
+   width), below which it scrolls sideways inside its card instead (below). With the floor on a desktop too, the
+   desktop app's window would show 4 of a 12-step pipeline's steps, a Gantt chart drawn before a sidebar opened would
+   lose its last section, and nothing would tell the reader. Screen only: paper cannot scroll. */
+@media screen and (max-width: 600px) {
+  .mermaid-wrapper .mermaid.rendered > svg { min-width: var(--mdv-diagram-min, 0px); }
+}
 /* Mermaid draws each diagram first in a scratch <div id="d…"> at the end of <body>, as wide as the window, and an XY
    chart caps its own width there (max-width: 700 px) before it measures its labels in screen pixels: on a phone it
    was shrunk, the labels measured short, and its axis title overlapped the tick labels. A scratch area wider than any
-   drawing measures them true. The div lives only while a diagram is drawn. */
-body > div[id^="dmdv-mermaid-"] { min-width: 1600px; }
+   drawing measures them true. It is taken out of the page's flow and not painted (laid out and measured all the
+   same), so the page does not widen to 1,600 px while a diagram is drawn. The div lives only while one is. */
+body > div[id^="dmdv-mermaid-"] {
+  position: fixed; top: 0; left: 0; min-width: 1600px;
+  visibility: hidden; pointer-events: none;
+}
 /* A drawing wider than its card scrolls inside it, and fades out at the side it continues to: a scroll-driven
-   animation of its mask, so the fade follows the scroll position and is there only while the drawing can scroll (a
-   browser without scroll timelines just scrolls). The card's frame, label and expand button stay whole. */
-.md-body .mermaid-wrapper pre.mermaid.rendered {
-  --mdv-fade-end: linear-gradient(to right, #000 calc(100% - 44px), transparent);
-  --mdv-fade-both: linear-gradient(to right, transparent, #000 44px, #000 calc(100% - 44px), transparent);
-  --mdv-fade-start: linear-gradient(to left, #000 calc(100% - 44px), transparent);
-  animation: mdv-scroll-cue auto linear both;
-  animation-timeline: scroll(self inline);
+   animation of its mask, so the fade follows the scroll position and is there only while the drawing can scroll. A
+   browser without scroll timelines just scrolls: behind @supports, an engine that took the animation without its
+   timeline cannot hold its last frame, a fade over the left edge of every drawing. The card's frame, label and
+   expand button stay whole. The mask hides the box's own focus ring, so the card draws it. */
+@supports (animation-timeline: scroll()) {
+  .md-body .mermaid-wrapper pre.mermaid.rendered {
+    --mdv-fade-end: linear-gradient(to right, #000 calc(100% - 44px), transparent);
+    --mdv-fade-both: linear-gradient(to right, transparent, #000 44px, #000 calc(100% - 44px), transparent);
+    --mdv-fade-start: linear-gradient(to left, #000 calc(100% - 44px), transparent);
+    animation: mdv-scroll-cue auto linear both;
+    animation-timeline: scroll(self inline);
+  }
 }
 @keyframes mdv-scroll-cue {
   0% { -webkit-mask-image: var(--mdv-fade-end); mask-image: var(--mdv-fade-end); }
   4%, 96% { -webkit-mask-image: var(--mdv-fade-both); mask-image: var(--mdv-fade-both); }
   100% { -webkit-mask-image: var(--mdv-fade-start); mask-image: var(--mdv-fade-start); }
+}
+@supports selector(:has(*)) {
+  .md-body .mermaid-wrapper pre.mermaid:focus-visible { outline: none; }
+  .mermaid-wrapper:has(> pre.mermaid:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 }
 .diagram-expand-btn {
   position: absolute; top: 10px; right: 10px; z-index: 2;
@@ -2218,9 +2243,8 @@ body.mdv-sidebar-open .content-wrapper { padding-right: 380px; }
   .md-body tr { break-inside: avoid; }
   .mermaid-wrapper { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .md-body pre, .mermaid-wrapper, .callout, .mdv-figure { break-inside: avoid; }
-  /* Paper cannot scroll sideways: a drawing shrinks to the page however small. (A wide card needs no reset: on paper
-     the column is the whole content area, so it cannot grow past it.) */
-  .mermaid-wrapper .mermaid.rendered > svg { min-width: 0; }
+  /* Paper cannot scroll sideways, so a drawing shrinks to the page however small, and its card keeps the column: the
+     floor and the wide card are screen rules. */
   .md-body h1, .md-body h2, .md-body h3 { break-after: avoid; }
   .md-body a[data-link-type]::after { content: none !important; }
 }

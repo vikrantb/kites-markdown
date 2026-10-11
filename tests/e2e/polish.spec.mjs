@@ -4,6 +4,7 @@
 import { test, expect } from '@playwright/test';
 import { readdirSync } from 'node:fs';
 import { THEMES, open, renderSource, settled } from './visuals-helpers.mjs';
+import { waitForLayoutSettled } from './support/viewer.mjs';
 
 const SAMPLES = readdirSync(new URL('../../samples/', import.meta.url)).filter((f) => f.endsWith('.md')).sort();
 
@@ -449,18 +450,20 @@ const diagramSizes = (page) => page.$$eval('#mdBody .mermaid-wrapper', (ws) => w
   };
 }));
 
+const columnBox = (page) => page.evaluate(() => {
+  const body = document.getElementById('mdBody').getBoundingClientRect();
+  const area = document.getElementById('contentWrapper').getBoundingClientRect();
+  return { left: body.left, right: body.right, width: body.width, areaLeft: area.left, areaRight: area.right };
+});
+
 test('on a wide window a diagram much wider than the column uses the margins instead of shrinking, and the others keep the column', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await open(page, 'commented.md');
   const [wide] = await diagramSizes(page);
-  const col = await page.evaluate(() => {
-    const body = document.getElementById('mdBody').getBoundingClientRect();
-    const area = document.getElementById('contentWrapper').getBoundingClientRect();
-    return { left: body.left, right: body.right, width: body.width, areaLeft: area.left, areaRight: area.right };
-  });
+  const col = await columnBox(page);
   expect(wide.natural).toBeGreaterThan(1000);
   expect(wide.scale).toBeGreaterThan(0.85); // was 0.59: 8 px labels
-  expect(wide.width).toBeGreaterThan(col.width);
+  expect(wide.width).toBeGreaterThan(col.width * 1.2);
   expect(Math.abs((wide.left + wide.right) / 2 - (col.left + col.right) / 2)).toBeLessThan(1); // centred on the column
   expect(wide.left).toBeGreaterThanOrEqual(col.areaLeft);
   expect(wide.right).toBeLessThanOrEqual(col.areaRight);
@@ -470,21 +473,93 @@ test('on a wide window a diagram much wider than the column uses the margins ins
   expect(await page.$eval('#mdBody pre.mermaid', (b) => getComputedStyle(b).maskImage || getComputedStyle(b).webkitMaskImage)).toBe('none');
 
   await open(page, 'diagram-gallery.md');
+  let grown = 0;
   for (const d of await diagramSizes(page)) {
-    if (d.natural > 768) continue; // the journey grows too
-    expect(Math.abs(d.width - col.width), d.type).toBeLessThan(1); // the others line up with the text
+    // A card either lines up with the text or is at least a fifth wider than it (the journey grows).
+    if (Math.abs(d.width - col.width) < 1) continue;
+    expect(d.width, d.type).toBeGreaterThanOrEqual(col.width * 1.2 - 1);
+    grown++;
+  }
+  expect(grown).toBeGreaterThan(0);
+});
+
+test("in the desktop app's window (1180 px), where the margins would make a card only a tenth wider, a wide diagram keeps the column", async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 860 });
+  await open(page, 'commented.md');
+  const [wide] = await diagramSizes(page);
+  const col = await columnBox(page);
+  expect(col.areaRight - col.areaLeft - 80).toBeLessThan(col.width * 1.2); // positive control: the room is under a fifth
+  expect(wide.natural).toBeGreaterThan(col.width * 1.2); // and the drawing would use more
+  expect(Math.abs(wide.width - col.width)).toBeLessThan(1); // it overhung the text by 36 px a side
+  expect(wide.scrolls).toBe(false);
+});
+
+// On a laptop or a desktop nothing tells a reader that a drawing continues past its card, so a drawing there is always
+// whole: it shrinks to fit, and the expand button shows it at full size. That holds when its column narrows after it
+// was drawn: a sidebar opens, or the window shrinks.
+test('on a laptop or a desktop a diagram is never cut off, at any width and after its column narrows', async ({ page }) => {
+  await page.setViewportSize({ width: 1180, height: 860 }); // the desktop app's window
+  await open(page, 'kitchen-sink.md');
+  await renderSource(page, handoff());
+  const cut = async (label) => {
+    await waitForLayoutSettled(page);
+    return page.$$eval('#mdBody .mermaid-wrapper', (ws, where) => ws.map((w) => {
+      const box = w.querySelector('pre.mermaid');
+      const hidden = box.scrollWidth - box.clientWidth;
+      return hidden > 1 ? `${where}: ${w.dataset.diagramType} hides ${hidden} px` : null;
+    }).filter(Boolean), label);
+  };
+  const deploy = await page.$eval('#mdBody .mermaid-wrapper[data-diagram-type="flowchart-v2"] pre.mermaid', (b) => b.querySelector('svg').viewBox.baseVal.width / b.clientWidth);
+  expect(deploy).toBeGreaterThan(3); // positive control: the pipeline is over three times as wide as its card
+  expect(await cut('1180')).toEqual([]);
+  await page.evaluate(() => mdvToggleSidebar(true)); // the comments sidebar narrows the column to about 500 px
+  expect(await page.$eval('#mdBody', (b) => b.getBoundingClientRect().width)).toBeLessThan(560);
+  expect(await cut('1180, comments open')).toEqual([]);
+  await page.evaluate(() => mdvToggleSidebar(false));
+  for (const width of [1366, 1000, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await cut(String(width))).toEqual([]);
   }
 });
 
+// A section change while scrolling lays the page out again, so nothing may make that layout dearer. A size container
+// around the document (container-type), with the diagram cards sized against it, made each layout about four times as
+// dear in Chrome (0.53 against 0.13 ms on a 27-section handoff with nine diagrams). The cards get their room from
+// mermaid.js instead, and still use the margins.
+test('the room a wide diagram card uses is measured, not queried: nothing around the document is a size container', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open(page, 'commented.md');
+  const [wide] = await diagramSizes(page);
+  const col = await columnBox(page);
+  expect(wide.width).toBeGreaterThan(col.width * 1.2); // positive control: a card uses the margins here
+  expect(await page.$$eval('body *', (els) => els.filter((el) => (el.contains(document.getElementById('mdBody')) || el.closest('#mdBody'))
+    && getComputedStyle(el).containerType !== 'normal').map((el) => el.id || el.className))).toEqual([]);
+});
+
+test('on a laptop, a Gantt chart drawn before the comments sidebar opens shrinks with its column', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await open(page, 'diagram-gallery.md');
+  const gantt = () => page.$eval('#mdBody .mermaid-wrapper[data-diagram-type="gantt"] pre.mermaid', (b) => ({
+    hidden: b.scrollWidth - b.clientWidth, drawn: b.querySelector('svg').getBoundingClientRect().width, box: b.clientWidth,
+  }));
+  const before = await gantt();
+  await page.evaluate(() => mdvToggleSidebar(true));
+  await waitForLayoutSettled(page);
+  const after = await gantt();
+  expect(after.box).toBeLessThan(before.drawn); // positive control: the column became narrower than the drawing
+  expect(after.hidden).toBeLessThanOrEqual(1); // it hid 96 px, its last section among them
+  expect(after.drawn).toBeLessThanOrEqual(after.box + 1);
+});
+
 test('printed, a wide diagram shrinks to fit the page, since paper cannot scroll', async ({ page }) => {
-  await page.setViewportSize({ width: 720, height: 900 }); // about a printed page's width
+  await page.setViewportSize({ width: 390, height: 844 });
   await open(page, 'commented.md');
   const state = () => page.$eval('#mdBody .mermaid-wrapper', (w) => {
     const box = w.querySelector('pre.mermaid');
     return { scrolls: box.scrollWidth > box.clientWidth + 1, card: w.getBoundingClientRect().width,
              column: document.getElementById('mdBody').getBoundingClientRect().width };
   });
-  expect((await state()).scrolls).toBe(true); // positive control: on screen at this width it stops at its floor
+  expect((await state()).scrolls).toBe(true); // positive control: on a phone's screen it stops at its floor
   await page.emulateMedia({ media: 'print' });
   const r = await state();
   expect(r.scrolls).toBe(false);
@@ -554,6 +629,57 @@ test.describe('at phone width', () => {
     });
     expect(r.ticks).toBeGreaterThan(4); // positive control: the probe found the tick labels
     expect(r.gap).toBeGreaterThan(2); // it ran over the tick labels: Mermaid measured them on a drawing shrunk to the window
+  });
+
+  test('the page does not widen while a diagram is drawn: Mermaid\'s 1,600 px scratch area is out of its flow', async ({ page }) => {
+    await open(page, 'kitchen-sink.md');
+    await page.evaluate(() => {
+      window.__mdvDrawWidths = [];
+      new MutationObserver(() => {
+        if (document.querySelector('body > div[id^="dmdv-mermaid-"]')) window.__mdvDrawWidths.push(document.documentElement.scrollWidth);
+      }).observe(document.body, { childList: true });
+    });
+    await page.evaluate(() => setTheme('dark')); // every diagram is drawn again, in the new palette
+    await page.waitForFunction(() => [...document.querySelectorAll('#mdBody .mermaid')].every((el) => (el.dataset.mdvPalette || '').startsWith('dark|')));
+    const widths = await page.evaluate(() => window.__mdvDrawWidths);
+    expect(widths.length).toBeGreaterThanOrEqual(3); // positive control: the probe saw the scratch area during the draws
+    expect(Math.max(...widths)).toBeLessThanOrEqual(390); // it was 1,600 at every draw
+  });
+
+  test('a diagram that scrolls sideways is a keyboard stop in every engine, and its focus ring is drawn around its card', async ({ page }) => {
+    await open(page, 'diagram-gallery.md');
+    const boxes = await page.$$eval('#mdBody .mermaid-wrapper pre.mermaid', (ps) => ps.map((p) => ({
+      type: p.closest('.mermaid-wrapper').dataset.diagramType, scrolls: p.scrollWidth > p.clientWidth + 1,
+      tab: p.getAttribute('tabindex'), role: p.getAttribute('role'), label: p.getAttribute('aria-label'),
+    })));
+    expect(boxes.filter((b) => b.scrolls).length).toBeGreaterThan(5); // positive controls: some scroll, some do not
+    expect(boxes.filter((b) => !b.scrolls).length).toBeGreaterThan(0);
+    for (const b of boxes) {
+      // WebKit (the Mac app) only stops on a scroller with a tabindex; Chrome stops on one by itself.
+      expect(b.tab, b.type).toBe(b.scrolls ? '0' : null);
+      expect(b.role, b.type).toBe(b.scrolls ? 'group' : null);
+      if (b.scrolls) expect(b.label, b.type).toMatch(/, scrolls sideways$/);
+    }
+
+    // Tab from the journey's expand button onto its drawing: the ring shows in the strip just left of the card. The
+    // drawing's fade masks its own ring, so before there was nothing to see.
+    const card = page.locator('#mdBody .mermaid-wrapper[data-diagram-type="journey"]');
+    await card.scrollIntoViewIfNeeded();
+    const box = await card.boundingBox();
+    const strip = () => page.screenshot({ clip: { x: box.x - 5, y: box.y + 50, width: 4, height: 40 } });
+    await card.locator('.diagram-expand-btn').focus();
+    const unfocused = await strip();
+    await page.keyboard.press('Tab');
+    await expect(card.locator('pre.mermaid')).toBeFocused();
+    expect((await card.boundingBox()).y).toBe(box.y); // positive control: the page did not move
+    expect((await strip()).equals(unfocused)).toBe(false);
+    // The arrow keys then scroll the drawing.
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => card.locator('pre.mermaid').evaluate((b) => b.scrollLeft)).toBeGreaterThan(0);
+
+    // On a wide screen nothing scrolls, so no drawing is a stop: the observer takes the marks off as the page widens.
+    await page.setViewportSize({ width: 1366, height: 900 });
+    await expect.poll(() => page.$$eval('#mdBody pre.mermaid[tabindex]', (ps) => ps.length)).toBe(0);
   });
 
   // A guard over every sample: nothing in the document or the toolbar reaches past the side of the screen. Something
