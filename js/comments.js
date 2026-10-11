@@ -44,9 +44,10 @@ let mdvDocTitle = '';  // the title the document was rendered with (it may carry
 let mdvDocText = null;     // the current document as last committed (a loader replaces rawMarkdown before we hear of it)
 let mdvLoadedText = null;  // the current document as it was opened, before any comment change
 let mdvLockReason = null;  // why comments are read-only for the current document, or null
+let mdvLockKind = null;    // 'block' (its comment block cannot be read) or 'encoding' (the file is not UTF-8 text)
 let mdvOwnRender = false;  // true while this file re-renders the current document itself
-// The version of a file the viewer last read or wrote, per handle: {text, lastModified, size}, or
-// {overwrite: true} when the reader picked the file in a Save dialog. mdvWriteDocument checks it.
+// The version of a file the viewer last read or wrote, per handle: {text, gen, notUtf8}, or {overwrite: true, gen}
+// for a new file the reader picked in a Save dialog. mdvWriteDocument compares the file with it before writing.
 const mdvBases = new WeakMap();
 
 // ------- SHA-256 (synchronous, so anchors also work where crypto.subtle is missing) -------
@@ -441,7 +442,7 @@ function mdvSameBlocks(body, blocks) {
 // Returns {offset, index}: the source offset of the line where the top-level block holding `elem` begins,
 // and that block's number. A marker there never splits a list, a table or a quote. Null when unknown.
 function mdvLocateInsertion(elem) {
-  const src = String(rawMarkdown || '');
+  const src = String(mdvDocText || '');
   const parts = mdvSplitFrontmatter(src);
   if (!parts) return null;
   const tokens = mdvParseMarkdown(parts.body);
@@ -540,28 +541,58 @@ async function mdvGetHandle(key) {
 // ------- The single save seam -------
 function mdvIsDesktop() { return !!(window.mdvHost && window.mdvHost.kind === 'desktop'); }
 
+// Each version of a file that the viewer takes as its base by READING it gets a new generation number: opening or
+// reloading the file, linking it, and every document load that keeps it linked. The viewer's own writes keep the
+// number. A queued save carries the generation its text was made from, and is refused ('stale') once the file was
+// read again, so a change made before a reload can never be written over the version the reload showed.
+let mdvGen = 0;
+// The desktop window's file: {path, text, mtimeMs, gen}. `text` is the version the document on screen was made from;
+// `mtimeMs` is the file's mtime when the viewer last read or wrote exactly that text, or null until it has checked.
+let mdvDesktopBase = null;
+// Comment changes the reader chose to discard ("Reload from disk"): {key, loadSeq}. Their saves end quietly.
+const mdvDiscarded = [];
+function mdvIsDiscarded(key, loadSeq) { return !!key && mdvDiscarded.some((d) => d.key === key && d.loadSeq === loadSeq); }
+
 // What a save of the current document writes to: the desktop window's file, or a File System Access handle
 function mdvCurrentTarget() {
-  if (mdvIsDesktop()) return window.mdvHost.currentPath ? { kind: 'desktop', key: 'desktop' } : null;
-  return mdvFileHandle ? { kind: 'handle', handle: mdvFileHandle, key: mdvFileHandle } : null;
+  if (mdvIsDesktop()) {
+    const b = mdvDesktopBase;
+    return window.mdvHost.currentPath && b && b.path === window.mdvHost.currentPath ? { kind: 'desktop', key: 'desktop', gen: b.gen } : null;
+  }
+  if (!mdvFileHandle) return null;
+  const base = mdvBases.get(mdvFileHandle);
+  return { kind: 'handle', handle: mdvFileHandle, key: mdvFileHandle, gen: base ? base.gen : undefined };
 }
 
 // THE ONLY FUNCTION THAT WRITES A DOCUMENT.
-//   Desktop app: mdvHost.saveDocument(mdvHost.currentPath, text, mdvHost.currentMtimeMs); the app refuses
-//   to write when the file's mtime differs.
-//   Browser: the File System Access handle the document was read from, after checking that the file still
-//   holds the version the viewer read or last wrote (lastModified and size, then the text itself).
-// On a conflict nothing is written: the reader is told, and the edit stays in memory (rawMarkdown and the
-// notice in the sidebar keep it). opts: {handle, overwrite, currentMtimeMs, name, quiet}. `overwrite` is
-// only ever set by the reader's own choice in the conflict notice.
-// Resolves {ok: true} or {ok: false, reason, message}; reason is 'conflict', 'permission', 'no-target',
-// 'unverified', 'not-allowed' or 'io'.
+//   Desktop app: mdvHost.saveDocument(mdvHost.currentPath, text, mtime), with the mtime of the version the viewer read
+//   or last wrote. A version it has not checked yet (a new document load, or one the app saw change) is first read
+//   with mdvHost.readDocument and compared with the text the document was made from.
+//   Browser: the File System Access handle the document was read from, after reading the file and comparing it with
+//   the version the viewer read or last wrote.
+// On a conflict nothing is written: the reader is told, and the edit stays in memory (the document on screen and the
+// notice in the sidebar keep it). opts: {handle, overwrite, disk, gen, loadSeq, version, name}. `overwrite` is only
+// ever set by the reader's own choice in a conflict notice, and replaces `disk`, the version that notice showed, and
+// no newer one. `gen`, `loadSeq` and `version` say which change of which document the text holds (the save queue
+// sets them). Resolves {ok: true} or {ok: false, reason, message}; reason is 'conflict', 'permission', 'no-target',
+// 'unverified', 'encoding', 'stale', 'not-allowed' or 'io'. A conflict also carries `disk`, the version found.
 let mdvWriteLock = Promise.resolve(); // no two writes ever overlap, whoever calls
 
 async function mdvWriteDocument(text, opts) {
-  opts = opts || {};
-  const name = opts.name || mdvDownloadName();
-  const run = mdvWriteLock.then(() => (mdvIsDesktop() ? mdvWriteDesktop(String(text), opts) : mdvWriteHandle(String(text), opts)));
+  opts = Object.assign({}, opts);
+  text = String(text);
+  const desktop = mdvIsDesktop();
+  if (!desktop) opts.handle = opts.handle || mdvFileHandle; // the file is the one linked now, not when the write runs
+  const ctx = {
+    text,
+    name: opts.name || mdvDownloadName(),
+    handle: desktop ? null : opts.handle,
+    key: desktop ? 'desktop' : opts.handle,
+    loadSeq: opts.loadSeq != null ? opts.loadSeq : mdvLoadSeq,
+    version: opts.version != null ? opts.version : (text === mdvDocText ? mdvDocVersion : -1),
+    gen: opts.gen
+  };
+  const run = mdvWriteLock.then(() => (desktop ? mdvWriteDesktop(text, opts) : mdvWriteHandle(text, opts)));
   mdvWriteLock = run.catch(() => {});
   let res;
   try {
@@ -569,91 +600,179 @@ async function mdvWriteDocument(text, opts) {
   } catch (e) {
     res = { ok: false, reason: 'io', message: (e && e.message) || String(e) };
   }
-  if (!opts.quiet) mdvReportWrite(res, { text: String(text), name, handle: opts.handle || mdvFileHandle });
+  mdvReportWrite(res, ctx);
   return res;
+}
+
+function mdvStale() { return { ok: false, reason: 'stale', message: 'The file was read again after this change was made.' }; }
+
+// Reads the desktop window's file: {doc}, or {res}, the failure to report
+async function mdvReadDesktop(path) {
+  const host = window.mdvHost;
+  if (typeof host.readDocument !== 'function') {
+    return { res: { ok: false, reason: 'unverified', message: 'The app cannot read the file back, so the viewer will not overwrite it.' } };
+  }
+  let doc;
+  try {
+    doc = await host.readDocument(path);
+  } catch (e) {
+    return { res: { ok: false, reason: 'io', message: 'The file could not be read: ' + ((e && (e.message || e.code)) || String(e)) } };
+  }
+  if (!doc || typeof doc.text !== 'string') return { res: { ok: false, reason: 'io', message: 'The file could not be read.' } };
+  return { doc };
 }
 
 async function mdvWriteDesktop(text, opts) {
   const host = window.mdvHost;
   const path = host.currentPath;
-  if (!path) return { ok: false, reason: 'no-target', message: 'This window has no file to save into.' };
-  const expected = opts.overwrite && opts.currentMtimeMs != null ? opts.currentMtimeMs : host.currentMtimeMs;
+  const base = mdvDesktopBase;
+  if (!path || !base || base.path !== path) return { ok: false, reason: 'no-target', message: 'This window has no file to save into.' };
+  if (opts.gen != null && opts.gen !== base.gen) return mdvStale();
+  let expected = base.mtimeMs;
+  if (opts.overwrite || !Number.isFinite(expected) || expected !== host.currentMtimeMs) {
+    // A version of the file the viewer has not checked (or one the reader asked to replace): read it first
+    const read = await mdvReadDesktop(path);
+    if (read.res) return read.res;
+    const disk = { text: read.doc.text, mtimeMs: read.doc.mtimeMs };
+    const wanted = opts.overwrite ? (opts.disk && typeof opts.disk.text === 'string' ? opts.disk.text : disk.text) : base.text;
+    if (disk.text !== wanted) {
+      return { ok: false, reason: 'conflict', message: 'The file on disk is not the version the viewer read.', currentMtimeMs: disk.mtimeMs, disk };
+    }
+    expected = disk.mtimeMs;
+  }
+  if (!Number.isFinite(expected)) {
+    return { ok: false, reason: 'unverified', message: 'The app did not say which version of the file is on disk, so the viewer will not overwrite it.' };
+  }
+  if (mdvDesktopBase !== base) return mdvStale(); // the window's file was read again while this save waited
   const r = await host.saveDocument(path, text, expected);
   if (r && r.ok) {
-    try { host.currentMtimeMs = r.mtimeMs; } catch (e) { /* the bridge keeps it itself */ }
+    const mtime = Number(r.mtimeMs);
+    if (mdvDesktopBase === base) { base.text = text; base.mtimeMs = Number.isFinite(mtime) ? mtime : null; }
+    if (Number.isFinite(mtime)) { try { host.currentMtimeMs = mtime; } catch (e) { /* the bridge keeps it itself */ } }
     return { ok: true };
   }
-  return {
-    ok: false,
-    reason: (r && r.reason) || 'io',
-    message: (r && r.message) || 'The file could not be saved.',
-    currentMtimeMs: r ? r.currentMtimeMs : undefined
-  };
+  const res = { ok: false, reason: (r && r.reason) || 'io', message: (r && r.message) || 'The file could not be saved.', currentMtimeMs: r ? r.currentMtimeMs : undefined };
+  if (res.reason === 'conflict') {
+    // The version the reader is told about, so "Overwrite the file" replaces that one and no newer one
+    const read = await mdvReadDesktop(path);
+    if (read.doc) {
+      res.disk = { text: read.doc.text, mtimeMs: read.doc.mtimeMs };
+      if (!Number.isFinite(res.currentMtimeMs)) res.currentMtimeMs = read.doc.mtimeMs;
+    }
+  }
+  return res;
+}
+
+// Decodes a file's bytes. A file that is not valid UTF-8 is still shown (invalid bytes become U+FFFD), but `utf8` is
+// false and the viewer never writes it: rewriting it would replace those bytes for good. A UTF-8 byte order mark is
+// reported (and left out of `text`), so a save can keep it.
+function mdvDecode(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const bom = bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF;
+  try {
+    return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), bom, utf8: true };
+  } catch (e) {
+    return { text: new TextDecoder('utf-8').decode(bytes), bom, utf8: false };
+  }
+}
+
+// Reads a file through its handle: {file, text, bom, utf8}, or {changing: true} when it keeps changing while it is
+// read (Chrome refuses to read a File snapshot of a file that changed after the snapshot was taken)
+async function mdvReadHandle(handle) {
+  for (let i = 0; i < 3; i++) {
+    const file = await handle.getFile();
+    try {
+      return Object.assign({ file }, mdvDecode(await file.arrayBuffer()));
+    } catch (e) {
+      if (!e || e.name !== 'NotReadableError') throw e;
+    }
+  }
+  return { changing: true };
 }
 
 async function mdvWriteHandle(text, opts) {
-  const handle = opts.handle || mdvFileHandle;
+  const handle = opts.handle;
   if (!handle) return { ok: false, reason: 'no-target', message: 'There is no file to save into yet.' };
   if ((await handle.queryPermission({ mode: 'readwrite' })) !== 'granted') {
     return { ok: false, reason: 'permission', message: 'The browser has not allowed saving into this file yet.' };
   }
   const base = mdvBases.get(handle);
   if (!base) return { ok: false, reason: 'unverified', message: 'The viewer does not know which version of this file was opened, so it will not overwrite it.' };
-  if (!opts.overwrite && !base.overwrite) {
-    const conflict = { ok: false, reason: 'conflict', message: 'The file changed on disk after the viewer read it.' };
-    const file = await handle.getFile();
-    const sameStamp = base.lastModified != null && file.lastModified === base.lastModified && file.size === base.size;
-    if (!sameStamp) {
-      let onDisk;
-      try { onDisk = await file.text(); } catch (e) {
-        if (e && e.name === 'NotReadableError') return conflict; // it changed again while being read
-        throw e;
-      }
-      if (onDisk !== base.text) return conflict;
+  if (opts.gen != null && opts.gen !== base.gen) return mdvStale();
+  let bom = false;
+  let checked = null;
+  if (!base.overwrite) {
+    // The file must hold the version this text was made from (for "Overwrite", the version the reader was shown).
+    // The text is always compared: a time stamp can stay the same through an edit.
+    const disk = await mdvReadHandle(handle);
+    if (disk.changing) return { ok: false, reason: 'conflict', message: 'The file kept changing while the viewer read it.', disk: null };
+    if (!disk.utf8) {
+      return { ok: false, reason: 'encoding', message: '"' + (handle.name || 'The file') + '" is not UTF-8 text, so the viewer will not rewrite it: its other characters would be replaced.' };
     }
+    const wanted = opts.overwrite ? (opts.disk && typeof opts.disk.text === 'string' ? opts.disk.text : disk.text) : base.text;
+    if (disk.text !== wanted) return { ok: false, reason: 'conflict', message: 'The file on disk is not the version the viewer read.', disk: { text: disk.text } };
+    bom = disk.bom;
+    checked = disk.file;
   }
+  if (mdvBases.get(handle) !== base) return mdvStale(); // the file was read again while this save waited
   const w = await handle.createWritable();
   try {
-    await w.write(text);
+    await w.write(bom ? '\uFEFF' + text : text);
+    // Just before the write lands, the file must still be the one that was checked, and still this version
+    const now = checked ? await handle.getFile() : null;
+    if (now && (now.lastModified !== checked.lastModified || now.size !== checked.size)) {
+      await w.abort();
+      return { ok: false, reason: 'conflict', message: 'The file changed on disk while the viewer was saving.', disk: null };
+    }
+    if (mdvBases.get(handle) !== base) { await w.abort(); return mdvStale(); }
     await w.close();
   } catch (e) {
     try { await w.abort(); } catch (_) { /* already closed */ }
     throw e;
   }
-  const written = await handle.getFile();
-  mdvBases.set(handle, { text, lastModified: written.lastModified, size: written.size });
+  mdvBases.set(handle, { text, gen: base.gen }); // the next save compares the file with this text again
   return { ok: true };
 }
 
-// Tells the reader how a write went
+// Tells the reader how a write went. A write the reader discarded ("Reload from disk"), or one that a newer read
+// of its file made stale, says nothing: the save queue keeps its text when it still matters.
 function mdvReportWrite(res, ctx) {
-  const key = mdvIsDesktop() ? 'desktop' : ctx.handle;
+  if (res.reason === 'stale' || mdvIsDiscarded(ctx.key, ctx.loadSeq)) {
+    if (mdvWritesQueued <= 1 && !mdvDirty) mdvSetStatus('');
+    return;
+  }
+  const key = ctx.key;
   if (res.ok) {
-    // A successful write of this file settles its earlier conflict or error
-    if (key) mdvRemoveNotices((n) => n.key === key && (n.kind === 'conflict' || n.kind === 'error'));
+    // A successful write settles a notice only when it holds every change that notice keeps: the same file, the
+    // same document load, and a version at least as new
+    if (key) mdvRemoveNotices((n) => n.key === key && (n.kind === 'conflict' || n.kind === 'error') && n.loadSeq === ctx.loadSeq && n.version <= ctx.version);
     mdvSetStatus('Saved ✓');
     clearTimeout(mdvStatusTimer);
     mdvStatusTimer = setTimeout(() => { if (!mdvDirty) mdvSetStatus(''); }, 3000);
     return;
   }
+  const notice = { key, name: ctx.name, text: ctx.text, handle: ctx.handle, loadSeq: ctx.loadSeq, version: ctx.version, gen: ctx.gen };
   if (res.reason === 'conflict') {
     mdvSetStatus('Not saved: the file changed on disk', 'error');
-    mdvAddNotice({ kind: 'conflict', key, name: ctx.name, text: ctx.text, handle: ctx.handle, currentMtimeMs: res.currentMtimeMs });
+    mdvAddNotice(Object.assign(notice, { kind: 'conflict', disk: res.disk || null }));
     mdvToggleSidebar(true);
   } else if (res.reason === 'permission') {
     mdvSetStatus('Not saved: click 📄 or press Cmd/Ctrl+S to allow saving', 'error');
   } else if (res.reason === 'no-target') {
     mdvSetStatus('Not saved: click 📄 or press Cmd/Ctrl+S to choose where to save', 'error');
+  } else if (res.reason === 'encoding') {
+    mdvSetStatus('Not saved: the file is not UTF-8 text', 'error');
+    mdvAddNotice(Object.assign(notice, { kind: 'error', message: res.message, retry: false }));
   } else {
     mdvSetStatus('Not saved', 'error');
     console.error('MDV save failed:', res.reason, res.message);
-    mdvAddNotice({ kind: 'error', key, name: ctx.name, text: ctx.text, handle: ctx.handle, message: res.message });
+    mdvAddNotice(Object.assign(notice, { kind: 'error', message: res.message }));
   }
 }
 
-// Writes queue up one after another, each bound to the file it was made for, so switching documents cannot
-// send one document's text to another's file. A write that a newer version of the same file supersedes is
-// skipped.
+// Writes queue up one after another, each bound to the file and the version of it that its text was made from, so
+// switching documents cannot send one document's text to another's file, and a reload cannot be overwritten by a
+// change made before it. A write that a newer change of the same document load supersedes is skipped.
 let mdvWriteChain = Promise.resolve();
 let mdvWritesQueued = 0;
 const mdvNewestJob = new Map();
@@ -665,18 +784,19 @@ function mdvEnqueueWrite(job) {
   mdvWritesQueued++;
   mdvSetStatus('Saving…', 'saving');
   const run = mdvWriteChain.then(async () => {
-    if (mdvNewestJob.get(job.target.key) !== job) return { ok: true, superseded: true };
-    mdvNewestJob.delete(job.target.key);
-    const res = await mdvWriteDocument(job.text, { handle: job.target.handle, name: job.name });
+    const newest = mdvNewestJob.get(job.target.key);
+    if (newest !== job && newest && newest.loadSeq === job.loadSeq && newest.gen === job.gen) return { ok: true, superseded: true };
+    if (newest === job) mdvNewestJob.delete(job.target.key);
+    const res = await mdvWriteDocument(job.text, { handle: job.target.handle, name: job.name, gen: job.gen, loadSeq: job.loadSeq, version: job.version });
     const current = job.loadSeq === mdvLoadSeq;
     if (res.ok) {
       if (current && job.version === mdvDocVersion) mdvDirty = false;
-    } else {
-      // The change is not in the file. If its document is still on screen it stays dirty, and leaving it
-      // later keeps it in a notice; if the reader already moved on, keep it in a notice now.
-      if (current && job.version === mdvQueuedVersion.version) mdvQueuedVersion = {};
+    } else if (!mdvIsDiscarded(job.target.key, job.loadSeq)) {
+      // The change is not in the file. If its document is still on screen it stays dirty, and leaving it later
+      // keeps it in a notice; if the reader already moved on (or the file was read again), keep it in a notice now.
+      if (mdvQueuedVersion.loadSeq === job.loadSeq && mdvQueuedVersion.version === job.version) mdvQueuedVersion = {};
       const kept = mdvNotices.some((n) => n.text === job.text);
-      if (!current && !kept) mdvAddNotice({ kind: 'unsaved', key: null, name: job.name, text: job.text });
+      if (!current && !kept) mdvAddNotice({ kind: 'unsaved', key: null, name: job.name, text: job.text, loadSeq: job.loadSeq, version: job.version });
     }
     return res;
   });
@@ -690,13 +810,13 @@ function mdvFlushWrites() { return mdvWriteChain; }
 // Called after every comment change: writes the committed document to its file, if it has one
 function mdvRequestSave() {
   const target = mdvCurrentTarget();
-  if (!target) {
+  if (!target || mdvDocText == null) {
     mdvSetStatus(('showSaveFilePicker' in window)
       ? 'Not saved: click 📄 or press Cmd/Ctrl+S to choose where to save'
       : 'Not saved: press Cmd/Ctrl+S to download a copy with your comments', 'error');
     return Promise.resolve({ ok: false, reason: 'no-target' });
   }
-  return mdvEnqueueWrite({ text: rawMarkdown, target, name: mdvDownloadName(), loadSeq: mdvLoadSeq, version: mdvDocVersion });
+  return mdvEnqueueWrite({ text: mdvDocText, target, name: mdvDownloadName(), loadSeq: mdvLoadSeq, version: mdvDocVersion, gen: target.gen });
 }
 
 // Save now (Cmd/Ctrl+S, the toolbar, linking a file). allowPrompt: we are inside a user gesture, so a Save
@@ -759,7 +879,7 @@ function mdvDownloadText(text, name) {
 }
 
 function mdvDownloadFallback() {
-  mdvDownloadText(rawMarkdown, mdvDownloadName());
+  mdvDownloadText(mdvDocText == null ? rawMarkdown : mdvDocText, mdvDownloadName());
   mdvDirty = false; // the comments are safe in the downloaded copy
   mdvSetStatus('Downloaded a copy: replace the original with it to keep your comments');
   return true;
@@ -778,7 +898,10 @@ let mdvNotices = [];
 let mdvNoticeSeq = 0;
 
 function mdvAddNotice(n) {
-  mdvNotices = mdvNotices.filter((x) => !(n.key && x.key === n.key));
+  // A newer notice replaces an older one only when it holds every change of that one: the same file, the same
+  // document load, and a version at least as new
+  const holdsAll = (x) => n.key && x.key === n.key && x.loadSeq === n.loadSeq && x.version >= 0 && n.version >= x.version;
+  mdvNotices = mdvNotices.filter((x) => !holdsAll(x));
   n.id = 'mdvn' + (++mdvNoticeSeq);
   mdvNotices.push(n);
   mdvRenderNotices();
@@ -812,16 +935,23 @@ function mdvNoticeElement(n) {
   const actions = document.createElement('div');
   actions.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:8px';
   const name = '"' + (n.name || 'this file') + '"';
+  const current = mdvNoticeIsCurrent(n);
   if (n.kind === 'locked') {
     title.textContent = 'Comments are read-only for this file';
-    text.textContent = 'The comment block at the end of ' + name + ' could not be read: ' + n.reason +
-      '. It is kept exactly as it is, so nothing is lost. Fix or remove it in a text editor, then open the file again.';
+    text.textContent = n.lockKind === 'encoding'
+      ? name + ' is not UTF-8 text. Saving comments would replace its other characters, so the viewer never writes it. ' +
+        'Save it as UTF-8 in a text editor, then open it again.'
+      : 'The comment block of ' + name + ' could not be read: ' + n.reason +
+        '. It is kept exactly as it is, so nothing is lost. Fix or remove it in a text editor, then open the file again.';
   } else if (n.kind === 'conflict') {
     title.textContent = 'Not saved: the file changed on disk';
-    text.textContent = name + ' was changed by another program after the viewer read it. Your comment changes are kept here until you choose:';
-    if (mdvNoticeIsCurrent(n)) actions.appendChild(mdvNoticeButton('Reload from disk', () => mdvNoticeReload(n)));
+    text.textContent = name + ' on disk is not the version the viewer opened: another program changed it, or it is a different file. ' +
+      'Your comment changes are kept here until you choose:';
+    // Reloading or overwriting is for the document on screen; an earlier one's changes can be downloaded
+    if (current) actions.appendChild(mdvNoticeButton('Reload from disk', () => mdvNoticeReload(n)));
     actions.appendChild(mdvNoticeButton('Download my version', () => mdvDownloadText(n.text, n.name)));
-    actions.appendChild(mdvNoticeButton('Overwrite the file', () => mdvNoticeOverwrite(n), true));
+    if (current) actions.appendChild(mdvNoticeButton('Overwrite the file', () => mdvNoticeOverwrite(n), true));
+    else actions.appendChild(mdvNoticeButton('Dismiss', () => mdvRemoveNotices((x) => x.id === n.id)));
   } else if (n.kind === 'unsaved') {
     title.textContent = 'Comment changes not saved';
     text.textContent = name + ' was closed with comment changes that were never saved into a file.';
@@ -830,7 +960,7 @@ function mdvNoticeElement(n) {
   } else {
     title.textContent = 'Not saved';
     text.textContent = (n.message || 'The file could not be saved.') + ' Your comment changes are kept here.';
-    if (mdvNoticeIsCurrent(n)) actions.appendChild(mdvNoticeButton('Try again', () => mdvRequestSave(), true));
+    if (current && n.retry !== false) actions.appendChild(mdvNoticeButton('Try again', () => mdvRequestSave(), true));
     actions.appendChild(mdvNoticeButton('Download my version', () => mdvDownloadText(n.text, n.name)));
     actions.appendChild(mdvNoticeButton('Dismiss', () => mdvRemoveNotices((x) => x.id === n.id)));
   }
@@ -851,55 +981,81 @@ function mdvRenderNotices() {
     list.parentNode.insertBefore(area, list);
   }
   area.textContent = '';
-  const items = (mdvLockReason ? [{ kind: 'locked', name: mdvDocName, reason: mdvLockReason }] : []).concat(mdvNotices);
+  const items = (mdvLockReason ? [{ kind: 'locked', lockKind: mdvLockKind, name: mdvDocName, reason: mdvLockReason }] : []).concat(mdvNotices);
   area.style.display = items.length ? '' : 'none';
   items.forEach((n) => area.appendChild(mdvNoticeElement(n)));
 }
 
-// True when a notice is about the document on screen (its file is the current save target)
+// True when a notice is about the document on screen: the same document load, and its file is the save target
 function mdvNoticeIsCurrent(n) {
+  if (n.loadSeq !== mdvLoadSeq) return false;
   return mdvIsDesktop() ? n.key === 'desktop' : (!!n.handle && n.handle === mdvFileHandle);
 }
 
 async function mdvNoticeReload(n) {
   if (!confirm('Show the version on disk? Your unsaved comment changes will be discarded (use "Download my version" first to keep them).')) return;
   const wasDirty = mdvDirty;
+  const seq = mdvLoadSeq;
   mdvDirty = false; // the reader chose to discard them: the reload must not keep them as "unsaved"
   mdvRemoveNotices((x) => x.id === n.id);
-  if (!(await mdvReloadFromDisk())) {
-    mdvDirty = wasDirty;
-    mdvAddNotice(n);
-    mdvShowToast('The file could not be read again; your comment changes are still here.', 'error');
+  let ok = false;
+  try { ok = await mdvReloadFromDisk(); } catch (e) { ok = false; }
+  if (ok) {
+    // The changes of that document load are discarded: its saves still queued or running end quietly
+    mdvDiscarded.push({ key: n.key, loadSeq: n.loadSeq });
+    mdvRemoveNotices((x) => x.key === n.key && x.loadSeq === n.loadSeq && (x.kind === 'conflict' || x.kind === 'error'));
+    return;
   }
+  // Nothing is discarded when the file's version could not be shown
+  if (mdvLoadSeq === seq) mdvDirty = wasDirty;
+  mdvAddNotice(n);
+  mdvShowToast(mdvLoadSeq === seq
+    ? 'The file could not be read again; your comment changes are still here.'
+    : 'The file was read again but could not be shown; your comment changes are kept in the comments panel.', 'error');
 }
 
 async function mdvNoticeOverwrite(n) {
-  if (!confirm('Replace the file on disk with your version? Changes made to it in the other program will be lost.')) return;
-  const res = await mdvWriteDocument(n.text, { handle: n.handle, overwrite: true, currentMtimeMs: n.currentMtimeMs, name: n.name });
+  if (!confirm('Replace ' + (n.name ? '"' + n.name + '"' : 'the file') + ' on disk with your version? Changes made to it in the other program will be lost.')) return;
+  const res = await mdvWriteDocument(n.text, { handle: n.handle, overwrite: true, disk: n.disk, name: n.name, loadSeq: n.loadSeq, version: n.version });
   if (res.ok) {
     mdvRemoveNotices((x) => x.id === n.id);
-    if (mdvNoticeIsCurrent(n) && n.text === rawMarkdown) mdvDirty = false;
+    if (mdvNoticeIsCurrent(n) && n.text === mdvDocText) mdvDirty = false;
   }
 }
 
-// Reads the current document again from its file and shows it
+// Reads the current document again from its file and shows it. False when it could not be read or shown.
 async function mdvReloadFromDisk() {
   if (mdvIsDesktop()) {
     const host = window.mdvHost;
-    if (!host.currentPath || typeof host.readDocument !== 'function') return false;
-    const doc = await host.readDocument(host.currentPath);
-    if (!doc || typeof doc.text !== 'string') return false;
+    if (!host.currentPath) return false;
+    const read = await mdvReadDesktop(host.currentPath);
+    if (read.res) return false;
+    const doc = read.doc;
     try { host.currentMtimeMs = doc.mtimeMs; } catch (e) { /* the bridge keeps it itself */ }
     rawMarkdown = doc.text;
     currentFileName = doc.name || currentFileName;
-    renderMarkdown(doc.text, doc.name || mdvDocName);
+    try {
+      renderMarkdown(doc.text, doc.name || mdvDocName);
+    } catch (e) {
+      console.warn('MDV: the version on disk could not be shown:', e);
+      return false;
+    }
+    // The version just read is the window's file: the next save needs no second read
+    if (mdvDesktopBase && mdvDesktopBase.text === doc.text && Number.isFinite(doc.mtimeMs)) mdvDesktopBase.mtimeMs = doc.mtimeMs;
     return true;
   }
   if (!mdvFileHandle) return false;
-  try { return await mdvOpenWithHandle(mdvFileHandle, { prompt: false }); } catch (e) { return false; }
+  try {
+    return await mdvOpenWithHandle(mdvFileHandle, { prompt: false });
+  } catch (e) {
+    console.warn('MDV: the version on disk could not be read or shown:', e);
+    return false;
+  }
 }
 
 // ------- Opening files and linking them for saving -------
+const MDV_PICKER_TYPES = [{ description: 'Markdown', accept: { 'text/plain': ['.md', '.markdown', '.txt'] } }];
+
 async function mdvPickFile() {
   if (mdvIsDesktop()) {
     if (typeof window.mdvHost.openDialog === 'function') await window.mdvHost.openDialog();
@@ -913,10 +1069,7 @@ async function mdvPickFile() {
   }
   let handle;
   try {
-    [handle] = await window.showOpenFilePicker({
-      multiple: false,
-      types: [{ description: 'Markdown', accept: { 'text/plain': ['.md', '.markdown', '.txt'] } }]
-    });
+    [handle] = await window.showOpenFilePicker({ multiple: false, types: MDV_PICKER_TYPES });
   } catch (e) {
     if (e.name === 'AbortError') return;
     throw e;
@@ -935,21 +1088,34 @@ async function mdvOpenWithHandle(handle, opts) {
     try { perm = await handle.requestPermission({ mode: 'readwrite' }); } catch (e) { /* stays read-only */ }
     if (perm !== 'granted') mdvShowToast('Opened read-only: comments will not save into this file.', 'error');
   }
-  const file = await handle.getFile();
-  const text = await file.text();
+  const disk = await mdvReadHandle(handle);
+  if (disk.changing) {
+    mdvShowToast('"' + (handle.name || 'The file') + '" kept changing while it was read. Try again in a moment.', 'error');
+    return false;
+  }
   if (opts.ifSeq != null && opts.ifSeq !== mdvLoadSeq) return false;
-  mdvBases.set(handle, { text, lastModified: file.lastModified, size: file.size });
+  // A file that is not UTF-8 is shown, and its comments are read-only (see the renderMarkdown hook)
+  mdvBases.set(handle, { text: disk.text, gen: ++mdvGen, notUtf8: !disk.utf8 });
   mdvFileHandle = handle;
-  rawMarkdown = text;
-  currentFileName = file.name;
-  renderMarkdown(text, file.name);
+  rawMarkdown = disk.text;
+  currentFileName = disk.file.name;
+  renderMarkdown(disk.text, disk.file.name);
   mdvPutHandle('current', handle).catch(() => { /* remembering it is a convenience; IndexedDB may be off */ });
   if (perm !== 'granted') mdvSetStatus('Read-only: press Cmd/Ctrl+S to allow saving into this file', 'error');
   return true;
 }
 
-// Prompts for a save location via showSaveFilePicker. Must run inside a user gesture (Chromium blocks it
-// otherwise). Returns the handle (now also in mdvFileHandle and IndexedDB), or null.
+// True when the document on screen was read from a file (drag-and-drop, the Open button, a ?file= link or a
+// handle). Pasted text and the demo were not: they have no file of their own.
+function mdvDocHasFile() { return mdvDocTitle !== 'Pasted Content' && mdvDocTitle !== 'Demo Document'; }
+
+// Gives the document on screen a writable file. Runs inside a user gesture (Chromium blocks a dialog otherwise).
+// Returns the handle (now also in mdvFileHandle and IndexedDB), or null.
+//   - A document read from a file links only to that file: the reader picks it in an Open dialog, and the first save
+//     checks that it still holds the version that was opened. A file changed since, or a different file, is never
+//     overwritten; the conflict notice lets the reader decide. (A Save dialog cannot be used for this: the browser
+//     empties the file picked there before the viewer could check it.)
+//   - A document with no file of its own (pasted text, the demo) gets a new file from a Save dialog.
 async function mdvEnsureWritableHandle() {
   if (mdvIsDesktop()) return null;
   if (mdvFileHandle) {
@@ -961,20 +1127,56 @@ async function mdvEnsureWritableHandle() {
     }
     return mdvFileHandle;
   }
-  if (!('showSaveFilePicker' in window)) return null;
-  try {
-    const h = await window.showSaveFilePicker({
-      suggestedName: mdvDownloadName(),
-      types: [{ description: 'Markdown', accept: { 'text/plain': ['.md', '.markdown', '.txt'] } }]
-    });
-    mdvBases.set(h, { overwrite: true }); // the reader chose this file (and confirmed replacing it) in the dialog
-    mdvFileHandle = h;
-    mdvPutHandle('current', h).catch(() => {});
-    return h;
-  } catch (e) {
-    if (e.name !== 'AbortError') console.error('mdvEnsureWritableHandle error:', e);
+  if (mdvLockReason) {
+    mdvSetStatus('Not saved: comments are read-only for this file', 'error');
     return null;
   }
+  return mdvDocHasFile() ? mdvLinkOpenedFile() : mdvSaveAsNewFile();
+}
+
+async function mdvLinkOpenedFile() {
+  if (!('showOpenFilePicker' in window)) return null;
+  const seq = mdvLoadSeq;
+  const opened = mdvLoadedText;
+  mdvShowToast('Choose "' + mdvDownloadName() + '", the file this document was opened from, so comments save into it.');
+  let h;
+  try {
+    [h] = await window.showOpenFilePicker({ multiple: false, types: MDV_PICKER_TYPES });
+  } catch (e) {
+    if (e.name !== 'AbortError') console.error('mdvLinkOpenedFile error:', e);
+    return null;
+  }
+  let perm = 'prompt';
+  try { perm = await h.queryPermission({ mode: 'readwrite' }); } catch (e) { /* not granted */ }
+  if (perm !== 'granted') {
+    try { perm = await h.requestPermission({ mode: 'readwrite' }); } catch (e) { /* not granted */ }
+  }
+  if (perm !== 'granted') {
+    mdvSetStatus('Not saved: the browser did not allow saving into ' + (h.name || 'that file'), 'error');
+    return null;
+  }
+  if (seq !== mdvLoadSeq || mdvFileHandle) return null; // another document was opened, or a file linked, meanwhile
+  mdvBases.set(h, { text: opened, gen: ++mdvGen }); // the version that was opened: the first save compares the file with it
+  mdvFileHandle = h;
+  mdvPutHandle('current', h).catch(() => {});
+  return h;
+}
+
+async function mdvSaveAsNewFile() {
+  if (!('showSaveFilePicker' in window)) return null;
+  const seq = mdvLoadSeq;
+  let h;
+  try {
+    h = await window.showSaveFilePicker({ suggestedName: mdvDownloadName(), types: MDV_PICKER_TYPES });
+  } catch (e) {
+    if (e.name !== 'AbortError') console.error('mdvSaveAsNewFile error:', e);
+    return null;
+  }
+  if (seq !== mdvLoadSeq || mdvFileHandle) return null;
+  mdvBases.set(h, { overwrite: true, gen: ++mdvGen }); // the reader chose this file (and confirmed replacing it) in the dialog
+  mdvFileHandle = h;
+  mdvPutHandle('current', h).catch(() => {});
+  return h;
 }
 
 // ----- Workspace folder (pick once; files opened from it link without a prompt) -----
@@ -1020,16 +1222,18 @@ async function mdvPickWorkspace() {
   return dirHandle;
 }
 
-// Looks for `name` in `dir`. {handle} only when that file holds exactly `text` (its version becomes the save
-// base); {differs: true} when a file of that name holds something else; {} when there is none.
+// Looks for `name` in `dir`. {handle} only when that file is UTF-8 text holding exactly `text` (its version becomes
+// the save base); {differs: true} when a file of that name holds something else (notUtf8 when it is not UTF-8 text);
+// {} when there is none.
 async function mdvMatchInFolder(dir, name, text) {
   let h;
   try { h = await dir.getFileHandle(name); } catch (e) { return {}; }
   try {
-    const f = await h.getFile();
-    const onDisk = await f.text();
-    if (onDisk !== text) return { differs: true };
-    mdvBases.set(h, { text: onDisk, lastModified: f.lastModified, size: f.size });
+    const disk = await mdvReadHandle(h);
+    if (disk.changing) return { differs: true };
+    if (!disk.utf8) return { differs: true, notUtf8: true };
+    if (disk.text !== text) return { differs: true };
+    mdvBases.set(h, { text: disk.text, gen: ++mdvGen });
     return { handle: h };
   } catch (e) {
     return { differs: true };
@@ -1048,24 +1252,25 @@ async function mdvTryWorkspaceMatch(filename, text) {
   } catch (e) { return null; }
   const match = await mdvMatchInFolder(mdvWorkspaceDir, filename, expected);
   if (match.differs) {
-    mdvShowToast('"' + filename + '" in your workspace folder has different contents, so this copy was not linked to it.', 'error');
+    mdvShowToast('"' + filename + '" in your workspace folder ' + (match.notUtf8 ? 'is not UTF-8 text' : 'has different contents') +
+      ', so this copy was not linked to it.', 'error');
   }
   return match.handle || null;
 }
 
-// Toolbar button: open a file (writable), or pick where the open document saves
+// Toolbar button: link the open document to its file, or open a file (writable). A browser that cannot write
+// files, and a document whose comments are read-only, get the file chooser: nothing can be saved into a file there.
 async function mdvOpenOrSetSaveLocation() {
-  if (mdvIsDesktop()) return mdvPickFile();
-  if (rawMarkdown && !mdvFileHandle) {
-    if (!('showSaveFilePicker' in window)) return mdvSaveFile({ allowPrompt: true });
+  if (mdvIsDesktop() || !('showOpenFilePicker' in window)) return mdvPickFile();
+  if (rawMarkdown && !mdvFileHandle && !mdvLockReason) {
     const h = await mdvEnsureWritableHandle();
     if (h) {
-      mdvShowToast('Comments now save into ' + (h.name || 'the file') + '.');
-      await mdvSaveFile({ allowPrompt: false });
+      mdvShowToast('Linked to ' + (h.name || 'the file') + ': comments save into it.');
+      if (mdvDirty) await mdvSaveFile({ allowPrompt: false });
     }
-  } else {
-    await mdvPickFile();
+    return;
   }
+  await mdvPickFile();
 }
 
 // ------- Restore the workspace and the last-opened file at startup -------
@@ -1283,7 +1488,20 @@ function mdvFocusThread(id) {
 // Refuses a change while the comment block cannot be read; returns true when it refused
 function mdvRefuseIfLocked() {
   if (!mdvLockReason) return false;
-  mdvShowToast('Comments are read-only for this file: its comment block could not be read.', 'error');
+  mdvShowToast(mdvLockKind === 'encoding'
+    ? 'Comments are read-only for this file: it is not UTF-8 text.'
+    : 'Comments are read-only for this file: its comment block could not be read.', 'error');
+  return true;
+}
+
+// True while another document is being opened: its loader has replaced rawMarkdown but the page still shows this
+// document, so a change now would mix the two
+function mdvDocumentChanging() { return rawMarkdown !== mdvDocText; }
+
+// Refuses a change while another document is being opened; returns true when it refused
+function mdvRefuseIfChanging() {
+  if (!mdvDocumentChanging()) return false;
+  mdvShowToast('Another document is being opened, so nothing was changed.', 'error');
   return true;
 }
 
@@ -1294,6 +1512,20 @@ function mdvCommit(text, comments) {
   mdvDocText = text;
   mdvDocVersion++;
   mdvDirty = true;
+}
+
+// Commits a change whose new source `makeText` builds, or tells the reader why it could not be stored (mdvSerialize
+// refuses rather than lose text). Returns true when the change was made.
+function mdvApplyChange(makeText, comments) {
+  let text;
+  try {
+    text = makeText();
+  } catch (e) {
+    mdvShowToast('Nothing was changed: ' + ((e && e.message) || e), 'error');
+    return false;
+  }
+  mdvCommit(text, comments);
+  return true;
 }
 
 // ------- Add comment popup -------
@@ -1319,18 +1551,24 @@ async function mdvShowAddPopup(elem, selectionText) {
   const ta = pop.querySelector('textarea');
   ta.focus({ preventScroll: true });
   pop.querySelector('.mdv-add-cancel').onclick = () => pop.remove();
+  const seq = mdvLoadSeq; // the document this popup belongs to
   let saving = false;
   pop.querySelector('.mdv-add-save').onclick = async () => {
     if (saving) return;
     const body = ta.value.trim();
     if (!body) { pop.remove(); return; }
+    // Another document replaced this one while the reader typed: no dialog may link a file to the wrong document
+    if (seq !== mdvLoadSeq || !elem.isConnected || mdvDocumentChanging()) {
+      mdvShowToast('The document changed while you were typing; your text is still in the box.', 'error');
+      return;
+    }
     saving = true;
     try {
-      // Get a writable file inside the click's user gesture, so the Save dialog may open
-      if (!mdvIsDesktop() && !mdvFileHandle && 'showSaveFilePicker' in window) {
+      // Get a writable file inside the click's user gesture, so a dialog may open
+      if (!mdvIsDesktop() && !mdvFileHandle && ('showOpenFilePicker' in window || 'showSaveFilePicker' in window)) {
         const h = await mdvEnsureWritableHandle();
         if (!h) {
-          mdvShowToast('Save cancelled. Pick a location to save the comment into the file.', 'error');
+          mdvShowToast('Not saved: no file was chosen. Your comment is still in the box.', 'error');
           return; // the popup stays open with the text
         }
       }
@@ -1354,9 +1592,9 @@ async function mdvAddComment(elem, selectionText, body) {
   if (mdvLockReason) throw new Error('comments are read-only for this file');
   // The block must still be on the page: if the document was reloaded or replaced while the reader typed,
   // its position would point into a different text.
-  if (!elem || !elem.isConnected) throw new Error('the document changed while you were typing; your text is still in the box');
+  if (!elem || !elem.isConnected || mdvDocumentChanging()) throw new Error('the document changed while you were typing; your text is still in the box');
   const anchor = mdvComputeAnchor(elem, selectionText);
-  const src = String(rawMarkdown || '');
+  const src = String(mdvDocText || '');
   const at = mdvLocateInsertion(elem);
   const withMarker = at ? src.slice(0, at.offset) + mdvMarker(anchor.id) + mdvEol(src) + src.slice(at.offset) : src;
   const now = new Date().toISOString();
@@ -1391,7 +1629,7 @@ async function mdvAddComment(elem, selectionText, body) {
 
 function mdvPostReply(threadId, textareaEl) {
   const body = (textareaEl.value || '').trim();
-  if (!body || mdvRefuseIfLocked()) return;
+  if (!body || mdvRefuseIfLocked() || mdvRefuseIfChanging()) return;
   const now = new Date().toISOString();
   const next = mdvComments.concat([{
     id: mdvNewCommentId(),
@@ -1402,14 +1640,14 @@ function mdvPostReply(threadId, textareaEl) {
     updated_at: now,
     status: 'open'
   }]);
-  mdvCommit(mdvSerialize(rawMarkdown, next), next);
+  if (!mdvApplyChange(() => mdvSerialize(mdvDocText, next), next)) return;
   textareaEl.value = '';
   mdvRenderSidebar();
   mdvRequestSave();
 }
 
 function mdvResolveThread(threadId) {
-  if (mdvRefuseIfLocked()) return;
+  if (mdvRefuseIfLocked() || mdvRefuseIfChanging()) return;
   const now = new Date().toISOString();
   let found = false;
   const next = mdvComments.map((c) => {
@@ -1418,7 +1656,7 @@ function mdvResolveThread(threadId) {
     return Object.assign({}, c, { status: c.status === 'resolved' ? 'open' : 'resolved', updated_at: now });
   });
   if (!found) return;
-  mdvCommit(mdvSerialize(rawMarkdown, next), next);
+  if (!mdvApplyChange(() => mdvSerialize(mdvDocText, next), next)) return;
   mdvRenderSidebar();
   mdvRequestSave();
 }
@@ -1426,6 +1664,7 @@ function mdvResolveThread(threadId) {
 function mdvDeleteThread(threadId) {
   if (mdvRefuseIfLocked()) return;
   if (!confirm('Delete this thread? It will be permanently removed.')) return;
+  if (mdvRefuseIfChanging()) return;
   const root = mdvComments.find((c) => c && c.id === threadId);
   // The thread and every reply under it
   const gone = new Set([threadId]);
@@ -1441,7 +1680,7 @@ function mdvDeleteThread(threadId) {
   if (root && root.anchor && root.anchor.id && !next.some((c) => c && c.anchor && c.anchor.id === root.anchor.id)) {
     anchorIds.add(root.anchor.id);
   }
-  mdvCommit(mdvSerialize(mdvRemoveMarkers(rawMarkdown, anchorIds), next), next);
+  if (!mdvApplyChange(() => mdvSerialize(mdvRemoveMarkers(mdvDocText, anchorIds), next), next)) return;
   anchorIds.forEach((id) => {
     document.querySelectorAll('#mdBody [data-mdv-anchor]').forEach((el) => {
       const rest = el.getAttribute('data-mdv-anchor').split(/\s+/).filter((x) => x && x !== id);
@@ -1592,17 +1831,31 @@ function mdvBeginDocument(source, title) {
   mdvDocName = String(title || currentFileName || 'document.md').split('/').pop();
   mdvDocText = source;
   mdvLoadedText = source;
+  if (mdvIsDesktop()) {
+    // The window's file as far as this document goes: the first save reads the file and compares it with this
+    // text, so a document that is not the file's (pasted, or opened some other way) is never written over it
+    mdvDesktopBase = { path: window.mdvHost.currentPath || null, text: source, mtimeMs: null, gen: ++mdvGen };
+  }
   // A document is only linked to the file it was read from. A loader that left an older file linked is
   // caught here, before a comment save could write this document over that file.
   if (mdvFileHandle) {
     const base = mdvBases.get(mdvFileHandle);
     if (!base) {
-      mdvBases.set(mdvFileHandle, { text: source, lastModified: null, size: null }); // checked against the file before the first write
+      mdvBases.set(mdvFileHandle, { text: source, gen: ++mdvGen }); // checked against the file before the first write
     } else if (base.overwrite || base.text !== source) {
       mdvFileHandle = null;
       mdvSetStatus('Not linked to a file: click 📄 to choose where comments save', 'error');
+    } else {
+      // The same file shown again: saves still queued from the earlier load are stale
+      mdvBases.set(mdvFileHandle, Object.assign({}, base, { gen: ++mdvGen }));
     }
   }
+}
+
+// Comments are read-only for a linked file that is not UTF-8 text: a save would replace its other characters
+function mdvEncodingLock() {
+  const base = mdvFileHandle ? mdvBases.get(mdvFileHandle) : null;
+  return base && base.notUtf8 ? { kind: 'encoding', reason: 'it is not UTF-8 text' } : null;
 }
 
 (function () {
@@ -1613,16 +1866,24 @@ function mdvBeginDocument(source, title) {
     const parsed = mdvParseFile(source);
     mdvComments = parsed.comments;
     const wasLocked = mdvLockReason;
-    mdvLockReason = parsed.parseError;
-    if (parsed.parseError && (!mdvOwnRender || !wasLocked)) {
-      mdvShowToast('Comments are read-only for this file: its comment block could not be read (' + parsed.parseError + ').', 'error');
+    const lock = parsed.parseError ? { kind: 'block', reason: parsed.parseError } : mdvEncodingLock();
+    mdvLockReason = lock ? lock.reason : null;
+    mdvLockKind = lock ? lock.kind : null;
+    if (lock && (!mdvOwnRender || !wasLocked)) {
+      mdvShowToast(lock.kind === 'encoding'
+        ? 'Comments are read-only for this file: it is not UTF-8 text, so the viewer never rewrites it.'
+        : 'Comments are read-only for this file: its comment block could not be read (' + lock.reason + ').', 'error');
     }
-    // The markers stay in the source, so they render as DOM comments and data-mdv-anchor attributes
-    orig(source, title);
-    setTimeout(() => {
-      mdvAttachContextMenu();
-      mdvRenderSidebar();
-    }, 50);
+    // The markers stay in the source, so they render as DOM comments and data-mdv-anchor attributes. The sidebar
+    // follows the document even when rendering it fails part way.
+    try {
+      orig(source, title);
+    } finally {
+      setTimeout(() => {
+        mdvAttachContextMenu();
+        mdvRenderSidebar();
+      }, 50);
+    }
   };
 })();
 

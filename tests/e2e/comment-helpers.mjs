@@ -118,6 +118,7 @@ function pageHelpers({ desktop, noFsAccess, openPicker, savePicker }) {
           const root = await navigator.storage.getDirectory();
           return Array.from(new Uint8Array(await (await (await root.getFileHandle(name)).getFile()).arrayBuffer()));
         } catch (e) {
+          if (e.name === 'NotFoundError') return []; // not created yet
           if (e.name !== 'NotReadableError' || i > 20) throw e;
           await new Promise((r) => setTimeout(r, 50));
         }
@@ -155,7 +156,7 @@ function pageHelpers({ desktop, noFsAccess, openPicker, savePicker }) {
       external(next) { disk.text = next; disk.mtime += 5000; },
       async saveDocument(path, text, expectedMtimeMs) {
         window.mdvHost.calls.push([path, text, expectedMtimeMs]);
-        await t.pass('saveDocument'); // the call is on its way to the app, which has not checked the file yet
+        await t.pass('desktop-io'); // the call is on its way to the app, which has not checked the file yet
         if (!(typeof expectedMtimeMs === 'number' && Math.abs(expectedMtimeMs - disk.mtime) <= 1)) {
           return { ok: false, reason: 'conflict', currentMtimeMs: desktop.omitConflictMtime ? undefined : disk.mtime, message: 'The file changed on disk.' };
         }
@@ -165,6 +166,7 @@ function pageHelpers({ desktop, noFsAccess, openPicker, savePicker }) {
       },
       async readDocument(path) {
         window.mdvHost.reads++;
+        await t.pass('desktop-io');
         return { path, name: path.split('/').pop(), text: disk.text, mtimeMs: desktop.noReadMtime ? undefined : disk.mtime };
       },
       async openDialog() { window.mdvHost.dialogs = (window.mdvHost.dialogs || 0) + 1; }
@@ -173,7 +175,6 @@ function pageHelpers({ desktop, noFsAccess, openPicker, savePicker }) {
 }
 
 // Collects page and console errors, answers the web-font request locally, and installs the page helpers.
-// opts.fontDelayMs answers the fonts late; opts.holdLoad (a promise) keeps the page's load event waiting until it resolves.
 export async function setup(page, opts = {}) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
@@ -182,31 +183,29 @@ export async function setup(page, opts = {}) {
     const where = `${m.text()} ${(m.location() && m.location().url) || ''}`;
     if (!KNOWN_NOISE.some((r) => r.test(where))) errors.push(`console: ${where.trim()}`);
   });
-  await page.route(/fonts\.(googleapis|gstatic)\.com/, async (route) => {
-    if (opts.fontDelayMs) await new Promise((r) => setTimeout(r, opts.fontDelayMs));
-    // no-store: a cached answer would let a later page load skip the delay
-    await route.fulfill({ status: 200, contentType: 'text/css', body: '', headers: { 'Cache-Control': 'no-store' } });
-  });
-  if (opts.holdLoad) {
-    // An image that is still loading delays the window's load event, as a slow image or font would
-    await page.route(/__hold-load\.svg/, async (route) => {
-      await opts.holdLoad;
-      await route.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg"/>', headers: { 'Cache-Control': 'no-store' } });
-    });
-    await page.addInitScript(() => {
-      document.addEventListener('DOMContentLoaded', () => {
-        const img = document.createElement('img');
-        img.src = '__hold-load.svg?' + Date.now();
-        img.alt = '';
-        img.style.display = 'none';
-        document.body.appendChild(img);
-      });
-    });
-  }
+  await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.fulfill({ status: 200, contentType: 'text/css', body: '' }));
   await page.addInitScript(pageHelpers, {
     desktop: opts.desktop || null, noFsAccess: !!opts.noFsAccess, openPicker: opts.openPicker || null, savePicker: opts.savePicker || null
   });
   return errors;
+}
+
+// From the next navigation on, the page's load event waits until `until` resolves: an image that is still loading
+// delays it, as a slow image or font would.
+export async function holdLoadEvent(page, until) {
+  await page.route(/__hold-load\.svg/, async (route) => {
+    await until;
+    await route.fulfill({ status: 200, contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg"/>', headers: { 'Cache-Control': 'no-store' } });
+  });
+  await page.addInitScript(() => {
+    document.addEventListener('DOMContentLoaded', () => {
+      const img = document.createElement('img');
+      img.src = '__hold-load.svg?' + Date.now();
+      img.alt = '';
+      img.style.display = 'none';
+      document.body.appendChild(img);
+    });
+  });
 }
 
 export async function openViewer(page, opts = {}) {

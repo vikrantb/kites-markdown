@@ -7,7 +7,7 @@
 // file also runs against the code before the fix and shows each bug there.
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { PLAN, SAMPLE, setup, openViewer, threads, rememberAFile } from './comment-helpers.mjs';
+import { PLAN, SAMPLE, setup, openViewer, threads, rememberAFile, holdLoadEvent } from './comment-helpers.mjs';
 
 // ---------------------------------------------------------------------------------------------------------------
 // The format: parse and serialize
@@ -401,27 +401,41 @@ test('a file that was only touched (same contents, new time stamp) still saves: 
   await expect(page.locator('#mdvNotices .mdv-notice')).toHaveCount(0);
 });
 
-test('saves never overlap, and the file ends with the newest text', async ({ page }) => {
+test('two saves through the seam at the same moment never overlap', async ({ page }) => {
+  await openViewer(page);
+  const r = await page.evaluate(async (doc) => {
+    const h = window.__t.fakeHandle('commented.md', doc);
+    window.__t.open(doc, 'commented.md', h);
+    // "Overwrite the file" and a queued save can reach the seam together
+    const both = await Promise.all([
+      mdvWriteDocument(doc + '\nFirst writer.\n', { handle: h, overwrite: true }),
+      mdvWriteDocument(doc + '\nSecond writer.\n', { handle: h, overwrite: true })
+    ]);
+    return { ok: both.map((x) => x.ok), maxActive: h.maxActive, last: h.text.endsWith('Second writer.\n'), writes: h.writes.length };
+  }, SAMPLE);
+  expect(r.maxActive, 'at most one write at a time').toBe(1);
+  expect(r).toEqual({ ok: [true, true], maxActive: 1, last: true, writes: 2 });
+});
+
+test('changes made while a save is running are saved after it, never alongside it, and the file ends with the newest text', async ({ page }) => {
   await openViewer(page);
   await page.evaluate((doc) => {
     window.h = window.__t.fakeHandle('commented.md', doc);
     window.__t.open(doc, 'commented.md', window.h);
   }, SAMPLE);
   await threads(page, 2);
-  await page.evaluate(() => {
+  const r = await page.evaluate(async () => {
     const root = mdvComments.find((c) => !c.parent_id).id;
     for (let i = 1; i <= 5; i++) {
-      const box = document.createElement('textarea');
-      box.value = 'Quick reply ' + i;
-      mdvPostReply(root, box);
+      window.__t.reply(root, 'Spaced reply ' + i);
+      await new Promise((res) => setTimeout(res, 3)); // the next change arrives while a write is in flight
     }
+    await mdvFlushWrites();
+    return { text: window.h.text, maxActive: window.h.maxActive, same: window.h.text === rawMarkdown };
   });
-  await expect.poll(() => page.evaluate(() => window.h.text), { timeout: 5000 }).toContain('Quick reply 5');
-  await page.waitForTimeout(300);
-  const r = await page.evaluate(() => ({ text: window.h.text, maxActive: window.h.maxActive, same: window.h.text === rawMarkdown }));
-  expect(r.same, 'the file holds exactly what the viewer holds').toBe(true);
   expect(r.maxActive, 'at most one write at a time').toBe(1);
-  for (let i = 1; i <= 5; i++) expect(r.text).toContain('Quick reply ' + i);
+  expect(r.same, 'the file holds exactly what the viewer holds').toBe(true);
+  for (let i = 1; i <= 5; i++) expect(r.text).toContain('Spaced reply ' + i);
 });
 
 test('a save still running when another document opens goes to its own file', async ({ page }) => {
@@ -545,11 +559,12 @@ test('issue 5: a dropped file links to the workspace file of the same name only 
     await w.close();
     mdvWorkspaceDir = ws;
     // Reads the workspace file; a read that overlaps the viewer's write is retried (Chrome refuses to read a
-    // File snapshot of a file that changed after the snapshot was taken)
+    // File snapshot of a file that changed after the snapshot was taken, and the file is briefly missing while a
+    // write is committed)
     window.readNote = async () => {
       for (let i = 0; ; i++) {
         try { return await (await (await ws.getFileHandle('note.md')).getFile()).text(); } catch (e) {
-          if (e.name !== 'NotReadableError' || i > 10) throw e;
+          if ((e.name !== 'NotReadableError' && e.name !== 'NotFoundError') || i > 10) throw e;
           await new Promise((r) => setTimeout(r, 50));
         }
       }
@@ -610,11 +625,16 @@ test('control: with no link, the last-opened file is restored at startup', async
 });
 
 test('the startup restore never overrides an explicit ?file= link, even when it finishes last', async ({ page }) => {
-  // The fonts answer late, so the page's load event (which starts the restore) comes after the link has loaded
-  await setup(page, { fontDelayMs: 1500 });
+  // The page's load event (which starts the restore) is held until the linked document is on screen, so the restore
+  // always finishes last, as it does when a slow image or font delays the load event
+  let release;
+  const linkShown = new Promise((r) => { release = r; });
+  await setup(page);
   await rememberAFile(page);
-  await page.goto('markdown-viewer.html?file=samples/commented.md');
+  await holdLoadEvent(page, linkShown);
+  await page.goto('markdown-viewer.html?file=samples/commented.md', { waitUntil: 'commit' });
   await page.waitForSelector('#mdBody h2');
+  release();
   await page.waitForFunction(() => document.readyState === 'complete');
   await page.waitForTimeout(1000); // time for a late restore to render, if it were going to
   expect(await page.locator('#titleText').textContent()).toBe('commented.md');
