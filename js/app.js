@@ -81,7 +81,9 @@ function mdvRegisterShortcut(combo, fn, description) {
   }
   if (!key || typeof fn !== 'function') throw new TypeError(`mdvRegisterShortcut: "${combo}" needs a key and a function`);
   row.key = key.length === 1 ? key.toLowerCase() : key;
-  const same = (s) => !!s.mod === !!row.mod && !!s.alt === !!row.alt && !!s.shift === !!row.shift && s.key === row.key;
+  // The same keys as the matcher sees them: Shift counts for letters and named keys only
+  const shiftCounts = /^[a-z]$/.test(row.key) || row.key.length > 1;
+  const same = (s) => !!s.mod === !!row.mod && !!s.alt === !!row.alt && s.key === row.key && (!shiftCounts || !!s.shift === !!row.shift);
   const taken = MDV_SHORTCUTS.find(same);
   if (taken) {
     console.warn(`Shortcut ${combo} already does "${taken.label}"; "${row.label}" was not added.`);

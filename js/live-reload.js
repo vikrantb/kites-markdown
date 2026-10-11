@@ -27,6 +27,11 @@
 const MDV_LIVE_HANDLE_MS = 1500;
 const MDV_LIVE_HTTP_MS = 2000;
 const MDV_LIVE_DESKTOP_MS = 2000;
+// A look that reads the whole file (the desktop bridge; an http server that sends no validators) is made less
+// often for a large document; a look that fails (the server is down, the file was removed) waits longer each time
+const MDV_LIVE_LARGE = 1000000;
+const MDV_LIVE_LARGE_MS = 10000;
+const MDV_LIVE_MAX_BACKOFF_MS = 30000;
 
 const mdvLive = {
   timer: 0,
@@ -36,6 +41,7 @@ const mdvLive = {
   seen: null,          // its version the last look saw (time and size, a version token, or the text)
   base: null,          // http and desktop: the text of the version on screen, as its source gave it
   validators: null,    // http: {etag, lastModified, conditional}
+  failures: 0,         // looks in a row that failed
   windowFile: null,    // desktop: the window's own file, which the shell watches
   checkOnce: false,    // desktop: look at the window's own file once (after Back or Forward returned to it)
   candidate: null,     // a new version seen once; it is shown when the next look, 300 ms later, sees it again
@@ -55,16 +61,23 @@ function mdvLiveTarget() {
     if (mdvLive.windowFile && mdvSamePath(shown.path, mdvLive.windowFile, 'desktop')) {
       return mdvLive.checkOnce ? { kind: 'desktop', key: 'desktop:' + shown.path, path: shown.path, every: 0 } : null;
     }
-    return { kind: 'desktop', key: 'desktop:' + shown.path, path: shown.path, every: MDV_LIVE_DESKTOP_MS };
+    return { kind: 'desktop', key: 'desktop:' + shown.path, path: shown.path, every: mdvLiveEvery(MDV_LIVE_DESKTOP_MS, true) };
   }
   const handle = typeof mdvFileHandle !== 'undefined' ? mdvFileHandle : null;
-  if (handle && typeof handle.getFile === 'function') return { kind: 'handle', key: handle, handle, every: MDV_LIVE_HANDLE_MS };
+  if (handle && typeof handle.getFile === 'function') return { kind: 'handle', key: handle, handle, every: mdvLiveEvery(MDV_LIVE_HANDLE_MS, false) };
   if (shown.kind === 'http' && shown.path && /^https?:$/.test(location.protocol)) {
     const url = new URL(shown.path, location.href);
     url.hash = '';
-    return { kind: 'http', key: 'http:' + url.href, url: url.href, every: MDV_LIVE_HTTP_MS };
+    const whole = !(mdvLive.validators && mdvLive.validators.conditional);
+    return { kind: 'http', key: 'http:' + url.href, url: url.href, every: mdvLiveEvery(MDV_LIVE_HTTP_MS, whole) };
   }
   return null;
+}
+
+// How long until the next look: longer for a large file read whole, and after failed looks
+function mdvLiveEvery(ms, readsWholeFile) {
+  if (readsWholeFile && typeof mdvLive.base === 'string' && mdvLive.base.length > MDV_LIVE_LARGE) ms = MDV_LIVE_LARGE_MS;
+  return mdvLive.failures ? Math.min(MDV_LIVE_MAX_BACKOFF_MS, ms * 2 ** mdvLive.failures) : ms;
 }
 
 function mdvLiveSchedule(delay) {
@@ -87,9 +100,10 @@ async function mdvLiveTick() {
   if (!busy) {
     mdvLive.running = true;
     try {
-      await mdvLiveLook(target, mdvLive.gen);
+      mdvLive.failures = (await mdvLiveLook(target, mdvLive.gen)) === false ? mdvLive.failures + 1 : 0;
     } catch (e) {
-      // A file that is gone, unreadable or half-written keeps the version on screen; the next look tries again
+      // A file that is gone, unreadable or half-written keeps the version on screen; the next look, later, tries again
+      mdvLive.failures++;
     } finally {
       mdvLive.running = false;
     }
@@ -141,7 +155,8 @@ async function mdvLiveLook(target, gen) {
     }
     const resp = await fetch(target.url, { cache: 'no-store', headers });
     if (stale()) return;
-    if (resp.status === 304 || !resp.ok) return; // unchanged, or not there right now: the version on screen stays
+    if (resp.status === 304) return;
+    if (!resp.ok) return false; // not there right now: the version on screen stays, and the next look waits longer
     const validators = mdvLiveValidators(resp);
     const text = await resp.text();
     if (stale()) return;
@@ -268,6 +283,7 @@ mdvOnDocumentOpened((event) => {
   mdvLive.candidate = null;
   mdvLive.soon = false;
   mdvLive.validators = null;
+  mdvLive.failures = 0;
   mdvLive.base = typeof doc.fetchedText === 'string' ? doc.fetchedText : doc.text;
   mdvLiveHidePrompt();
   if (mdvInDesktopApp() && event.kind === 'first' && doc.path) mdvLive.windowFile = doc.path;

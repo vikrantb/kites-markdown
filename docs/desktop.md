@@ -116,7 +116,7 @@ pnpm --dir desktop dev              # run it from source while you work on it
 
   ```bash
   node desktop/scripts/run-self-test.mjs --doc samples/kitchen-sink.md --save-probe --expect render,kitchen-sink,save
-  node desktop/scripts/run-self-test.mjs --doc desktop/tests/fixtures/linked/doc.md --expect render,assets
+  node desktop/scripts/run-self-test.mjs --doc desktop/tests/fixtures/linked/doc.md --expect render,assets,links
   ```
 
   On a Mac it then unregisters the build folder from Launch Services (`--keep-registration` keeps it), so a
@@ -224,8 +224,9 @@ included), counts what rendered, checks that the bridge refuses what it must, ea
 save into an existing sibling file, naming that file's real version, must be refused as `not-allowed`
 and leave the file unchanged), calls `confirm()` and `alert()` on macOS (the shell answers them without
 showing anything in this mode, and must have), optionally saves, edits the file "from outside" and saves
-a stale version (expecting live reload and a conflict), and finally renders a document with an `onerror`
-handler to prove it does not run. The shell adds the window title and the asset scope, writes the JSON
+a stale version (expecting live reload and a conflict), follows the linked fixture's link to `other.md` (it must
+open in the same window through `readDocument`, with no new window asked for, and Back must return to the window's
+own file), and finally renders a document with an `onerror` handler to prove it does not run. The shell adds the window title and the asset scope, writes the JSON
 and exits 0 or 1 (1 after 60 s without a report, and 1 if the report cannot be written).
 
 **CI** (`.github/workflows/desktop.yml`) builds a universal macOS app and a Windows x64 installer with a

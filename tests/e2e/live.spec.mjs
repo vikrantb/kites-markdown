@@ -281,6 +281,47 @@ test('a hidden page does not look at the file, and looks at once when it is show
   expect(errors).toEqual([]);
 });
 
+test('a file that cannot be fetched is looked at less and less often, and a large one read whole every 10 s', async ({ page }) => {
+  const errors = collectErrors(page, [/status of 404/]); // the browser's own line for each failed look
+  let gone = false;
+  let text = '# Comes and goes\n\nThe first version.\n';
+  const looks = [];
+  await page.route('**/live-fixture/comes-and-goes.md', async (route) => {
+    looks.push(Date.now());
+    if (gone) await route.fulfill({ status: 404, body: 'not found' });
+    else await route.fulfill({ status: 200, contentType: 'text/markdown; charset=utf-8', body: text, headers: { 'Cache-Control': 'no-store' } });
+  });
+  await page.goto('markdown-viewer.html?file=live-fixture/comes-and-goes.md');
+  await page.waitForSelector('#mdBody h1');
+  gone = true; // removed by another program
+  const from = Date.now();
+  await page.waitForTimeout(10_500);
+  // Every 2 s would be 5 looks; waiting 2, 4, 8 s after each failure is 3 at most
+  const failed = looks.filter((t) => t > from).length;
+  expect(failed).toBeGreaterThan(0);
+  expect(failed).toBeLessThanOrEqual(3);
+  await expect(page.locator('#mdBody')).toContainText('The first version.');
+  // It comes back: shown at once when the page is shown again, and the looks are every 2 s again
+  text = '# Comes and goes\n\nThe second version.\n';
+  gone = false;
+  await setVisibility(page, 'hidden');
+  await setVisibility(page, 'visible');
+  await expect(page.locator('#mdBody')).toContainText('The second version.', { timeout: 5000 });
+  expect(await page.evaluate(() => mdvLive.failures)).toBe(0);
+  // A document over 1 MB read whole on each look is looked at every 10 s; failures double the wait, up to 30 s
+  const every = await page.evaluate(() => {
+    const keep = [mdvLive.base, mdvLive.failures];
+    mdvLive.base = 'x'.repeat(1_100_000);
+    const r = { large: mdvLiveEvery(2000, true), largeButCheap: mdvLiveEvery(1500, false) };
+    mdvLive.failures = 1; r.oneFailure = mdvLiveEvery(2000, false);
+    mdvLive.failures = 9; r.capped = mdvLiveEvery(2000, true);
+    [mdvLive.base, mdvLive.failures] = keep;
+    return r;
+  });
+  expect(every).toEqual({ large: 10000, largeButCheap: 1500, oneFailure: 4000, capped: 30000 });
+  expect(errors).toEqual([]);
+});
+
 // ---------------------------------------------------------------------------------------------------------------
 // Back and forward, and links that open in the viewer (browser)
 // ---------------------------------------------------------------------------------------------------------------
@@ -474,10 +515,12 @@ test('mdvRegisterShortcut adds a shortcut to the keys and the sheet, and refuses
   await page.waitForFunction(() => typeof mdvRegisterShortcut === 'function');
   const r = await page.evaluate(() => ({
     taken: mdvRegisterShortcut('Mod+K', () => {}, 'Something else'),
+    // Shift does not count for punctuation (some layouts need it to type "?"), so these are the "?" keys
+    takenPunctuation: mdvRegisterShortcut('Shift+?', () => {}, 'Something else'),
     added: mdvRegisterShortcut('Mod+Shift+Y', () => { window.__ran = (window.__ran || 0) + 1; }, 'A test shortcut'),
     bad: (() => { try { mdvRegisterShortcut('Hyper+Y', () => {}, 'x'); return 'accepted'; } catch (e) { return e.name; } })(),
   }));
-  expect(r).toEqual({ taken: false, added: true, bad: 'TypeError' });
+  expect(r).toEqual({ taken: false, takenPunctuation: false, added: true, bad: 'TypeError' });
   await page.keyboard.press(`${MOD}+Shift+KeyY`);
   expect(await page.evaluate(() => window.__ran)).toBe(1);
   await page.keyboard.press('Shift+Slash');

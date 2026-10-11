@@ -116,6 +116,8 @@ Status reports, plans and handoffs change while they are read, and they link to 
 serve that reader. Their code is `js/live-reload.js`, `js/history.js` and the load seam in `js/files.js`; their
 browser tests are `tests/e2e/live.spec.mjs`.
 
+![Back and Forward at the left of the toolbar, the quiet "Updated" note at the right, and the "Changed on disk: reload?" question, in the light, sepia and dark themes](images/live-reload-and-history.png)
+
 ### Live reload
 
 When the file of the document on screen changes, the viewer shows the new version **where you are reading**:
@@ -126,12 +128,18 @@ and fades after about two seconds (`mdvLiveToast`). A reload is not a new place 
 | The document came from | How a change is noticed | How often |
 |---|---|---|
 | A file opened with a handle (the writable open, the automatic reopen, a workspace match, a folder) | the file's modification time and size (`getFile()`); the text is read only when one of them moves | every 1.5 s |
-| A `?file=` link, or a link followed inside the viewer, over `http(s)` | a conditional request (`If-None-Match` / `If-Modified-Since`): an unchanged file costs a `304` and no body | every 2 s |
+| A `?file=` link, or a link followed inside the viewer, over `http(s)` | a request, conditional (`If-None-Match` / `If-Modified-Since`) when the server sends validators, so that an unchanged file costs a `304` and no body | every 2 s |
 | The desktop app, the window's own file | the shell watches it; `js/host.js` shows the new version, this adds the **Updated** note | on change |
 | The desktop app, a document opened in the window from a link | the shell does not watch it, so the page reads it through the bridge | every 2 s |
 
 - **Only while the page is visible.** A hidden tab or minimised window looks at nothing; when it is shown again
   it looks at once **(tested)**.
+- **What a look costs.** For a file opened with a handle, the time and size (no read) every 1.5 s; its text is read
+  only when one of them moves. Over http, a `304` with no body when the server sends `ETag` or `Last-Modified`
+  (Python's `http.server` sends `Last-Modified`); otherwise the whole file. A file over 1 MB that is read whole on
+  each look (the desktop bridge, a server without validators) is looked at every 10 s. A look that fails (the
+  server is down, the file was removed) waits twice as long each time, up to 30 s, and the first look that
+  succeeds goes back to the normal pace **(tested)**; the browser still logs each failed request in its console.
 - **Never a half-written file.** A program that saves by emptying the file and then writing it would otherwise be
   caught in between, and you would lose your place to an empty page. A new version is shown only when two looks
   300 ms apart agree **(tested)**.
@@ -145,10 +153,10 @@ and fades after about two seconds (`mdvLiveToast`). A reload is not a new place 
   change not written, a save in flight, a conflict or error notice for this document), or a comment is being typed
   in the add-comment box, a question appears at the bottom instead: **Changed on disk: reload?** **Reload** shows
   the new version, and the comment changes stay in the comments panel to download (the comment code keeps the text
-  of a version it no longer shows); **Not now** keeps reading the current one, and the next new version asks again
-  **(tested)**. When the comment code is already asking about the file (its conflict notice offers **Reload from
-  disk**), the question is not asked twice. In the desktop app, the window's own file keeps its own question from
-  `js/host.js`.
+  of a document it no longer shows); **Not now** keeps reading the current one, and the next new version asks again
+  **(tested with a comment that could not be saved)**. When the comment code is already asking about the file (its
+  conflict notice offers **Reload from disk**), the question is not asked twice. In the desktop app, the window's
+  own file keeps its own question from `js/host.js`.
 - Not followed: a file dropped or chosen with the Open button (the browser gives no handle to it; link it with the
   file-plus button to follow it), pasted text, and documents on a `file://` page, which cannot fetch.
 
@@ -175,7 +183,7 @@ A relative link to a Markdown file (`.md`, `.markdown`, `.mdown`, `.mkd`, `.mkdn
 | Where you are reading | The link is opened through | Cmd/Ctrl-click |
 |---|---|---|
 | A document of the open folder | the folder: `mdvFolder.resolve(from, href)`, then `mdvFolder.read(path)` | as below |
-| The desktop app | `mdvHost.readDocument`, in the same window **(tested with a stand-in shell)** | opens it in a window of its own (`js/host.js`) |
+| The desktop app | `mdvHost.readDocument`, in the same window **(tested with a stand-in shell, and in the macOS app by its self-test)** | opens it in a window of its own (`js/host.js`) |
 | A page served over `http(s)` | `fetch`, relative to the document's own address, not the viewer's **(tested)** | the viewer for that file, in a new tab **(tested)** |
 | A `file://` page | the browser's own behaviour | the browser's own behaviour |
 
