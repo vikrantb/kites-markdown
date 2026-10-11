@@ -148,12 +148,15 @@ function mdvDiagramContentWidth() {
 }
 
 // Inter is a web font: measuring labels before it loads would size every box for the fallback font. Wait for it
-// (check() is also true when no Inter face is declared, for example offline), but at most 1.5 s; if it arrives
-// later than that, draw every diagram again in it.
+// (check() is also true when no Inter face is declared, for example offline), but at most 1.5 s, and only once: if
+// it arrives later than that, every diagram is drawn again in it, so a pass that starts while it is still loading
+// (a re-render, a theme change) draws straight away instead of waiting again.
 const MDV_DIAGRAM_FONTS = ['400 14px Inter', '600 14px Inter'];
+let mdvDiagramFontLate = false; // a wait has already timed out; the redraw on arrival is pending
 async function mdvDiagramFontsReady() {
   if (!document.fonts || !document.fonts.load) return;
   if (MDV_DIAGRAM_FONTS.every((f) => document.fonts.check(f))) return;
+  if (mdvDiagramFontLate) return;
   const loads = Promise.all(MDV_DIAGRAM_FONTS.map((f) => document.fonts.load(f))).catch(() => {});
   let timer = 0;
   let late = false;
@@ -161,7 +164,9 @@ async function mdvDiagramFontsReady() {
   await Promise.race([loads, giveUp]);
   clearTimeout(timer);
   if (late) {
+    mdvDiagramFontLate = true;
     loads.then(() => {
+      mdvDiagramFontLate = false;
       mdvDiagramFontEpoch++; // part of the palette key: every diagram is now out of date, even one being drawn
       renderMermaidDiagrams();
     });

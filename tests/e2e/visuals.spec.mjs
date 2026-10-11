@@ -110,6 +110,33 @@ test('diagrams do not wait long for a slow web font, and are redrawn in it when 
   expect(errors, errors.join('\n')).toEqual([]);
 });
 
+test('while the web font is still loading, later passes do not wait for it again', async ({ page, baseURL }) => {
+  await holdInter(page, baseURL, 9000);
+  await page.goto('markdown-viewer.html?file=samples/kitchen-sink.md', { waitUntil: 'domcontentloaded' });
+  await waitForDiagrams(page); // the first pass waited for the font, at most 1.5 s
+  expect(await page.evaluate(() => document.fonts.check('400 14px Inter'))).toBe(false); // and it is still loading
+  // A re-render (a comment added or deleted, a file dropped) draws every diagram again ...
+  const rerender = await page.evaluate(async () => {
+    const t0 = performance.now();
+    renderMarkdown(rawMarkdown, 'kitchen-sink.md');
+    while (![...document.querySelectorAll('#mdBody .mermaid')].every((el) => el.querySelector('svg'))) {
+      await new Promise(requestAnimationFrame);
+    }
+    return performance.now() - t0;
+  });
+  // ... and so does a theme change (setTheme waits 100 ms before it starts).
+  const themeChange = await page.evaluate(async () => {
+    const t0 = performance.now();
+    setTheme('dark');
+    while (![...document.querySelectorAll('#mdBody .mermaid')].every((el) => (el.dataset.mdvPalette || '').startsWith('dark'))) {
+      await new Promise(requestAnimationFrame);
+    }
+    return performance.now() - t0;
+  });
+  expect(rerender).toBeLessThan(900);
+  expect(themeChange).toBeLessThan(1000);
+});
+
 test('an open expanded view follows a theme change', async ({ page }) => {
   await open(page, 'kitchen-sink.md', 'light');
   await page.evaluate(() => openDiagramOverlay(document.querySelector('#mdBody .mermaid-wrapper')));
