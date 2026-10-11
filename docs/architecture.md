@@ -26,7 +26,9 @@ Related documents:
 
 
 > [!NOTE]
-> Since the split into files, the styles live in `css/viewer.css` and the script in the twelve `js/*.js` files, concatenated in load order. Line numbers in this document refer to the pre-split single file and are kept for orientation: find a function by name. The script order is listed in `../CLAUDE.md`.
+> Since the split into files, the styles live in `css/viewer.css` and the script in the `js/*.js` files, concatenated in load order. Line numbers in this document refer to the pre-split single file and are kept for orientation: find a function by name. The script order is listed in `../CLAUDE.md`.
+>
+> The last script, `js/host.js`, is the desktop bridge: `window.mdvHost`. In a browser it is a no-op. In the desktop app it renders the window's document, wraps `renderMarkdown` to load relative images through the asset protocol, handles link clicks and live reload, and routes saves to the shell. See [desktop.md](desktop.md).
 
 ## 1. The shape of the program
 

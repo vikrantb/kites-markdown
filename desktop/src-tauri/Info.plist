@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the app's Info.plist by the bundler. Two declarations, because macOS decides which type a
+  file extension means, and only one declaration of a type identifier counts:
+
+  - net.daringfireball.markdown (.md, .markdown) is IMPORTED: the app does not own it. Current macOS
+    declares this type itself, for exactly these two extensions, and a system declaration overrides an
+    app's import, so extensions added here would be ignored (measured: .mdown resolved to a dyn.* type
+    with all eight listed). The import matters only where the system does not declare the type.
+  - app.kitesmarkdown.markdown (.mdown, .mkd, .mkdn, .mdwn, .mdtxt, .mdtext) is EXPORTED: the app owns
+    this identifier. It conforms to net.daringfireball.markdown, so it is still Markdown to every app
+    that asks. Without it, these six extensions resolve to anonymous dyn.* types that no app claims, and
+    double-clicking such a file never opens the viewer.
+
+  CFBundleDocumentTypes below REPLACES the one the bundler generates from tauri.conf.json's
+  fileAssociations (measured: a key set here overrides the generated key whole; arrays are not merged), so
+  the macOS claims live here. fileAssociations still drives Windows, and its `ext` list is the one the
+  self-test checks. Markdown is claimed at rank Default, since other apps edit it too. The app's own type
+  is claimed at rank Owner, because the app defines it.
+
+  The self-test's `types` check reads the extension list from tauri.conf.json and checks two things for
+  every extension: it resolves to Markdown, and this app is among the apps that can open it.
+-->
+<plist version="1.0">
+<dict>
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>net.daringfireball.markdown</string>
+      <key>UTTypeDescription</key>
+      <string>Markdown document</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.plain-text</string>
+      </array>
+      <key>UTTypeReferenceURL</key>
+      <string>https://daringfireball.net/projects/markdown/</string>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>md</string>
+          <string>markdown</string>
+        </array>
+        <key>public.mime-type</key>
+        <array>
+          <string>text/markdown</string>
+          <string>text/x-markdown</string>
+        </array>
+      </dict>
+    </dict>
+  </array>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>KitesMarkdown.Document</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Default</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>net.daringfireball.markdown</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>KitesMarkdown.Document.OtherExtensions</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>app.kitesmarkdown.markdown</string>
+      </array>
+    </dict>
+  </array>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>app.kitesmarkdown.markdown</string>
+      <key>UTTypeDescription</key>
+      <string>Markdown document</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>net.daringfireball.markdown</string>
+        <string>public.plain-text</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>mdown</string>
+          <string>mkd</string>
+          <string>mkdn</string>
+          <string>mdwn</string>
+          <string>mdtxt</string>
+          <string>mdtext</string>
+        </array>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>
