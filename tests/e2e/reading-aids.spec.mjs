@@ -316,6 +316,50 @@ test('a heading inside a closed <details> never becomes the current heading', as
   expect(await page.textContent('#breadcrumb')).toBe('Before');
 });
 
+// The section rail used to decide the current section by its own rule as well: the last h2 above the reading line,
+// by getClientRects(). It disagreed with the outline at the bottom of a page and past a closed <details>.
+const railState = (page) => page.evaluate(() => {
+  const nav = document.querySelector('#mdBody .section-minimap');
+  return {
+    active: [...nav.querySelectorAll('.minimap-segment.active')].map((s) => s.dataset.label),
+    current: nav.dataset.current, position: nav.dataset.position,
+  };
+});
+
+test('the section rail marks the section the outline marks: at the bottom of the page, past a closed <details>, and when one opens', async ({ page }) => {
+  await openViewer(page);
+  const parts = Array.from({ length: 6 }, (_, i) => `## Part ${i + 1}\n\n${'Line of text that fills the section. '.repeat(60)}\n`).join('\n');
+  await render(page, `# Long\n\n${parts}\n## Tail A\n\nShort.\n\n## Tail B\n\nShort.\n\n## Tail C\n\nShort.\n`);
+  await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
+  await frames(page);
+  expect(await activeEntry(page)).toBe('Tail C');
+  expect(await railState(page)).toEqual({ active: ['Tail C'], current: 'Tail C', position: '9 / 9' });
+
+  const lines = Array.from({ length: 30 }, (_, i) => `Line ${i + 1} of the section.`).join('\n\n');
+  await render(page, `# Doc\n\n## Before\n\n${lines}\n\n<details><summary>More options</summary>\n\n## Hidden part\n\nHidden text.\n\n</details>\n\n${'Text after the details.\n\n'.repeat(4)}## After\n\n${lines}\n\n## End\n\n${lines}\n`);
+  await page.evaluate(() => {
+    const s = document.querySelector('#mdBody summary');
+    window.scrollTo({ top: s.getBoundingClientRect().top + scrollY - 150, behavior: 'instant' });
+  });
+  await frames(page);
+  expect(await page.evaluate(() => document.querySelector('#mdBody details').open)).toBe(false);
+  expect(await activeEntry(page)).toBe('Before');
+  expect(await railState(page)).toEqual({ active: ['Before'], current: 'Before', position: '1 / 4' });
+
+  // Opening a <details> above the current heading puts that heading under another h2 while it stays current:
+  // the rail follows at once, not only at the next change of heading. (A tall window puts the reading line at
+  // 480 px, so the opened content cannot push the current heading below it.)
+  await page.setViewportSize({ width: 1366, height: 1600 });
+  await render(page, `# Doc\n\n## Alpha\n\n${lines}\n\n<details><summary>More</summary>\n\n## Hidden\n\nHidden text.\n\n</details>\n\n### Gamma\n\n${lines}\n\n## Delta\n\n${lines}\n`);
+  await page.evaluate(() => window.scrollTo({ top: document.getElementById('gamma').getBoundingClientRect().top + scrollY - 100, behavior: 'instant' }));
+  await frames(page);
+  expect(await activeEntry(page)).toBe('Gamma');
+  expect((await railState(page)).active).toEqual(['Alpha']);
+  await page.evaluate(() => { document.querySelector('#mdBody details').open = true; });
+  await expect.poll(async () => (await railState(page)).active).toEqual(['Hidden']);
+  expect(await activeEntry(page)).toBe('Gamma');
+});
+
 test('a hidden outline is out of the Tab order, wide and narrow', async ({ page }) => {
   await openViewer(page);
   await render(page, '# Guide\n\n## One\n\nText.\n\n## Two\n\nText.\n');
@@ -376,12 +420,75 @@ test('a "#" the author wrote stays in the outline, the breadcrumb, search and re
   await expect(page.locator('#searchResults .search-result-item').first()).toHaveText('## C# tips');
 });
 
+// The rail and diagram links once read a heading through a second helper, which kept the "#" but read a formula
+// three times (KaTeX's MathML, its TeX annotation and its aria-hidden HTML copy).
+test('a heading has the same words, "#" and formulas included, in the outline, the section rail and a diagram link', async ({ page }) => {
+  await openViewer(page);
+  await render(page, '# Notes\n\n## C# tips\n\nUse records.\n\n## The $O(n)$ merge\n\n```mermaid\ngraph LR\n  A["The O(n) merge"] --> B[Done]\n```\n\n## Plain\n\nText.\n');
+  await page.waitForFunction(() => document.querySelector('#mdBody .mermaid svg'), null, { timeout: 30_000 });
+  const words = ['C# tips', 'The O(n) merge', 'Plain'];
+  expect(await page.$$eval('#tocList .toc-link', (els) => els.map((a) => a.textContent))).toEqual(['Notes', ...words]);
+  expect(await page.$$eval('#mdBody .minimap-segment', (els) => els.map((s) => [s.dataset.label, s.getAttribute('aria-label')])))
+    .toEqual(words.map((w) => [w, w]));
+  const link = page.locator('#mdBody .mdv-node-link');
+  await expect(link).toHaveCount(1); // the node named like the heading links to it...
+  await expect(link).toHaveAttribute('aria-label', 'Go to section: The O(n) merge'); // ...under the same name
+});
+
 test('after a document without headings, the next document shows its outline again', async ({ page }) => {
   await openViewer(page);
   await render(page, 'Just a paragraph, no headings.\n');
   await expect(page.locator('#tocSidebar')).toHaveClass(/hidden/);
   await render(page, '# Title\n\n## Part\n\nText.\n');
   await expect(page.locator('#tocSidebar')).not.toHaveClass(/hidden/);
+});
+
+// A document whose links point into sections the reader can fold: a heading link, and a footnote at the very end.
+const FILL = 'Line of text that fills the section. '.repeat(40);
+const JUMPS = `# Guide\n\nSee [the install steps](#install) and a note.[^1]\n\n## Setup\n\n${FILL}\n\n### Install\n\n${FILL}\n\n${FILL}\n\n## Usage\n\n${FILL}\n\n## Notes\n\n${FILL}\n\n${FILL}\n\n[^1]: The note's own text.\n`;
+
+// The browser's own jump (and, before, the links panel) only scrolled: a target inside a folded section has no box, so
+// nothing happened.
+test('an in-document link goes to its target as the outline does: unfolded, focused, marked, and in the address', async ({ page }) => {
+  await openViewer(page);
+  await render(page, JUMPS);
+  const setup = page.locator('#setup > .section-toggle');
+  await setup.click();
+  await expect(page.locator('#install')).toBeHidden();
+  await page.locator('#mdBody a:not(.header-anchor)[href="#install"]').click();
+  await expect(page.locator('#install')).toBeVisible();
+  await expect(setup).toHaveAttribute('aria-expanded', 'true');
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('install');
+  await expect.poll(() => activeEntry(page)).toBe('Install');
+  expect(await page.evaluate(() => location.hash)).toBe('#install'); // as the browser's own jump left it...
+  await page.goBack(); // ...so Back returns to where the reader was, in the same document
+  expect(await page.evaluate(() => [location.hash, !!document.getElementById('install')])).toEqual(['', true]);
+
+  // A footnote at the end of the document, in a folded last section.
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+  const notes = page.locator('#notes > .section-toggle');
+  await notes.click();
+  await expect(page.locator('#fn1')).toBeHidden();
+  await page.locator('#mdBody a[href="#fn1"]').click();
+  await expect(page.locator('#fn1')).toBeVisible();
+  await expect(notes).toHaveAttribute('aria-expanded', 'true');
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('fn1');
+  await expect.poll(() => activeEntry(page)).toBe('Notes');
+});
+
+test('a section link in the links panel goes to its target as the outline does: unfolded, focused and marked', async ({ page }) => {
+  await openViewer(page);
+  await render(page, JUMPS);
+  const setup = page.locator('#setup > .section-toggle');
+  await setup.click();
+  await expect(page.locator('#install')).toBeHidden();
+  await page.locator('#linksPanelBtn').click();
+  await page.locator('#linksPanelContent a.links-panel-item[href="#install"]').click();
+  await expect(page.locator('#install')).toBeVisible();
+  await expect(setup).toHaveAttribute('aria-expanded', 'true');
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('install');
+  await expect.poll(() => activeEntry(page)).toBe('Install');
+  await expect(page.locator('#linksPanel')).not.toHaveClass(/show/);
 });
 
 test('an outline link moves the keyboard focus to its heading and unfolds it', async ({ page }) => {
@@ -651,7 +758,8 @@ test('over the expanded diagram, shortcuts do nothing and its buttons keep worki
   await expect(page.locator('#searchOverlay')).not.toHaveClass(/show/);
   await expect(page.locator('#shortcutsOverlay')).not.toHaveClass(/show/);
   expect(await overlay.evaluate(o => o.inert)).toBe(false);
-  await expect(page.locator('#diagramZoomLabel')).toHaveText('Fit');
+  // Opened fitted (stream V's overlay presses Fit and shows the fitted scale); Fit toggles to actual size.
+  await expect(page.locator('#diagramFitBtn')).toHaveAttribute('aria-pressed', 'true');
   await page.locator('#diagramFitBtn').click();
   await expect(page.locator('#diagramZoomLabel')).toHaveText('100%');
   await page.keyboard.press('Escape');

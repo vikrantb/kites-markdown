@@ -173,6 +173,78 @@ test('issue 1: a new thread is saved into the file, on the block it was started 
   expect(errors).toEqual([]);
 });
 
+// A document with inline math, a display block, a paragraph that holds display math, and code full of dollar signs.
+const MATH_DOC = [
+  '# Math and code', '',
+  'Inline math $x^2 + y^2$ sits in this paragraph.', '',
+  '$$', '\\int_0^1 x\\,dx = \\frac{1}{2}', '$$', '',
+  'The paragraph after the display math.', '',
+  'A paragraph with display math inside: $$a+b$$ and more text.', '',
+  '```js', 'const price = "$5 and $10";', '```', '',
+  'The last paragraph.', ''].join('\n');
+const MARKER_LINE = /^<!-- MDV-ANCHOR id="c_[a-z0-9]+" -->$/;
+
+// A new thread's marker goes before the source line of the block whose number the page gives it. That number is
+// only right if the page and the source parse into the same blocks. Under the old math pre-pass (renderMath) they
+// could differ, which mdvSameBlocks checked; math is a markdown-it rule now, and this test checks they agree.
+test('a thread after display math or code is marked on its own line: the page and the source number blocks alike', async ({ page }) => {
+  const errors = await openViewer(page);
+  await page.evaluate((doc) => { window.h = window.__t.fakeHandle('math.md', doc); window.__t.open(doc, 'math.md', window.h); }, MATH_DOC);
+  const pairs = await page.evaluate(() => {
+    const parts = mdvSplitFrontmatter(mdvDocText);
+    const blocks = mdvTopBlocks(mdvParseMarkdown(parts.body));
+    return [...document.querySelectorAll('#mdBody [data-mdv-block]')].map((el) => {
+      const t = blocks[Number(el.getAttribute('data-mdv-block'))];
+      return [el.tagName.toLowerCase(), t ? (t.type === 'math_block' ? 'p' : t.tag) : 'none'];
+    });
+  });
+  expect(pairs.length).toBeGreaterThanOrEqual(6); // h1, the paragraphs and the code; the formula once it is numbered
+  for (const [onPage, inSource] of pairs) expect(inSource).toBe(onPage);
+
+  const doc = await page.evaluate(async () => {
+    await mdvAddComment(window.__t.para('The paragraph after the display math'), null, 'After the math');
+    await mdvAddComment(window.__t.para('A paragraph with display math inside'), null, 'On inline display math');
+    await mdvAddComment(window.__t.para('The last paragraph'), null, 'After the code');
+    return mdvDocText;
+  });
+  const lines = doc.split('\n');
+  for (const text of ['The paragraph after the display math.', 'A paragraph with display math inside: $$a+b$$ and more text.', 'The last paragraph.']) {
+    expect(lines[lines.indexOf(text) - 1], `the marker sits on the line before "${text}"`).toMatch(MARKER_LINE);
+  }
+  // The math and the code are untouched: no marker lands inside either.
+  expect(doc).toContain('\n$$\n\\int_0^1 x\\,dx = \\frac{1}{2}\n$$\n');
+  expect(doc).toContain('\n```js\nconst price = "$5 and $10";\n```\n');
+  expect(lines.filter((l) => MARKER_LINE.test(l))).toHaveLength(3);
+  // Reopened, each thread is on its own block. (The chips are drawn just after a render: wait for them first.)
+  await page.evaluate(() => window.__t.open(mdvDocText, 'math.md', null));
+  await expect(page.locator('#mdBody .mdv-chip')).toHaveCount(3);
+  await threads(page, 3);
+  await expect(page.locator('#mdvThreadList .mdv-orphan')).toHaveCount(0);
+  const chipsOn = await page.evaluate(() => [...document.querySelectorAll('#mdBody .mdv-chip')]
+    .map((c) => c.parentElement.textContent.replace(/💬 \d+/g, '').trim().slice(0, 20)).sort());
+  expect(chipsOn).toEqual(['A paragraph with dis', 'The last paragraph.', 'The paragraph after ']);
+  expect(errors).toEqual([]);
+});
+
+// The formula's paragraph is drawn by js/math.js's own renderer, which dropped the block number, so a thread started
+// on a display formula could not be placed and was saved unattached.
+test('a thread on a display formula is marked on the line before its $$ and stays on the formula when reopened', async ({ page }) => {
+  const errors = await openViewer(page);
+  await page.evaluate((doc) => { window.h = window.__t.fakeHandle('math.md', doc); window.__t.open(doc, 'math.md', window.h); }, MATH_DOC);
+  const doc = await page.evaluate(async () => {
+    await mdvAddComment(document.querySelector('#mdBody p.mdv-math-display'), null, 'On the formula');
+    return mdvDocText;
+  });
+  const lines = doc.split('\n');
+  expect(lines[lines.indexOf('$$') - 1], 'the marker sits on the line before the opening $$').toMatch(MARKER_LINE);
+  expect(doc).toContain('\n$$\n\\int_0^1 x\\,dx = \\frac{1}{2}\n$$\n');
+  await page.evaluate(() => window.__t.open(mdvDocText, 'math.md', null));
+  await expect(page.locator('#mdBody p.mdv-math-display .mdv-chip')).toHaveCount(1);
+  await threads(page, 1);
+  await expect(page.locator('#mdvThreadList .mdv-orphan')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test('issue 2: a deleted thread stays deleted, and its marker goes with it', async ({ page }) => {
   const errors = await openViewer(page);
   page.on('dialog', (d) => d.accept());
@@ -297,6 +369,28 @@ test('thread cards keep their reply box and buttons visible when the sidebar is 
   const clipped = await page.evaluate(() => [...document.querySelectorAll('#mdvThreadList .mdv-thread')]
     .filter((c) => c.scrollHeight > c.clientHeight + 1).length);
   expect(clipped, 'cards whose content is cut off').toBe(0);
+});
+
+// The quote used to scroll to its block and nothing more: a block inside a folded section has no box, so nothing
+// happened. It now goes there as the outline and search do (mdvGoTo): unfolded, centred, flashed.
+test('a thread card\'s quote shows its block even in a folded section, and the outline marks that section', async ({ page }) => {
+  const errors = await openViewer(page);
+  const fill = 'A sentence that gives this paragraph some length. '.repeat(3);
+  const doc = `# Guide\n\n## Setup\n\n${fill}\n\n### Install\n\n${[1, 2, 3, 4, 5].map((n) => `Step ${n}. ${fill}`).join('\n\n')}\n\n` +
+    `The commented paragraph, deep in its section.\n\n${fill}\n\n## Usage\n\n${Array(12).fill(fill).join('\n\n')}\n`;
+  await page.evaluate((d) => { window.h = window.__t.fakeHandle('jump.md', d); window.__t.open(d, 'jump.md', window.h); }, doc);
+  await page.evaluate(() => mdvAddComment(window.__t.para('The commented paragraph'), null, 'A note on it'));
+  await threads(page, 1);
+  const setup = page.locator('#setup > .section-toggle');
+  await setup.click();
+  const host = page.locator('#mdBody p', { hasText: 'The commented paragraph' });
+  await expect(host).toBeHidden();
+  await page.locator('#mdvThreadList .mdv-quote').click();
+  await expect(host).toBeVisible();
+  await expect(setup).toHaveAttribute('aria-expanded', 'true');
+  await expect.poll(() => page.evaluate(() => document.querySelector('#tocList .toc-link.active')?.textContent)).toBe('Install');
+  expect(await page.evaluate(() => document.activeElement.textContent.startsWith('The commented paragraph'))).toBe(true);
+  expect(errors).toEqual([]);
 });
 
 test('comment data from a file cannot inject markup into the sidebar', async ({ page }) => {

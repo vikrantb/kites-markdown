@@ -14,13 +14,15 @@ and your documents never leave your machine.
 - **Markdown** via [markdown-it](https://github.com/markdown-it/markdown-it): tables, task lists,
   footnotes, definition lists, abbreviations, `==mark==`, `~sub~`, `^sup^`, and typographic quotes
   and dashes.
-- **Diagrams**: fenced ` ```mermaid ` blocks render with [Mermaid](https://mermaid.js.org/), and
-  you can expand, zoom and fit them.
+- **Diagrams**: fenced ` ```mermaid ` blocks render with [Mermaid](https://mermaid.js.org/) in the
+  current theme's colours, and are redrawn when the theme changes. Expand one to pan and zoom it
+  (drag, wheel, pinch, keyboard); a node named like a heading jumps to that section.
+  [`samples/diagram-gallery.md`](samples/diagram-gallery.md) shows every diagram type.
 - **Math**: inline and display math with [KaTeX](https://katex.org/). Known issue: two dollar
   signs on one line are currently treated as math even in prices and code. See
   [docs/roadmap.md](docs/roadmap.md#known-issues).
-- **Code**: syntax highlighting with [highlight.js](https://highlightjs.org/) and a copy button on
-  every block. Known issue: the button currently also copies the language label.
+- **Code**: syntax highlighting with [highlight.js](https://highlightjs.org/), in each theme's own
+  colours, and a copy button on every block that copies only the code.
 - **Callouts**: GitHub-style `> [!NOTE]`, `> [!WARNING]` and related types.
 - **Frontmatter dashboard**: YAML frontmatter (`status`, `date`, `metrics`, `repos`) becomes a
   summary header instead of raw text. Other keys, such as `title`, are hidden but not displayed.

@@ -150,10 +150,10 @@ inserted unsanitized, with `securityLevel: 'loose'`.
 |---|---|---|
 | Markdown engine | marked 12 with `gfm: true` | markdown-it with `html`, `linkify`, `typographer`, plus anchor, task-list, footnote, mark, sub, sup, deflist and abbr plugins |
 | Library loading | Four CDN scripts and one CDN stylesheet; needs a network | All libraries in `vendor/`; Google Fonts is the only network request |
-| HTML sanitization | DOMPurify on document and comment HTML | None: `html: true` output is assigned with `innerHTML` |
+| HTML sanitization | DOMPurify on document and comment HTML | DOMPurify (`mdvSanitize`) on everything rendered from a document, and a Content Security Policy that refuses inline script; comment bodies are plain text, HTML-escaped. Until 2026-10-10: none, `html: true` output assigned with `innerHTML` |
 | Syntax highlighting | Configured through marked's `highlight` option, which marked removed in v8.0.0 (marked's own options documentation). Nothing else calls highlight.js, so with marked 12 code blocks are not highlighted | highlight.js inside the markdown-it `highlight` callback, with a language label and Copy button |
-| Mermaid | Fenced `mermaid` blocks; theme `base`; font size read from the slider when the document is rendered (moving the slider does not redraw diagrams); failures leave the code block | Fenced `mermaid` blocks; `default` or `dark` theme; error message on failure; expand overlay with zoom (`openDiagramOverlay`); click-to-section (`setupMermaidClickToSection`) |
-| Math | - | KaTeX for `$...$` and `$$...$$` (`renderMath`) |
+| Mermaid | Fenced `mermaid` blocks; theme `base`; font size read from the slider when the document is rendered (moving the slider does not redraw diagrams); failures leave the code block | Fenced `mermaid` blocks; theme `base` with the viewer's `--diagram-*` colours, every diagram redrawn on a theme change; `securityLevel: 'strict'`, pinned (`mdvPinMermaidSecurity`); error message on failure; expanded view with pan, zoom and keyboard (`openDiagramOverlay`); a node named like a heading links to it (`mdvLinkDiagramNodes`) |
+| Math | - | KaTeX for `$...$` and `$$...$$`, read by a markdown-it rule with Pandoc's dollar rules and never inside code (`js/math.js`) |
 | Frontmatter | - (shown as document text) | Stripped; status, date, metrics and repos dashboard (`renderFrontmatterDashboard`) |
 | Callouts | - | `transformCalloutBlocks` |
 | Navigation | - | Table of contents with scroll spy, section folding, minimap, search (`buildToc`, `addSectionToggles`, `buildSectionMinimap`, `openSearch`) |
@@ -203,27 +203,32 @@ What happens when a file written by one is opened in the other *(inferred from t
 Do not open main-viewer files in the legacy viewer. A one-way converter from legacy lines to the v1
 payload would be straightforward, since every legacy field has a counterpart.
 
-## CDN plus DOMPurify versus vendored and unsanitized
+## CDN versus vendored, and sanitizing
 
-The two viewers made opposite trade-offs.
+The two viewers made opposite trade-offs on loading. On sanitizing they now agree.
 
 - **Availability.** The legacy viewer needs four scripts from two CDNs at load time. Mermaid is
   pinned only to its major version, so behaviour can change between visits. The main viewer
   vendored everything after CDN failures broke it (see
   [lessons-learned.md](lessons-learned.md#1-vendor-every-library)).
-- **Safety.** The legacy viewer sanitizes all rendered HTML. The main viewer enables raw HTML in
-  markdown-it and inserts the result with `innerHTML`, so a document containing, for example, an
-  `<img>` with an `onerror` attribute runs that script in the viewer's page *(inferred)*. Since the
-  main viewer also holds write handles to the reader's files, sanitizing is the most important idea
-  to port.
-- **Both** render Mermaid with `securityLevel: 'loose'`.
+- **Safety.** Both sanitize. The legacy viewer runs DOMPurify over its rendered HTML and comment
+  bodies. The main viewer did not until 2026-10-10: it inserted markdown-it's `html: true` output with
+  `innerHTML`, so a document's `<img>` with an `onerror` attribute could run script in the viewer's
+  page *(inferred)*, which also holds write handles to the reader's files. It now sanitizes everything rendered
+  from a document with DOMPurify (`mdvSanitize`) and refuses inline script with a Content Security
+  Policy; `tests/e2e/security.spec.mjs` opens a hostile document, including that `<img>`, and checks
+  that nothing runs.
+- **Mermaid** differs: the legacy viewer renders it with `securityLevel: 'loose'`; the main viewer
+  pins `'strict'` (`mdvPinMermaidSecurity`), so click directives are ignored and labels sanitized.
 
 ## Ideas worth porting, in priority order
 
-1. **Sanitize rendered HTML.** Vendor DOMPurify and run the markdown-it output through it before
-   `innerHTML`. Two things to check first: that the configuration keeps the HTML comment nodes
-   `mdvBuildAnchorMap` relies on *(unverified)*, and that KaTeX and highlight.js markup survive.
-   Mermaid SVG is inserted later by `renderMermaidDiagrams` and would need its own decision.
+1. ~~**Sanitize rendered HTML.**~~ **Done 2026-10-10.** DOMPurify is vendored, and `mdvSanitize`
+   (`js/render.js`) runs over the dashboard and the markdown-it output before they reach the page. A
+   hook keeps the top-level HTML comments that anchors and narration rely on, and KaTeX's MathML
+   survives (both checked by `security.spec.mjs`). Mermaid's SVG does not pass through it: Mermaid is
+   pinned to `'strict'` and sanitizes its own labels (see
+   [rendering.md](rendering.md#security-posture)).
 2. **Copy AI export.** A button that copies all threads as plain text grouped by block, with the
    quoted block, author, time, status and replies. The main viewer has richer data to export: the
    selection quote, resolution status and author kind.
@@ -231,10 +236,12 @@ The two viewers made opposite trade-offs.
    already labels `agent` comments, but the UI always writes `human`. A composer control for
    human / agent, remembered like the legacy `mdv.author` key, closes the loop for pasting an AI's
    reply.
-4. **Unsaved-changes warning.** A `beforeunload` check on `mdvDirty`, which the main viewer already
-   maintains but never reads.
+4. ~~**Unsaved-changes warning.**~~ **Done 2026-10-10.** Leaving with comment changes that are not in
+   a file asks first (`beforeunload`), and opening another document keeps them in a notice with a
+   download button (`comments.spec.mjs`: "leaving the page with unsaved comment changes asks first" and
+   "comment changes that never reached a file are kept when another document is opened").
 5. **Markdown comment bodies.** Render `body_md` as sanitized markdown instead of escaped text,
-   possibly with the legacy image-URL helper. Depends on item 1.
+   possibly with the legacy image-URL helper. It depended on item 1, which is done.
 6. **Hide resolved threads.** A sidebar filter like the legacy checkbox.
 7. **Long-press to comment** on touch devices.
 8. **Save as.** An explicit way to save a commented copy elsewhere.

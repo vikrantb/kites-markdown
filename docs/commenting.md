@@ -49,7 +49,7 @@ Contents:
    - right-click a paragraph, list item, heading, quote, code block, table cell or definition, then choose **Add comment** (or **Add comment on selection** if text is selected), or
    - select at least 3 characters inside the document and click the floating **Comment** button that appears above the selection.
 5. Type in the popup and click **Save** or press Cmd/Ctrl+Enter. If the document has no save location yet (Chromium), a dialog opens first: an **Open** dialog to pick the file the document was opened from (the first save checks it still holds that version), or a **Save** dialog for pasted text, which has no file of its own. The thread appears in the sidebar and a chip appears on the block; the page does not move.
-6. In the sidebar, each open thread has a reply box and **Reply**, **Resolve** and **Delete** buttons. Resolved threads show only **Reopen**. Every change is saved at once. Click a thread's quote to scroll to its block.
+6. In the sidebar, each open thread has a reply box and **Reply**, **Resolve** and **Delete** buttons. Resolved threads show only **Reopen**. Every change is saved at once. Click a thread's quote to show its block: a folded section or closed `<details>` around it opens, and the block is centred and briefly highlighted (`mdvGoTo`).
 7. Cmd/Ctrl+S saves immediately, and opens the same dialog if no save location is known (or downloads a copy in browsers without the File System Access API).
 
 ![A new thread on a paragraph inside a section: its chip at the end of the paragraph, its card in the comments sidebar, and "Saved" in the toolbar](images/comments-thread-light.png)
@@ -75,7 +75,7 @@ These are all the comment-related inputs the code handles. None of them is liste
 | Cmd/Ctrl+Enter | reply box | Post the reply | `mdvRenderSidebar` wires `mdvPostReply` |
 | Mouse-down outside the context menu | anywhere | Close the menu | `mdvShowContextMenu` |
 | Click a chip | on a commented block | Open the sidebar, scroll the thread card into view and outline it for 1.2 s | `mdvRenderChips`, `mdvFocusThread` |
-| Click a thread's quote | sidebar | Scroll the document to the thread's block | `mdvRenderSidebar` |
+| Click a thread's quote | sidebar | Show the thread's block: unfold what hides it, centre it and flash it (`mdvGoTo`). It used to only scroll, which did nothing inside a folded section | `mdvRenderSidebar` |
 
 "Recognised block" means the nearest ancestor whose tag is one of `MDV_BLOCK_TAGS`: `P`, `LI`, `H1`–`H6`, `BLOCKQUOTE`, `PRE`, `TD`, `TH`, `DT`, `DD` (`mdvFindBlock`). Because the walk goes upward from the click target, a paragraph inside a blockquote or list item is chosen before the enclosing `BLOCKQUOTE` or `LI`.
 
@@ -233,14 +233,15 @@ When a thread is saved, `mdvAddComment(elem, selectionText, body)`:
    - Every top-level block of the rendered page carries its number in a `data-mdv-block` attribute (see below). The element's top-level block is found with `closest('[data-mdv-block]')` (a fenced code block carries it on the `<code>` inside its `<pre>`).
    - The source is parsed again with the viewer's markdown-it instance (after the front matter, exactly as `renderMarkdown` splits it), and the block with the same number gives its first source line. Inline markup, links, typographic quotes, soft line breaks, headings, code blocks and diagrams all work, because no rendered text is compared with the source.
    - The numbering skips HTML blocks that contain only comments (markers, narration, the comment block), so inserting or removing a marker never renumbers anything.
-   - When math pre-processing changes the block structure (display math spanning blank lines), or the element has no number, a fallback looks for the first line of the block's text in the source, outside code.
+   - Math needs no special case: it is a markdown-it rule (`js/math.js`), so this parse and the render's number the same blocks, a display formula included (`comments.spec.mjs` checks every numbered block of a document with inline and display math and code). Until 2026-10-10 a check, `mdvSameBlocks`, compared the blocks before and after the old math pre-pass; with no pre-pass it always passed, and it was deleted.
+   - When the element has no number, a fallback looks for the first line of the block's text in the source, outside code. A footnote has no number (its paragraph is not a top-level block), and its text ends with the `↩︎` back-link, which is not in the source, so the fallback finds nothing and a thread started on a footnote is saved unattached (checked in Chrome; not yet fixed).
 4. Inserts the marker line at the start of that source line, appends the comment, and writes the result into `rawMarkdown` together with the new list (`mdvCommit`), so nothing that reads the source again can lose the thread.
 5. Adds the id to the element's `data-mdv-anchor` on the page directly. There is no re-render, so the reader stays where they were.
 6. If no position can be found, the thread is still saved, listed as unattached, and a toast says so.
 
 ### Resolving an anchor
 
-A markdown-it core rule, `mdvAnnotateBlocks` (registered by `comments.js` on the shared `md` instance), runs on every render. It numbers each top-level block (`data-mdv-block`) and gives the block that follows one or more anchor markers their ids (`data-mdv-anchor="c_… c_…"`). HTML that a renderer builds itself drops token attributes, so a raw HTML block (a `<table>`, `<details>` or `<p align=center>`) and a fence drawn by a custom renderer (Mermaid) get them on their first element instead (`mdvWithBlockAttrs`).
+A markdown-it core rule, `mdvAnnotateBlocks` (registered by `comments.js` on the shared `md` instance), runs on every render. It numbers each top-level block (`data-mdv-block`) and gives the block that follows one or more anchor markers their ids (`data-mdv-anchor="c_… c_…"`). HTML that a renderer builds itself drops token attributes, so a raw HTML block (a `<table>`, `<details>` or `<p align=center>`), a fence drawn by a custom renderer (Mermaid) and a display formula (the `<p class="mdv-math-display">` that `js/math.js` draws) get them on their first element instead (`mdvWithBlockAttrs`). Until 2026-10-10 display formulas were missed, so a thread started on one could not be placed and was saved unattached.
 
 `mdvBuildAnchorMap(container)` maps every id in a `data-mdv-anchor` attribute to its element (in a map with no prototype, so an id such as `constructor` finds nothing). An attribute travels with its element, so the section wrappers that `addSectionToggles` builds after rendering no longer separate a thread from its block. Markers the render could not attach (inside a list or quote, or before raw HTML that starts with text) fall back to the old rule: the marker comment's next element sibling.
 
