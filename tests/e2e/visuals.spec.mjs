@@ -46,31 +46,52 @@ test('a theme change redraws every diagram in the dark palette, and back (issue 
   expect(errors, errors.join('\n')).toEqual([]);
 });
 
-test("Mermaid's own load-time pass never redraws the viewer's diagrams", async ({ page }) => {
-  const errors = await open(page, 'kitchen-sink.md', 'dark');
-  const ids = () => page.$$eval('#mdBody .mermaid svg', (svgs) => svgs.map((s) => s.id));
-  const before = await ids();
-  expect(before.every((id) => id.startsWith('mdv-mermaid-'))).toBe(true);
-  // Mermaid listens for window "load" and, unless told not to, draws every .mermaid element in its own theme.
-  await page.evaluate(() => window.dispatchEvent(new Event('load')));
-  await page.waitForTimeout(600);
-  expect(await ids()).toEqual(before);
-  expect(await page.locator('#mdBody .mermaid-error').count()).toBe(0);
-  expect(errors, errors.join('\n')).toEqual([]);
-});
-
-test('diagrams do not wait long for a slow web font, and are redrawn in it when it arrives', async ({ page, baseURL }) => {
-  // Stand in for Google Fonts: "Inter" is a vendored font file, served by the test server, that takes 5 s to
-  // arrive (no network needed), well past the viewer's 1.5 s wait. The URL is absolute: relative to the stand-in stylesheet it would name Google's host.
+// A stand-in for Google Fonts: "Inter" is a vendored font file, served by the test server, that arrives only after
+// `delay` ms (no network needed). The URL is absolute: relative to the stand-in stylesheet it would name Google's host.
+async function holdInter(page, baseURL, delay) {
   const fontUrl = new URL('vendor/fonts/KaTeX_SansSerif-Regular.woff2', baseURL).href;
   await page.route('https://fonts.googleapis.com/**', (route) => route.fulfill({
     contentType: 'text/css',
     body: `@font-face { font-family: "Inter"; font-weight: 100 900; src: url(${fontUrl}) format("woff2"); }`,
   }));
   await page.route(fontUrl, async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await new Promise((resolve) => setTimeout(resolve, delay));
     await route.continue();
   });
+}
+
+test("Mermaid's own load-time pass never draws the viewer's diagrams", async ({ page, baseURL }) => {
+  // Mermaid draws every .mermaid element itself, in its own theme, on window "load" unless startOnLoad is off. The
+  // viewer's first pass sets its own config only after waiting for the web font, so the race is "load" arriving
+  // during that wait: hold the font, fire "load" inside the wait, and record every SVG ever put into a diagram.
+  await holdInter(page, baseURL, 4000);
+  await page.addInitScript(() => {
+    window.mdvTestInserted = [];
+    new MutationObserver((records) => {
+      for (const r of records) {
+        if (!r.target.classList || !r.target.classList.contains('mermaid')) continue;
+        for (const n of r.addedNodes) if (n.nodeName.toLowerCase() === 'svg') window.mdvTestInserted.push(n.id);
+      }
+    }).observe(document, { childList: true, subtree: true });
+  });
+  const errors = collectErrors(page);
+  // Not 'load': Chrome holds the load event until pending fonts arrive.
+  await page.goto('markdown-viewer.html?file=samples/kitchen-sink.md', { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#mdBody .mermaid', { state: 'attached' });
+  expect(await page.locator('#mdBody .mermaid svg').count()).toBe(0); // the viewer's pass is still waiting for the font
+  await page.evaluate(() => window.dispatchEvent(new Event('load')));
+  await waitForDiagrams(page);
+  await page.waitForTimeout(300);
+  const inserted = await page.evaluate(() => window.mdvTestInserted);
+  expect(inserted.length).toBeGreaterThanOrEqual(4);
+  expect(inserted.filter((id) => !id.startsWith('mdv-mermaid-'))).toEqual([]);
+  expect(await page.locator('#mdBody .mermaid-error').count()).toBe(0);
+  expect(errors, errors.join('\n')).toEqual([]);
+});
+
+test('diagrams do not wait long for a slow web font, and are redrawn in it when it arrives', async ({ page, baseURL }) => {
+  // "Inter" takes 5 s to arrive, well past the viewer's 1.5 s wait.
+  await holdInter(page, baseURL, 5000);
   const errors = collectErrors(page);
   const start = Date.now();
   // Not 'load': Chrome holds the load event until pending fonts arrive.
