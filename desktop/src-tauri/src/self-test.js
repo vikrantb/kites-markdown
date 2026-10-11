@@ -160,9 +160,11 @@
     return { ok: Object.values(checks).every(Boolean), checks, staleSave: staleSave && { ok: staleSave.ok, reason: staleSave.reason } };
   }
 
-  // Following a link in the window (js/history.js), on the linked fixture: its relative link to other.md opens that
-  // file in this same window through the bridge's readDocument, without asking the shell for a new window; the
-  // bridge then names that file; and Back, the page's own history, returns to the window's own file. A document
+  // Following a link in the window (js/document-links.js, js/history.js), on the linked fixture: its relative link to
+  // other.md opens that file in this same window through the bridge's readDocument, without asking the shell for a new
+  // window; the bridge then names that file. Opening the window's own file again (what a double-click in the Finder
+  // does: mdv_open_path, which only brings this window to the front) shows it again, with the linked document one step
+  // Back; and Back, the page's own history, returns through the linked document to the window's own file. A document
   // without that link is not probed (the runner's `links` check asks for it).
   async function probeLinks(host) {
     const link = body().querySelector('a[href="other.md"]');
@@ -171,21 +173,29 @@
     const asked = [];
     const openPath = host.openPath;
     host.openPath = (path) => { asked.push(path); return openPath.call(host, path); };
+    const isOwn = () => host.currentPath === own && !!body().querySelector('a[href="other.md"]');
     try {
       link.click();
       const opened = await waitFor(() => host.currentPath !== own && /Another document/.test(body().textContent || ''), 10000, 'the linked document')
         .then(() => true, () => false);
       const linkedPath = host.currentPath;
+      const noNewWindowAsked = asked.length === 0;
       const backShown = await waitFor(() => !!document.getElementById('mdvBackBtn') && !document.getElementById('mdvHistoryNav').hidden, 3000, 'the Back button')
         .then(() => true, () => false);
+      await openPath.call(host, own);
+      const reopened = await waitFor(isOwn, 10000, 'the window\'s own file opened again').then(() => true, () => false);
       history.back();
-      const returned = await waitFor(() => host.currentPath === own && !!body().querySelector('a[href="other.md"]'), 10000, 'Back')
+      const backToLinked = await waitFor(() => host.currentPath === linkedPath && /Another document/.test(body().textContent || ''), 10000, 'Back to the linked document')
         .then(() => true, () => false);
+      history.back();
+      const returned = await waitFor(isOwn, 10000, 'Back').then(() => true, () => false);
       const checks = {
         openedInThisWindow: opened,
-        noNewWindowAsked: asked.length === 0,
+        noNewWindowAsked,
         bridgeFollowsTheDocument: opened && /[\\/]other\.md$/.test(linkedPath || ''),
         backButtonShown: backShown,
+        openingItsFileAgainShowsIt: reopened,
+        backReturnsToTheLinkedDocument: backToLinked,
         backReturnsToTheWindowsFile: returned,
       };
       return { probed: true, ok: Object.values(checks).every(Boolean), checks, linkedPath: clip(linkedPath || '', 160) };

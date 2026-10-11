@@ -25,7 +25,8 @@
 // Checks (--expect): render (no errors, every diagram drawn, the bridge refused what it must, and on macOS
 // confirm() reached a dialog), kitchen-sink (the sample's features all rendered), assets (images in the
 // document's folder load, one in a dot-folder included; one outside the folder does not), links (on the linked
-// fixture: a relative link opens its file in the same window, and Back returns), save (the save probe passed), no-inline-handlers (none left for the app's CSP to block), types (macOS: every extension
+// fixture: a relative link opens its file in the same window, opening the window's own file again shows it with the
+// linked document one step Back, and Back returns), save (the save probe passed), no-inline-handlers (none left for the app's CSP to block), types (macOS: every extension
 // the app claims resolves to a Markdown type, not an anonymous dyn.* type that no app claims, and the app
 // is among the apps that can open that type; launch with open or default, so Launch Services has
 // registered the build).
