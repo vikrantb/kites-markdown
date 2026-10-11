@@ -4,7 +4,8 @@
    Every colour, shadow and size is a token on :root (light), overridden for
    :root[data-theme="sepia"] and :root[data-theme="dark"] (scoped to the root,
    because the theme menu's own buttons carry data-theme too). Components use tokens only,
-   so a theme is one token block. Text tokens meet WCAG AA (4.5:1) on the
+   so a theme is one token block, screen-only so that paper always gets the light
+   palette, plus its diagram colours, which print as drawn. Text tokens meet WCAG AA (4.5:1) on the
    surfaces they are used on; tests/e2e/visuals.spec.mjs re-measures them.
    Diagram colours (--diagram-*) are read by js/mermaid.js and handed to
    Mermaid, so diagrams follow the theme too.
@@ -166,79 +167,88 @@
 }
 
 /* ===== Tokens: sepia ===== */
+@media screen {
+  :root[data-theme="sepia"] {
+    color-scheme: light;
+    --bg-primary: #F4ECDA;
+    --bg-secondary: #EDE3CC;
+    --bg-tertiary: #E5D9BE;
+    --bg-card: #F9F3E5;
+    --bg-code: #EADFC6;
+    --bg-code-block: #F0E7D3;
+    --bg-code-header: #EADFC8;
+    --bg-hover: rgba(70, 50, 20, 0.06);
+    --bg-active: rgba(70, 50, 20, 0.10);
+    --bg-drop: rgba(154, 74, 28, 0.07);
+    --bg-tooltip: #3A2E21;
+    --bg-scrim: rgba(40, 28, 14, 0.40);
+    --bg-tts-highlight: rgba(154, 74, 28, 0.12);
+    --bg-chrome: rgba(244, 236, 218, 0.86);
+
+    --text-primary: #33281C;
+    --text-secondary: #57483A;
+    --text-tertiary: #685844;
+    --text-link: #8E3F15;
+    --text-link-hover: #6E2E0C;
+    --text-code: #9A3626;
+    --text-inverse: #F4ECDA;
+    --text-on-accent: #FFF8EC;
+    --text-on-tooltip: #F9F3E5;
+
+    --border-primary: #D9CCAE;
+    --border-secondary: #E2D6BB;
+    --border-accent: #C4B48F;
+    --border-code: #DCCFB2;
+    --border-focus: #9A4A1C;
+
+    --accent: #9A4A1C;
+    --accent-hover: #843E15;
+    --accent-strong: #7E3B13;
+    --accent-soft: #EBDCC3;
+    --accent-secondary: #2F6B66;
+    --accent-warn: #7F5600;
+    --accent-danger: #A12C22;
+    --focus-ring: #9A4A1C;
+    --selection: rgba(154, 74, 28, 0.18);
+
+    --callout-note: #28588F;
+    --callout-tip: #3A6B2C;
+    --callout-important: #6E4596;
+    --callout-warning: #7F5600;
+    --callout-caution: #A12C22;
+    --callout-tldr: #22656A;
+    --callout-decision: #5E3E8C;
+    --callout-cost: #9A4513;
+    --callout-tint: 8%;
+
+    --status-shipped: #3A6B2C;
+    --status-progress: #7F5600;
+    --status-blocked: #A12C22;
+    --status-draft: #685844;
+
+    --mark-bg: #F2D98C;
+    --search-match: #F0D27A;
+    --flash: rgba(154, 74, 28, 0.16);
+
+    --syntax-keyword: #87336A;
+    --syntax-string: #3B6627;
+    --syntax-number: #9A4C0C;
+    --syntax-title: #2C5A85;
+    --syntax-type: #28635E;
+    --syntax-attr: #8A3C14;
+    --syntax-comment: #6F5F4C;
+    --syntax-meta: #685844;
+    --syntax-addition: #3B6627;
+    --syntax-deletion: #A12C22;
+
+    --shadow-xs: 0 1px 2px rgba(70, 50, 20, 0.06);
+    --shadow-sm: 0 1px 2px rgba(70, 50, 20, 0.05), 0 2px 8px rgba(70, 50, 20, 0.06);
+    --shadow-md: 0 2px 4px rgba(70, 50, 20, 0.05), 0 8px 24px rgba(70, 50, 20, 0.10);
+    --shadow-lg: 0 4px 10px rgba(70, 50, 20, 0.07), 0 22px 56px rgba(70, 50, 20, 0.18);
+  }
+}
+/* Sepia diagram colours apply in print too: a diagram prints in the palette it was drawn in. */
 :root[data-theme="sepia"] {
-  color-scheme: light;
-  --bg-primary: #F4ECDA;
-  --bg-secondary: #EDE3CC;
-  --bg-tertiary: #E5D9BE;
-  --bg-card: #F9F3E5;
-  --bg-code: #EADFC6;
-  --bg-code-block: #F0E7D3;
-  --bg-code-header: #EADFC8;
-  --bg-hover: rgba(70, 50, 20, 0.06);
-  --bg-active: rgba(70, 50, 20, 0.10);
-  --bg-drop: rgba(154, 74, 28, 0.07);
-  --bg-tooltip: #3A2E21;
-  --bg-scrim: rgba(40, 28, 14, 0.40);
-  --bg-tts-highlight: rgba(154, 74, 28, 0.12);
-  --bg-chrome: rgba(244, 236, 218, 0.86);
-
-  --text-primary: #33281C;
-  --text-secondary: #57483A;
-  --text-tertiary: #685844;
-  --text-link: #8E3F15;
-  --text-link-hover: #6E2E0C;
-  --text-code: #9A3626;
-  --text-inverse: #F4ECDA;
-  --text-on-accent: #FFF8EC;
-  --text-on-tooltip: #F9F3E5;
-
-  --border-primary: #D9CCAE;
-  --border-secondary: #E2D6BB;
-  --border-accent: #C4B48F;
-  --border-code: #DCCFB2;
-  --border-focus: #9A4A1C;
-
-  --accent: #9A4A1C;
-  --accent-hover: #843E15;
-  --accent-strong: #7E3B13;
-  --accent-soft: #EBDCC3;
-  --accent-secondary: #2F6B66;
-  --accent-warn: #7F5600;
-  --accent-danger: #A12C22;
-  --focus-ring: #9A4A1C;
-  --selection: rgba(154, 74, 28, 0.18);
-
-  --callout-note: #28588F;
-  --callout-tip: #3A6B2C;
-  --callout-important: #6E4596;
-  --callout-warning: #7F5600;
-  --callout-caution: #A12C22;
-  --callout-tldr: #22656A;
-  --callout-decision: #5E3E8C;
-  --callout-cost: #9A4513;
-  --callout-tint: 8%;
-
-  --status-shipped: #3A6B2C;
-  --status-progress: #7F5600;
-  --status-blocked: #A12C22;
-  --status-draft: #685844;
-
-  --mark-bg: #F2D98C;
-  --search-match: #F0D27A;
-  --flash: rgba(154, 74, 28, 0.16);
-
-  --syntax-keyword: #87336A;
-  --syntax-string: #3B6627;
-  --syntax-number: #9A4C0C;
-  --syntax-title: #2C5A85;
-  --syntax-type: #28635E;
-  --syntax-attr: #8A3C14;
-  --syntax-comment: #6F5F4C;
-  --syntax-meta: #685844;
-  --syntax-addition: #3B6627;
-  --syntax-deletion: #A12C22;
-
   --diagram-bg: #F9F3E5;
   --diagram-grid: #EADFC8;
   --diagram-text: #33281C;
@@ -278,87 +288,91 @@
   --diagram-series-soft-6: #E1E4DF;
   --diagram-series-soft-7: #E5E7D3;
   --diagram-series-soft-8: #EBE3D3;
-
-  --shadow-xs: 0 1px 2px rgba(70, 50, 20, 0.06);
-  --shadow-sm: 0 1px 2px rgba(70, 50, 20, 0.05), 0 2px 8px rgba(70, 50, 20, 0.06);
-  --shadow-md: 0 2px 4px rgba(70, 50, 20, 0.05), 0 8px 24px rgba(70, 50, 20, 0.10);
-  --shadow-lg: 0 4px 10px rgba(70, 50, 20, 0.07), 0 22px 56px rgba(70, 50, 20, 0.18);
 }
 
 /* ===== Tokens: dark ===== */
+@media screen {
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg-primary: #14161B;
+    --bg-secondary: #191C22;
+    --bg-tertiary: #252A33;
+    --bg-card: #1C1F26;
+    --bg-code: #262B35;
+    --bg-code-block: #181B21;
+    --bg-code-header: #1E2128;
+    --bg-hover: rgba(255, 255, 255, 0.05);
+    --bg-active: rgba(255, 255, 255, 0.08);
+    --bg-drop: rgba(148, 162, 255, 0.08);
+    --bg-tooltip: #E3E5EA;
+    --bg-scrim: rgba(0, 0, 0, 0.55);
+    --bg-tts-highlight: rgba(148, 162, 255, 0.15);
+    --bg-chrome: rgba(20, 22, 27, 0.82);
+
+    --text-primary: #E3E5EA;
+    --text-secondary: #B3B8C3;
+    --text-tertiary: #8D93A0;
+    --text-link: #A3AFFF;
+    --text-link-hover: #C3CBFF;
+    --text-code: #F59DAD;
+    --text-inverse: #14161B;
+    --text-on-accent: #11131A;
+    --text-on-tooltip: #14161B;
+
+    --border-primary: #2E333D;
+    --border-secondary: #262A33;
+    --border-accent: #3F4551;
+    --border-code: #2A2F39;
+    --border-focus: #94A2FF;
+
+    --accent: #94A2FF;
+    --accent-hover: #A9B4FF;
+    --accent-strong: #B3BDFF;
+    --accent-soft: #252A44;
+    --accent-secondary: #4CC2B2;
+    --accent-warn: #E7B04A;
+    --accent-danger: #FF8087;
+    --focus-ring: #94A2FF;
+    --selection: rgba(148, 162, 255, 0.28);
+
+    --callout-note: #6FA8FF;
+    --callout-tip: #5BC88A;
+    --callout-important: #B99BFF;
+    --callout-warning: #E7B04A;
+    --callout-caution: #FF8087;
+    --callout-tldr: #4FC6DD;
+    --callout-decision: #A98BFF;
+    --callout-cost: #FF9E5E;
+    --callout-tint: 11%;
+
+    --status-shipped: #5BC88A;
+    --status-progress: #E7B04A;
+    --status-blocked: #FF8087;
+    --status-draft: #8D93A0;
+
+    --mark-bg: rgba(231, 176, 74, 0.30);
+    --search-match: rgba(231, 176, 74, 0.40);
+    --flash: rgba(148, 162, 255, 0.20);
+
+    --syntax-keyword: #C49BFF;
+    --syntax-string: #7FD6A4;
+    --syntax-number: #F5B36B;
+    --syntax-title: #8EB2FF;
+    --syntax-type: #6FD3E3;
+    --syntax-attr: #F09E7B;
+    --syntax-comment: #858C9A;
+    --syntax-meta: #9AA0AD;
+    --syntax-addition: #7FD6A4;
+    --syntax-deletion: #FF8A8F;
+
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.30);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30), 0 2px 8px rgba(0, 0, 0, 0.25);
+    --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.30), 0 10px 28px rgba(0, 0, 0, 0.40);
+    --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.40), 0 24px 64px rgba(0, 0, 0, 0.55);
+  }
+}
+/* Dark diagram colours apply in print too: a diagram prints in the palette it was drawn in. */
 :root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg-primary: #14161B;
-  --bg-secondary: #191C22;
-  --bg-tertiary: #252A33;
-  --bg-card: #1C1F26;
-  --bg-code: #262B35;
-  --bg-code-block: #181B21;
-  --bg-code-header: #1E2128;
-  --bg-hover: rgba(255, 255, 255, 0.05);
-  --bg-active: rgba(255, 255, 255, 0.08);
-  --bg-drop: rgba(148, 162, 255, 0.08);
-  --bg-tooltip: #E3E5EA;
-  --bg-scrim: rgba(0, 0, 0, 0.55);
-  --bg-tts-highlight: rgba(148, 162, 255, 0.15);
-  --bg-chrome: rgba(20, 22, 27, 0.82);
-
-  --text-primary: #E3E5EA;
-  --text-secondary: #B3B8C3;
-  --text-tertiary: #8D93A0;
-  --text-link: #A3AFFF;
-  --text-link-hover: #C3CBFF;
-  --text-code: #F59DAD;
-  --text-inverse: #14161B;
-  --text-on-accent: #11131A;
-  --text-on-tooltip: #14161B;
-
-  --border-primary: #2E333D;
-  --border-secondary: #262A33;
-  --border-accent: #3F4551;
-  --border-code: #2A2F39;
-  --border-focus: #94A2FF;
-
-  --accent: #94A2FF;
-  --accent-hover: #A9B4FF;
-  --accent-strong: #B3BDFF;
-  --accent-soft: #252A44;
-  --accent-secondary: #4CC2B2;
-  --accent-warn: #E7B04A;
-  --accent-danger: #FF8087;
-  --focus-ring: #94A2FF;
-  --selection: rgba(148, 162, 255, 0.28);
-
-  --callout-note: #6FA8FF;
-  --callout-tip: #5BC88A;
-  --callout-important: #B99BFF;
-  --callout-warning: #E7B04A;
-  --callout-caution: #FF8087;
-  --callout-tldr: #4FC6DD;
-  --callout-decision: #A98BFF;
-  --callout-cost: #FF9E5E;
-  --callout-tint: 11%;
-
-  --status-shipped: #5BC88A;
-  --status-progress: #E7B04A;
-  --status-blocked: #FF8087;
-  --status-draft: #8D93A0;
-
-  --mark-bg: rgba(231, 176, 74, 0.30);
-  --search-match: rgba(231, 176, 74, 0.40);
-  --flash: rgba(148, 162, 255, 0.20);
-
-  --syntax-keyword: #C49BFF;
-  --syntax-string: #7FD6A4;
-  --syntax-number: #F5B36B;
-  --syntax-title: #8EB2FF;
-  --syntax-type: #6FD3E3;
-  --syntax-attr: #F09E7B;
-  --syntax-comment: #858C9A;
-  --syntax-meta: #9AA0AD;
-  --syntax-addition: #7FD6A4;
-  --syntax-deletion: #FF8A8F;
-
   --diagram-bg: #1C1F26;
   --diagram-grid: #262A32;
   --diagram-text: #E3E5EA;
@@ -398,11 +412,6 @@
   --diagram-series-soft-6: #1F3446;
   --diagram-series-soft-7: #253A28;
   --diagram-series-soft-8: #2D323B;
-
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.30);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.30), 0 2px 8px rgba(0, 0, 0, 0.25);
-  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.30), 0 10px 28px rgba(0, 0, 0, 0.40);
-  --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.40), 0 24px 64px rgba(0, 0, 0, 0.55);
 }
 
 /* ===== Reset and base ===== */
@@ -2023,22 +2032,31 @@ body.focus-mode .md-body .section-content > .tts-active { opacity: 1; }
 body.mdv-sidebar-open .content-wrapper { padding-right: 380px; }
 
 /* ==========================================================================
-   Print: always light, no chrome, keep blocks whole
+   Print: always light, no chrome, every row of a long table
+   The sepia and dark page tokens are screen-only (see the token blocks), so paper always gets the light palette,
+   all of it: text, code, callouts, links. Diagrams keep the palette they were drawn in, so their card prints with
+   them (print-color-adjust), even when the browser's "background graphics" option is off.
    ========================================================================== */
 @media print {
-  html[data-theme] {
-    --bg-primary: #FFFFFF; --bg-secondary: #F6F6F6; --bg-card: #FFFFFF; --bg-code: #F3F3F3;
-    --bg-code-block: #F7F7F7; --bg-code-header: #EFEFEF; --text-primary: #111111; --text-secondary: #333333;
-    --text-tertiary: #555555; --text-link: #1F3FAF; --text-code: #8A1F35; --border-primary: #CCCCCC;
-    --border-secondary: #DDDDDD; --border-code: #DDDDDD; --shadow-xs: none; --shadow-sm: none; --shadow-md: none;
+  :root {
+    --bg-primary: #FFFFFF; --bg-secondary: #F6F6F4; --bg-card: #FFFFFF;
+    --text-primary: #111111; --text-secondary: #333333; --text-tertiary: #555555;
+    --shadow-xs: none; --shadow-sm: none; --shadow-md: none; --shadow-lg: none;
   }
+  /* Paper is a snapshot: a colour still easing from the screen theme would print half-way. */
+  *, *::before, *::after { transition: none !important; animation: none !important; }
   .toolbar, .toc-sidebar, .fab-container, .progress-bar, .section-minimap, .diagram-expand-btn,
   .overlay, .tts-player, .settings-toast, .lightbox, .mdv-sidebar, .copy-btn, .section-toggle { display: none !important; }
   .layout { margin-top: 0; }
   .content-wrapper { margin-left: 0 !important; padding: 0 !important; }
   .content { max-width: 100%; }
   .md-body { font-size: 11pt; }
-  .md-body pre, .mermaid-wrapper, .md-body table, .callout, .mdv-figure { break-inside: avoid; }
+  /* On screen a tall table scrolls inside its own box; paper has no scrollbar, so it flows across pages. */
+  .md-body table { display: table; width: auto; max-height: none; overflow: visible; }
+  .md-body thead { display: table-header-group; }
+  .md-body tr { break-inside: avoid; }
+  .mermaid-wrapper { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .md-body pre, .mermaid-wrapper, .callout, .mdv-figure { break-inside: avoid; }
   .md-body h1, .md-body h2, .md-body h3 { break-after: avoid; }
   .md-body a[data-link-type]::after { content: none !important; }
 }

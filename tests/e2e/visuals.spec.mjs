@@ -1,55 +1,7 @@
 // Browser tests for the visual system and the diagram fixes (roadmap issues 9, 10, 11, 13, 14, 15, 16).
 // Each test fails on the code before this change; the issue number is in the test name.
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
-
-const THEMES = ['light', 'sepia', 'dark'];
-const KNOWN_NOISE = [
-  /favicon\.ico/i, // the viewer ships no favicon; the browser asks anyway
-  /fonts\.(googleapis|gstatic)\.com/i, // the web fonts are a network fetch, which an offline run cannot make
-];
-
-function collectErrors(page) {
-  const errors = [];
-  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-  page.on('console', (m) => {
-    if (m.type() !== 'error') return;
-    const where = `${m.text()} ${(m.location() && m.location().url) || ''}`;
-    if (!KNOWN_NOISE.some((r) => r.test(where))) errors.push(`console: ${where.trim()}`);
-  });
-  return errors;
-}
-
-async function waitForDiagrams(page) {
-  await page.waitForFunction(() => [...document.querySelectorAll('#mdBody .mermaid')]
-    .every((el) => el.querySelector('svg') || el.classList.contains('mermaid-error')), null, { timeout: 30_000 });
-}
-
-async function open(page, sample, theme = 'light') {
-  const errors = collectErrors(page);
-  await page.addInitScript((t) => { try { localStorage.setItem('mdv-theme', t); } catch (_) { /* default theme */ } }, theme);
-  await page.goto(`markdown-viewer.html?file=samples/${sample}`);
-  await page.waitForSelector('#mdBody h1, #mdBody h2', { timeout: 30_000 });
-  await waitForDiagrams(page);
-  return errors;
-}
-
-// Render a markdown string through the viewer's own entry point, as a loader does.
-async function renderSource(page, src, title = 'test.md') {
-  await page.evaluate(([s, t]) => { rawMarkdown = s; renderMarkdown(s, t); }, [src, title]);
-  await waitForDiagrams(page);
-}
-
-const rgb = (hex) => {
-  const h = hex.trim().replace('#', '');
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
-  return `rgb(${r}, ${g}, ${b})`;
-};
-
-function mermaidFences(sample) {
-  const src = readFileSync(new URL(`../../samples/${sample}`, import.meta.url), 'utf8');
-  return (src.match(/^```mermaid\s*$/gm) || []).length;
-}
+import { THEMES, collectErrors, waitForDiagrams, open, renderSource, rgb, mermaidFences } from './visuals-helpers.mjs';
 
 // ---------------------------------------------------------------------------------------------
 // Issue 9: diagrams follow the theme
