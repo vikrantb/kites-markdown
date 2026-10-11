@@ -1,7 +1,9 @@
 // Helpers for the security, controls and render-correctness specs.
 
-// Console noise that is not the viewer's fault (the same list as viewer.spec.mjs keeps).
-const KNOWN_NOISE = [/fonts\.(googleapis|gstatic)\.com/i];
+// Console noise that is not the viewer's fault (the same list as viewer.spec.mjs keeps), plus the
+// favicon.ico 404 of a viewer without its own icon (main before this branch), so these specs can be
+// run against that viewer too. render-correctness checks the icon itself.
+const KNOWN_NOISE = [/fonts\.(googleapis|gstatic)\.com/i, /favicon\.ico/];
 
 // Page errors and console errors, minus known noise and whatever a test expects (`allow`).
 export function collectProblems(page, allow = []) {

@@ -1,7 +1,8 @@
 // Every control of the viewer, clicked or typed into, with the effect it must have.
 // The controls are found by id, class or title (never by data-action), so this spec runs unchanged
-// against a viewer wired with inline handlers and one wired by js/actions.js: the same results on
-// both are the evidence that moving to delegated actions kept every behaviour.
+// against a viewer wired with inline handlers (main before this branch) and one wired by
+// js/actions.js: the same results on both are the evidence that moving to delegated actions kept
+// every behaviour. (Main also asks for favicon.ico; support/viewer.mjs counts that 404 as noise.)
 import { test, expect } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 import { collectProblems, stubFilePickers, openDocument } from './support/viewer.mjs';
