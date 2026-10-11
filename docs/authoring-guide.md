@@ -33,12 +33,12 @@ The `<!-- narrate: -->` feature exists for TTS (text-to-speech) support. While t
 | Footnotes | `text[^1]` / `[^1]: note`, inline `^[note]` | Extended | Widely supported (inline form less so) |
 | Definition lists | `Term\n: Definition` | Extended | |
 | Abbreviations | `*[abbr]: Full` | Extended | The working way to get hover tooltips |
-| Math inline | <code>&#36;E=mc^2&#36;</code> | KaTeX | Read [Math](#math) first: dollar signs are matched everywhere, including in code |
+| Math inline | <code>&#36;E=mc^2&#36;</code> | KaTeX | Pandoc's dollar rules, never inside code: see [Math](#math) |
 | Math block | <code>&#36;&#36;..&#36;&#36;</code> | KaTeX | Rendered by KaTeX in display mode |
 | Mermaid diagrams | ` ```mermaid ` | Extended | Supported by GitHub too |
 | TTS narration | `<!-- narrate: text -->` | Yes (HTML comment) | **OPT-IN ONLY — see rules above** |
 | Collapsible | `<details><summary>` | Yes (HTML) | Standard HTML5 |
-| Raw HTML | any tag | Yes | Passed through unsanitized by the viewer |
+| Raw HTML | any tag | Yes | Rendered, then sanitized: scripts, event handlers, `javascript:` links, `<style>`, frames and forms are removed |
 
 *\* Non-standard extensions. Most show as plain text in viewers that don't support them; the subscript exception is noted above.*
 
@@ -244,9 +244,6 @@ Our viewer adds:
 - Language label in the header (`text` when no language is given)
 - Copy button
 
-> [!WARNING]
-> Two dollar signs on the same line of a code block are treated as math by the viewer and the block shows garbled markup. See [Math](#math) before writing shell, PHP, Perl or template code that uses dollar signs.
-
 ---
 
 ## Math
@@ -262,17 +259,15 @@ Block:
 
 Renders in our viewer via KaTeX. GitHub, VS Code and Obsidian also render dollar-sign math. In plain viewers it shows as-is.
 
-**Rules that come from how the viewer finds math.** The viewer scans the raw text for dollar signs before it parses markdown, so it does not know about code:
+**How the viewer finds math.** Math is part of the markdown parse (`js/math.js`) and follows Pandoc's rules for dollar signs:
 
-- Any two dollar signs on the same line become inline math — in prose, in inline code and in code blocks.
-- Any two double-dollar signs in the file with no other dollar sign between them enclose one display block, even far apart.
-- A backslash before a dollar sign does not stop this, and makes the output worse.
-- Math cannot contain a dollar sign, and inline math cannot span lines.
+- Inline math is a pair of single dollar signs. The opening one must be followed by a non-space character, and the closing one must follow a non-space character and must not be followed by a digit. The first unescaped dollar sign after the opening one decides: if it cannot close, the text is not math. So a price line such as `costs $5 and $10` stays text.
+- Display math is a pair of double dollar signs: inside a paragraph, or as a block that starts a line with them and ends a later line with them. It may not contain a blank line.
+- A backslash before a dollar sign (`\$`) makes it a literal dollar sign, inside math and outside it.
+- Math never applies inside code: code spans and code blocks are parsed first, so shell variables, PHP and template code can be written as they are. HTML comments are left alone the same way.
 - Only dollar delimiters are supported: not `\(...\)`, `\[...\]`, or ` ```math ` fences.
 
-So:
-- Write money and other literal dollar signs in prose as `&#36;` (renders as a dollar sign everywhere), or spell the currency out.
-- Keep dollar-heavy code (shell variables, PHP, templates) out of documents meant for this viewer, or put it in a raw HTML `<pre><code>` block with `&#36;` entities, as the example above does.
+So: write a literal dollar sign that could pair with a later one as `\$`, and put code that uses dollar signs in code spans or code blocks.
 
 ---
 
@@ -471,7 +466,7 @@ The viewer column is read from the code. The other columns reflect commonly docu
 | GFM (tables, tasks) | Full | Full | Full | Full |
 | `<details>` collapse | Full | Full | Full | Full |
 | Mermaid | Full + expand/zoom | Full | Extension | Full |
-| Dollar-sign math | Full, but also matches inside code | Full | Built-in | Full |
+| Dollar-sign math | Full (Pandoc's dollar rules; never inside code) | Full | Built-in | Full |
 | Callout `[!NOTE]` etc. | Styled blocks | Styled | Varies by version | Styled |
 | Custom `[!TLDR]` etc. | Styled blocks | Blockquote | Blockquote | Styled callout |
 | Frontmatter dashboard | Status/metrics/repos | Table | Hidden | Properties |
@@ -482,11 +477,11 @@ The viewer column is read from the code. The other columns reflect commonly docu
 | Heading fold | Auto (H1–H4) | No | Outline only | Built-in |
 | Link type detection | Auto | No | No | No |
 | Link cards | Auto | No | No | No |
-| Diagram click-to-section | Intended; not reliable yet | No | No | No |
+| Diagram click-to-section | Auto: a node named like a heading goes to it | No | No | No |
 | Footnotes | Full | Full (no inline `^[...]`) | Extension | Full |
 | `==highlight==` | Full | No | No | Full |
 | `~sub~` | Full | **Strikethrough** | No | No |
 | `^sup^` | Full | No | No | No |
 | Definition lists | Full | No | No | No |
 
-**Bottom line:** Stick to standard markdown + HTML. Nearly everything degrades gracefully; the exceptions are single-tilde subscript on GitHub and dollar signs in this viewer. The `<!-- narrate: -->` pattern is opt-in only and invisible by design.
+**Bottom line:** Stick to standard markdown + HTML. Nearly everything degrades gracefully; the exception is single-tilde subscript on GitHub. The `<!-- narrate: -->` pattern is opt-in only and invisible by design.

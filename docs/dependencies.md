@@ -148,16 +148,18 @@ flowchart LR
     MI["markdown-it"]
     PL["8 markdown-it plugins"]
     DMP["diff-match-patch"]
+    DP["DOMPurify"]
     HL["highlight.js + 2 theme CSS"]
     MM["mermaid"]
     KX["katex.min.css + katex.min.js + fonts/"]
   end
-  head --> IS["inline script"]
+  head --> IS["js/*.js, classic scripts"]
   IS --> RM["renderMarkdown()"]
-  RM -->|"1. renderMath()"| KX
-  RM -->|"2. md.render()"| MI
+  RM -->|"1. md.render()"| MI
   MI -->|"md.use()"| PL
+  MI -->|"math rule (js/math.js): mdvTypeset()"| KX
   MI -->|"highlight option"| HL
+  RM -->|"2. mdvSanitize()"| DP
   RM -->|"3. renderMermaidDiagrams()"| MM
 ```
 

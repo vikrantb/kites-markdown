@@ -256,7 +256,7 @@ slugify: s => s.toLowerCase().replace(/[^\w]+/g, '-').replace(/^-|-$/g, '')
 - `\w` is ASCII-only, so accented letters are dropped (`Café` gives `caf`) and a heading with no ASCII letters or digits gets an empty id; a second such heading gets `-1` (checked offline).
 - Duplicate slugs get `-1`, `-2` and so on (`uniqueSlugStartIndex` is 1).
 - `buildToc` later gives any heading with an empty id the id `heading-N`, where `N` is its position among all headings.
-- The TOC, search index, scroll-spy breadcrumb and read-aloud sections use the heading's own words (`mdvHeadingText` in `js/navigation.js`), which leave out the permalink, the fold chevron and comment chips, so a heading such as "C# tips" is listed as "C# tips". The minimap (`buildSectionMinimap`) still removes every `#` character, so it shows "C tips".
+- The TOC, search index, scroll-spy breadcrumb, read-aloud sections, the section rail (`buildSectionMinimap`) and diagram-node links (`mdvLinkDiagramNodes`) all use the heading's own words (`mdvHeadingText` in `js/navigation.js`, the only function that reads them), which leave out the permalink, the fold chevron and comment chips, so a heading such as "C# tips" is "C# tips" in each of them. A formula in a heading is read once, as its MathML (a heading written `## The $O(n)$ merge` reads "The O(n) merge"): KaTeX's HTML copy is `aria-hidden` and its TeX annotation is left out **(tested)**. The rail used to read headings through a second helper, which kept the `#` but read a formula three times.
 
 Other heading-driven transforms, all keyed on the rendered headings: `addSectionToggles` (fold toggles on H1 to H4), `buildToc` (all levels), `buildSectionMinimap` (only when there are three or more H2 headings), `setupScrollSpy`, `buildSearchIndex` and `buildTtsSections`. They are described in [features.md](features.md).
 
@@ -389,7 +389,7 @@ Each item is described in the section linked from it.
 | ~~Copy button copies the language label and the word "Copy" as well~~ Fixed: it copies only the inner `code.hljs` | [Code highlighting](#code-highlighting) |
 | `data:image/svg+xml` images are refused by markdown-it | [The markdown-it configuration](#the-markdown-it-configuration) |
 | Heading slugs drop non-ASCII letters | [Heading ids and anchors](#heading-ids-and-anchors) |
-| ~~`#` characters vanish from TOC text and the minimap's labels~~ Fixed: both use the heading's own words (`mdvHeadingText`, `mdvHeadingLabel`), so "C# tips" keeps its `#` | [Heading ids and anchors](#heading-ids-and-anchors) |
+| ~~`#` characters vanish from TOC text and the minimap's labels~~ Fixed: both use the heading's own words (`mdvHeadingText`), so "C# tips" keeps its `#` | [Heading ids and anchors](#heading-ids-and-anchors) |
 | A linked image alone in a paragraph, with no alt text and no title, becomes a text-only card. With either, it becomes a captioned figure and stays an image | [Link enhancement](#link-enhancement) |
 | ~~Section folding moves elements but leaves HTML comments behind, so narration and comment anchors lose their target under headings~~ Fixed (stream R): folding moves comments with their blocks | [read-aloud.md](read-aloud.md), [commenting.md](commenting.md) |
 | ~~No output sanitization~~ Fixed: DOMPurify + CSP + Mermaid strict | [Security posture](#security-posture) |

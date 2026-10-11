@@ -221,15 +221,18 @@ The final review across all docs found these gaps:
   have names and work from the keyboard; a hidden outline and the invisible `#` permalinks are out of
   the Tab order; headings are named by their own words (all covered by browser tests, in Chrome's
   accessibility tree; no screen reader was used). ARIA labels on the icon-only toolbar buttons came with stream S (checked by
-  `render-correctness.spec.mjs`). Still open: keyboard and focus handling in the diagram overlay (its Expand
-  button is invisible when focused, and the overlay neither takes nor returns the focus), the links
-  panel (its off-screen entries are tab stops), the settings panel and the comments sidebar; a skip
-  link past the outline and the minimap; the contrast of the selected search result.
+  `render-correctness.spec.mjs`). The diagram overlay was done in the visual-system change: it takes the
+  focus when it opens, keeps Tab inside it (its controls, then the nodes that link to a section), closes on
+  Esc and gives the focus back to what opened it, and its Expand button shows when it has the focus (the
+  focus return and the Tab order are covered by `visuals.spec.mjs` and `visuals-overlay.spec.mjs`). Still
+  open: the links panel (its off-screen entries are tab stops), the settings panel and the comments
+  sidebar; a skip link past the outline and the minimap; the contrast of the selected search result.
 - **Performance on large documents.** *Partly done 2026-10-10:* re-rendering a 3,000-section document
   is about 5.6 times faster, and the reading aids no longer create observers per render (numbers in
-  [Reading aids](#reading-aids-fixed-2026-10-10)). Still open: every render re-parses the whole
-  document, and `buildSectionMinimap` still creates an `IntersectionObserver` per render that is never
-  disconnected (the scroll spy now does its job, so it can be deleted).
+  [Reading aids](#reading-aids-fixed-2026-10-10)). The section rail no longer creates an
+  `IntersectionObserver` either: it was rebuilt without one, and the scroll spy is now the only code
+  that marks it (the rail's own page-lifetime scroll listener, `mdvUpdateMinimap`, was deleted too).
+  Still open: every render re-parses the whole document.
 - **Line numbers drift.** `architecture.md` cites line numbers "as of the initial import". Either
   refresh them with each change or replace them with function names.
 

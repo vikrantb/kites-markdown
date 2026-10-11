@@ -105,7 +105,7 @@ Features people associate with GitHub but that are **not** in the GFM specificat
 
 ### Where markdown-it sits
 
-markdown-it is a CommonMark parser written in JavaScript with a plugin system. Its core includes the two GFM additions that need parser support: tables (a block rule) and strikethrough (an inline rule). Task lists, footnotes and so on come from plugins. `linkify` uses the separate linkify-it library, which is fuzzier than GFM's extended autolinks. The `typographer` option is not part of any specification. markdown-it does not implement GFM's tag filter, and it does not sanitize HTML; that is left to the application. This viewer does not add a sanitizer.
+markdown-it is a CommonMark parser written in JavaScript with a plugin system. Its core includes the two GFM additions that need parser support: tables (a block rule) and strikethrough (an inline rule). Task lists, footnotes and so on come from plugins. `linkify` uses the separate linkify-it library, which is fuzzier than GFM's extended autolinks. The `typographer` option is not part of any specification. markdown-it does not implement GFM's tag filter, and it does not sanitize HTML; that is left to the application. This viewer sanitizes it: DOMPurify (`mdvSanitize` in `js/render.js`) cleans everything rendered from a document before it reaches the page (see [rendering.md](rendering.md#security-posture)).
 
 One small deviation from CommonMark was observed (verified): `&notanentity;` renders as `¬anentity;`. CommonMark says a string that is not a valid named entity stays literal. markdown-it 14 appears to decode the legacy entity `&not` that has no semicolon (inferred from the output; plain markdown-it without plugins and without typographer does the same).
 
@@ -286,7 +286,7 @@ Other rules:
 
 ### Safety
 
-markdown-it's `validateLink` blocks `javascript:` and similar URLs in markdown links and images: `[x](javascript:alert(1))` renders as plain text (verified). That protection does not apply to raw HTML. With `html: true` and no sanitizer, `<img src=x onerror=...>` reaches the page unchanged (verified), and the browser runs the handler when the image fails to load (inferred). `<script>` elements inserted through `innerHTML` do not run, but event-handler attributes do. Open only files you trust; [features.md](features.md) carries the same warning.
+markdown-it's `validateLink` blocks `javascript:` and similar URLs in markdown links and images: `[x](javascript:alert(1))` renders as plain text (verified). That protection does not apply to raw HTML, which markdown-it passes through with `html: true`. The viewer's sanitizer does: `mdvSanitize` (DOMPurify) removes `<script>`, every `on*` attribute and `javascript:` URLs before the HTML reaches the page, so `<img src=x onerror=...>` arrives without its handler, and the page's Content Security Policy refuses inline script that gets there another way. `tests/e2e/security.spec.mjs` checks this over `tests/fixtures/hostile.md`; [rendering.md](rendering.md#security-posture) has the details.
 
 ---
 

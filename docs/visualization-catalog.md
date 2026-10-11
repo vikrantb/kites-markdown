@@ -170,12 +170,13 @@ than the source *(inferred; the guess may therefore fall back to "Diagram" for M
 
 ### 3.8 Security baseline
 
-markdown-it is created with `html: true` and the rendered HTML is assigned to `innerHTML` with no
-sanitizer. A document can therefore already include markup with event-handler attributes that run
-script *(inferred from standard `innerHTML` behaviour; not exercised here)*. Mermaid is initialised
-with `securityLevel: 'loose'`, which allows HTML in labels and click callbacks. Sandboxing a single
-renderer does not help while the base document is unsanitized, so section 13.5 treats sanitizing as
-part of the shared design rather than a per-renderer task.
+markdown-it is created with `html: true`, and everything rendered from a document is sanitized with
+DOMPurify (`mdvSanitize`, `js/render.js`) before it reaches the page; a Content Security Policy refuses
+inline script. Mermaid is pinned to `securityLevel: 'strict'` (`mdvPinMermaidSecurity`), so labels are
+sanitized and click callbacks are ignored. Mermaid's SVG reaches the page without `mdvSanitize`, relying
+on Mermaid's own sanitizing and the CSP, and so would any new renderer's output that is inserted after the
+render pass: section 13.5 treats sanitizing as part of the shared design rather than a per-renderer task.
+See [rendering.md](rendering.md#security-posture).
 
 ---
 

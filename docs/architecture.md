@@ -51,7 +51,7 @@ flowchart TD
         V["vendor scripts<br/>markdown-it + plugins, diff-match-patch,<br/>highlight.js, mermaid, KaTeX"]
     end
     subgraph SCRIPT["inline script (lines 1745-4281)"]
-        S1["State + markdown-it setup<br/>fence override, renderMath"]
+        S1["State + markdown-it setup<br/>fence override, math rule (js/math.js)"]
         S2["UI controls<br/>theme, font, width, focus, settings"]
         S3["Loading<br/>readFile, paste, drag-drop, loadFromUrl"]
         S4["renderMarkdown + post-processing passes"]
@@ -202,7 +202,9 @@ Everything below runs in this order on page load.
    so that fences whose info string is exactly `mermaid` become a placeholder (see section 5).
 5. **Library presence checks happen at call time, not at boot:**
    - `hljs`: `typeof hljs !== 'undefined'` inside the `highlight` callback (1777).
-   - `katex`: `renderMath` returns its input unchanged if `katex` is undefined (1810).
+   - `katex`: `mdvTypeset` (`js/math.js`) shows the TeX source as code (`code.mdv-math-source`,
+     delimiters included) if `katex` is undefined; `MDV_LIBRARIES` (`js/render.js`) names Math in the
+     missing-library notice.
    - `mermaid`: `renderMermaidDiagrams` returns early if `mermaid` is undefined (2234).
    - `diff_match_patch`: still loaded, but no code uses it since the dead `mdvResolveAnchor` was removed
      (2026-10-10). Its `<script>` tag can be dropped.
@@ -268,14 +270,14 @@ Everything below runs in this order on page load.
 | `mdvView` | `js/diagram-overlay.js` | The expanded view's state: the diagram shown, scale, translation, natural size, active pointers and gesture, animation frame, the element to give focus back to |
 | `mdvMermaidQueue`, `mdvMermaidGeneration`, `mdvMermaidSeq` | `js/mermaid.js` | Render passes run one after another; a newer request stops an older pass; render ids are never reused |
 | `MDV_DIAGRAM_TITLES`, `MDV_DIAGRAM_TOKENS` | `js/mermaid.js` | Mermaid's `diagramType` → title; palette name → `--diagram-*` custom property |
-| `mdvMinimap` | `js/enhancements.js` | The section rail of the current document (its element, segments, `h2`s, title) and its `ResizeObserver`, disconnected before the next render builds a new one. One `scroll` and one `resize` listener, for the page's lifetime, update it at most once per frame (`mdvScheduleMinimap`) |
+| `mdvMinimap` | `js/enhancements.js` | The section rail of the current document (its element and segments) and its `ResizeObserver`, disconnected before the next render builds a new one. Which segment is current is not kept here: the scroll spy (`mdvSpy`) marks the rail |
 | `mdvTableResize` | `js/enhancements.js` | One `ResizeObserver` over the document's tables (scroll cues), disconnected on the next render |
 | `mdvDiagramFontLate` | `js/mermaid.js` | A wait for the Inter web font has timed out and the redraw on its arrival is pending, so later passes do not wait again |
 | `LINK_TYPES` | 2573 | `enhanceLinks`, `showLinkTooltip`, `buildLinksPanel` |
 | `tooltipHideTimer` | 2675 | `showLinkTooltip`, `hideLinkTooltip`, tooltip `mouseenter` |
 | `CALLOUT_TYPES` | 2817 | `transformCalloutBlocks` (NOTE, TIP, IMPORTANT, WARNING, CAUTION, TLDR, DECISION, COST) |
 | `MDV_NOT_TEXT_TAGS`, `MDV_NOT_TEXT_CLASSES` | `navigation.js` | `mdvExcludedFromText`: what is not the author's words (the viewer's controls, a link card's icon, address and badge, `aria-hidden` copies, MathML annotations, `<style>`/`<script>`/`<template>` matched by `localName` so SVG's count too) |
-| `mdvSpy` | `navigation.js` | The scroll spy: the render's headings, visible headings, TOC links and minimap segments by id, the active heading, the breadcrumb's home text, the pending animation frame. Set by `setupScrollSpy`, read by `mdvScrollSpyUpdate` |
+| `mdvSpy` | `navigation.js` | The scroll spy: the render's headings, visible headings, TOC links by id, the section rail and its segments with their `h2`s (`rail`), the rail's name before the first heading (`railStart`), the visible-heading list the rail was last marked from (`railFrom`), the active heading, the breadcrumb's home text, the pending animation frame. Set by `setupScrollSpy`, read by `mdvScrollSpyUpdate`, `mdvSetActiveHeading` and `mdvMarkRail` |
 | `mdvModal` | `navigation.js` | The open dialog `{ el, returnTo, tabStart, inerted, hidden }`, or `null`. `mdvOpenModal`, `mdvCloseModal`, the Tab trap, the focus guard, the shortcut handler |
 | `mdvNarrow` | `navigation.js` | `matchMedia('(max-width: 900px)')`, the stylesheet's breakpoint: `toggleToc` and `mdvSyncTocInert` |
 | `mdvSearchStale` | `navigation.js` | The search index is out of date; `mdvSearchIndex` rebuilds it on the next search |
@@ -347,10 +349,10 @@ sequenceDiagram
     L->>W: renderMarkdown(source, title)
     W->>W: mdvParseFile(source) sets mdvComments
     W->>R: orig(source, title)
-    R->>R: parseFrontmatter, extractNarrations, renderMath
-    R->>MI: md.render(processed)
-    MI-->>R: HTML (mermaid fences become placeholders)
-    R->>R: innerHTML = dashboard + HTML, then the post-processing passes
+    R->>R: parseFrontmatter, extractNarrations, renderFrontmatterDashboard
+    R->>MI: md.render(body)
+    MI-->>R: HTML (math typeset by KaTeX; mermaid fences become placeholders)
+    R->>R: mdvSanitize(dashboard + HTML) replaces #mdBody's content, then the post-processing passes
     W->>W: after 50 ms: mdvAttachContextMenu, mdvRenderSidebar
 ```
 
@@ -360,9 +362,12 @@ Inside the original `renderMarkdown` (2169–2226), in this exact order:
    and stores the result in `window._frontmatter`.
 2. `extractNarrations(source)` collects `<!-- narrate: ... -->` comments into `window._narrations`.
    The source itself is not changed.
-3. `renderMath(source)` replaces double-dollar (display) and single-dollar (inline) math **in the
-   raw markdown string** with KaTeX HTML. This runs before markdown-it.
-4. `renderFrontmatterDashboard(meta) + md.render(processed)` is assigned to `#mdBody.innerHTML`.
+3. `md.render(body)` parses the markdown. Math is one of its rules (`js/math.js`: `mdvMathInline`,
+   `mdvMathBlock`), and `mdvTypeset` typesets each formula with KaTeX during the parse; code spans and
+   code blocks are tokenized first, so they never hold math.
+4. `mdvSanitize(renderFrontmatterDashboard(meta) + html)` (DOMPurify). Steps 1–4 are
+   `mdvBuildContent`: if one throws, it builds the error and the document's text instead
+   (`mdvRenderErrorHtml`). Either result replaces `#mdBody`'s content.
 5. Chrome updates: `#mdBody` is shown, the welcome screen hidden, and the FABs, fold button and
    read-aloud button revealed. The title and breadcrumb are set, and so are reading stats (words
    divided by 230, at least 1 minute).
@@ -425,49 +430,65 @@ passes, and the code-block markup.
 | Attached in | Element and event | Behaviour |
 |---|---|---|
 | `renderMermaidDiagrams` (`mdvMakeDiagramExpandable`, once per wrapper) | expand button `click`, wrapper `click` | `openDiagramOverlay(wrapper)`, except on a node that links to a section |
-| `addSectionToggles` | chevron `onclick` | `toggleSection` |
+| `addSectionToggles` | chevron `click` (its `onclick` property, set from script) | `toggleSection` |
 | `buildToc` | nothing (the `#tocList` listener is delegated) | |
-| `setupScrollSpy` | nothing: it hands the page-lifetime scroll listener this render's headings, outline links and minimap segments | Active outline link, breadcrumb text, active minimap segment |
-| `buildSectionMinimap` | segment `click`; a `ResizeObserver` on the rail (the previous render's is disconnected); window `scroll` and `resize` (registered once, in `js/enhancements.js`) | Scroll to section; label or track mode; current and already-read segments, the current section's name and position |
+| `setupScrollSpy` | nothing: it hands the page-lifetime scroll listener this render's headings, outline links and section-rail segments | Active outline link, breadcrumb text, and the rail: current and already-read segments, the current section's name and position (`mdvMarkRail`) |
+| `buildSectionMinimap` | segment `click`; a `ResizeObserver` on the rail (the previous render's is disconnected) | Go to the section as an outline link does (`mdvGoTo`); label or track mode |
 | `setupImageLightbox` | nothing: it gives each image outside a link `tabindex="0"`, `role="button"` and a name; `#mdBody` listeners are delegated | Opens the lightbox |
 | `enhanceLinks` | each link `mouseenter`/`mouseleave` | `showLinkTooltip` / `hideLinkTooltip` |
 | `buildLinksPanel` | anchor-type items `click` | Scrolls to the target and closes the panel |
-| `mdvLinkDiagramNodes` (from `renderMermaidDiagrams` after each diagram is drawn, and `setupMermaidClickToSection`) | wrapper `click` and `keydown`, delegated to `[data-mdv-section]` nodes | Scrolls to the heading, unfolding collapsed sections, focuses and flashes it (`mdvJumpToSection`) |
+| `mdvLinkDiagramNodes` (from `renderMermaidDiagrams` after each diagram is drawn, and `setupMermaidClickToSection`) | wrapper `click` and `keydown`, delegated to `[data-mdv-section]` nodes | Goes to the heading as an outline link does (`mdvGoTo`: unfold, open `<details>`, scroll, focus), then flashes it (`mdvJumpToSection`) |
 | `loadFromUrl` | `#dropZone2` drag events | `.drag-over` styling only (the body `drop` listener does the read) |
 | `mdvAttachContextMenu` | `#mdBody` `contextmenu` (once) | Custom "Add comment" menu. Shift+right-click keeps the native menu. |
-| `mdvShowContextMenu` | menu button `onclick`, a one-shot `document` `mousedown` named `close` | Opens the add popup, or dismisses the menu |
+| `mdvShowContextMenu` | menu button `click` (`onclick` property), a one-shot `document` `mousedown` named `close` | Opens the add popup, or dismisses the menu |
 | `mdvHandleSelection` | popover `mousedown` (prevents deselect), `click` | Opens the add popup for the selection |
-| `mdvShowAddPopup` | cancel/save `onclick`, textarea `keydown` | Saves or cancels the comment |
-| `mdvRenderSidebar` | reply/resolve/delete `onclick`, reply textarea `keydown` | Thread actions |
-| `mdvRenderChips` | chip `onclick` | `mdvFocusThread` |
+| `mdvShowAddPopup` | cancel/save `click` (`onclick` properties), textarea `keydown` | Saves or cancels the comment |
+| `mdvRenderSidebar` | reply/resolve/delete `click` (`onclick` properties), reply textarea `keydown` | Thread actions |
+| `mdvRenderChips` | chip `click` (`onclick` property) | `mdvFocusThread` |
 
 `setupScrollSpy` used to create an `IntersectionObserver` on every heading on every render and never
 disconnect it. It creates nothing now: one scroll listener, attached when the script loads, finds the
-current heading by binary search, and also marks the minimap's active segment. `buildSectionMinimap`
-creates no `IntersectionObserver`; it disconnects the previous render's `ResizeObserver` before creating
-its own. Its page-lifetime `scroll` and `resize` listeners (`mdvUpdateMinimap`) also set the current
-segment's `.active` and `aria-current` and mark the segments above it `.passed`, so two functions write
-the active segment, by slightly different rules: the scroll spy skips headings in a closed `<details>`
-and takes the last heading on screen at the bottom of a page, `mdvUpdateMinimap` does neither (read from
-the code).
+current heading by binary search, and the same decision marks the section rail (`mdvMarkRail`): the
+current segment, the segments already read, and the name and position the track shows. Nothing else
+writes the rail's state. `buildSectionMinimap` creates no `IntersectionObserver`; it disconnects the
+previous render's `ResizeObserver` before creating its own. Until 2026-10-10 the rail also had its own
+page-lifetime `scroll` and `resize` listeners (`mdvUpdateMinimap`) with their own rule, the last `h2`
+above the reading line by `getClientRects()`, and the two disagreed at the bottom of a page and past a
+closed `<details>`; that writer was deleted (`reading-aids.spec.mjs` checks that the rail and the
+outline agree in both places).
 
-### 6.3 Inline handlers in markup and generated HTML
+The `onclick` entries above are DOM properties set from script, not attributes: the Content Security
+Policy refuses inline handlers, not handlers a script assigns.
 
-The markup calls these globals through `onclick` and similar attributes: `changeFontSize`,
-`toggleWidth`, `toggleToc`, `toggleAllSections`, `toggleFocus`, `openSearch`, `toggleLinksPanel`,
-`ttsToggle`, `mdvToggleSidebar`, `mdvOpenOrSetSaveLocation`, `mdvPickWorkspace`, `toggleDropdown`,
-`setTheme`, `toggleSettings`, `saveBasePath`, `handleFileInput` (`onchange`), `closeSearch`,
-`closeShortcuts`, `handleSearch` (`oninput`), `handleSearchKeys` (`onkeydown`), `closeLightbox`,
-`diagramZoom`, `diagramFitToggle`, `closeDiagramOverlay`, `copyLinkUrl`, `ttsPrev`,
-`ttsPlayPause`, `ttsNext`, `ttsSeekClick`, `ttsCycleSpeed`, `ttsStop`, two inline
-`window.scrollTo` calls on the FABs, and inline `document.getElementById('fileInput').click()` on the
-toolbar Open button and the welcome screen's Browse button. The search and shortcuts overlays close
-on a backdrop click (`if(event.target===this)`). Generated HTML adds `copyCode(this)` (from the `highlight`
-callback). Search results are built with DOM calls and clicked through one delegated listener, so they
-carry no inline handler.
+### 6.3 No inline handlers: `data-action` and `js/actions.js`
 
-Renaming any of these functions means updating the markup too. A search for the name across the
-whole file finds both sides.
+The markup has no inline handler: no `on*=` attribute and no `javascript:` URL, which the Content
+Security Policy (`script-src 'self' file:`) would refuse. Each control names what it does with
+`data-action="<name>"` and an optional `data-arg`, and `js/actions.js` runs it: `mdvRegisterActions`
+keeps a registry of named actions, each mapping event types to a handler `(element, arg, event)`, and
+adds one capture-phase listener on `document` per event type an action uses; `mdvDispatchAction` runs
+the action of the nearest `[data-action]` element.
+
+The markup's actions: `font-size`, `toggle-width`, `toggle-toc`, `toggle-all-sections`,
+`toggle-focus`, `open-search`, `toggle-links-panel`, `tts-toggle`, `toggle-comments`,
+`open-writable`, `pick-workspace`, `toggle-dropdown`, `set-theme`, `toggle-settings`,
+`save-base-path`, `open-file`, `file-chosen` (`change`), `browse-file`, `search` (`input` and
+`keydown`), `close-search` and `close-shortcuts` (only on a click on the backdrop itself),
+`close-lightbox`, `diagram-zoom`, `diagram-fit`, `close-diagram`, `copy-link`, `scroll-top`,
+`scroll-bottom`, `tts-prev`, `tts-play-pause`, `tts-next`, `tts-seek`, `tts-speed` and `tts-stop`.
+Controls built by script carry actions too: each search result (`go-search`), the Copy button of each
+code block (`copy-code`, set by `mdvWireCodeBlocks` in `js/render.js`), the dismiss button of a
+missing-library notice (`dismiss-notice`), and the expanded view's "1:1" button
+(`diagram-actual-size`, registered by `js/diagram-overlay.js`).
+
+Markup made from document data sits in `[data-mdv-document]` containers (`#mdBody`, the diagram
+overlay's `#diagramZoomContainer`, the comment sidebar's `#mdvThreadList`). An action inside one runs
+only on an element the viewer marked as its own with `mdvMarkOwnControl` (today the Copy buttons), and
+the sanitizer drops `data-action` and `data-arg` from document HTML, so a document cannot press the
+viewer's buttons (`security.spec.mjs`).
+
+Renaming a function a control calls means updating its entry in the registry in `js/actions.js` (or
+in the script that registers it), not the markup.
 
 ---
 
@@ -638,20 +659,23 @@ how Mermaid is wired today. Math is wired differently (section 10.2), and that d
 
 ### 10.2 How math is wired (and why it is not a fence renderer)
 
-Math is **not** a markdown-it rule. `renderMath(src)` runs a regular-expression pass over the raw
-markdown before `md.render`. It replaces double-dollar spans (display, which may span lines) and then
-single-dollar spans (inline, within one line) with
-`katex.renderToString(..., { throwOnError: false })` HTML. markdown-it is configured with
-`html: true`, so it passes that HTML through. Consequences for any new renderer:
+Math is a markdown-it rule, registered by `md.use(mdvMathPlugin)` in `js/math.js`: an inline rule
+(`mdvMathInline`, before `escape`) for `$...$` and for `$$...$$` inside a paragraph, and a block rule
+(`mdvMathBlock`, before `fence`) for a display block that starts a line with `$$`. Both follow Pandoc's
+`tex_math_dollars` rules: the opening `$` must be followed by a non-space, and the closing `$` preceded by
+one and not followed by a digit, so `costs $5 and $10` stays text; `\$` is a literal dollar sign; display
+math may not contain a blank line. `mdvTypeset` typesets each formula with
+`katex.renderToString(tex, { displayMode, throwOnError: false })` while markdown-it renders (`trust`
+stays off, so `\href` and the like are unavailable); a display block becomes
+`<p class="mdv-math-display">`, and without KaTeX the TeX is shown as `code.mdv-math-source`.
+Consequences for any new renderer:
 
-- Any two dollar signs on one line form an inline-math span, wherever they are: inside **your**
-  fence, inside a code span or code block, or in prose about prices or shell variables. A line with
-  a price followed by a shell variable in a code span had the text between the two dollar signs
-  captured as math. This was checked by running the same regular expression in Node. A language
-  whose syntax uses the dollar sign will be corrupted unless math handling moves into a proper
-  markdown-it inline/block rule, or skips fenced regions. (For the same reason, this document
-  avoids writing two dollar signs on one line.)
-  [roadmap.md](roadmap.md) is the place to track that.
+- Code spans and code blocks are tokenized before the math rules see their text, and inline math may
+  not contain a backtick or `<!--`, so **your** fence, a code span and an HTML comment never hold math,
+  whatever dollar signs they contain (`render-correctness.spec.mjs` over
+  `tests/fixtures/math-dollars.md`). This replaced `renderMath`, a regular-expression pass over the raw
+  markdown before `md.render`, which turned any two dollar signs on one line into math, inside code
+  too (roadmap issue 8).
 - No `math` fence exists. A ```` ```math ```` block is highlighted as code (inferred: the fence
   override only special-cases `mermaid`).
 
@@ -779,7 +803,7 @@ template string and is not code. Anonymous handlers follow the table.
 | `diagramFitToggle()` | `js/diagram-overlay.js` | Fit to screen, or actual size when already fitted |
 | `setupMermaidClickToSection()` | `js/enhancements.js` | Links the nodes of every diagram already drawn (`mdvLinkDiagramNodes`) |
 | `mdvLinkDiagramNodes(wrapper)` | `js/enhancements.js` | A node whose label slug equals a heading's slug becomes a focusable link to it |
-| `mdvJumpToSection(id)` | `js/enhancements.js` | Unfolds, scrolls to, focuses and flashes a heading |
+| `mdvJumpToSection(id)` | `js/enhancements.js` | Goes to a heading through `mdvGoTo` (unfold, open `<details>`, scroll, focus), then flashes it |
 
 ### 11.5 Structure and navigation
 
@@ -788,29 +812,30 @@ Functions marked with a file name instead of a line were added or rewritten afte
 | Function | Line | One line |
 |---|---|---|
 | `mdvExcludedFromText(el)` | `navigation.js` | True for what is not the author's words: the viewer's controls (chevron, permalink, comment chips, code header, expand button, minimap, link-card icon, address and badge, buttons), `aria-hidden` copies, MathML annotations, and `<style>`, `<script>` and `<template>` in any namespace |
-| `mdvHeadingText(h)` | `navigation.js` | A heading's own words; keeps a `#` the author wrote |
+| `mdvHeadingText(h)` | `navigation.js` | A heading's own words; keeps a `#` the author wrote and reads a formula once. The only reader of a heading's words: the outline, breadcrumb, search, read-aloud, the section rail and diagram-node links |
 | `addSectionToggles()` | `navigation.js` | Adds a chevron named after its section (`aria-expanded`, `aria-controls`) to `h1`–`h4`, names each of those headings by its own words, takes the `#` permalinks out of the Tab order, and moves every following node, comments included, into `.section-content`; comments after the last block stay outside |
 | `mdvSectionOf(btn)` | `navigation.js` | The section a chevron controls (through `aria-controls`, not `nextElementSibling`) |
 | `mdvSetCollapsed(btn, content, collapsed)` | `navigation.js` | Folds or unfolds one section and tells the scroll spy |
 | `toggleSection(heading, btn)` | `navigation.js` | Collapses or expands one section |
 | `toggleAllSections()` | `navigation.js` | Collapses or expands all sections |
-| `mdvUnfold(el)` | `navigation.js` | Unfolds every folded section around an element (read-aloud, for each block it reads) |
-| `mdvReveal(el)` | `navigation.js` | `mdvUnfold`, and opens every closed `<details>` around the element (outline and search jumps) |
+| `mdvUnfold(el)` | `navigation.js` | Unfolds every folded section around an element through `mdvSetCollapsed`, so each chevron and the scroll spy follow (read-aloud, for each block it reads; `mdvReveal`) |
+| `mdvReveal(el)` | `navigation.js` | `mdvUnfold`, and opens every closed `<details>` around the element (the jumps that go through `mdvGoTo`) |
 | `mdvFocusInDocument(el)` | `navigation.js` | Focuses a document element without scrolling (temporary `tabindex="-1"`) |
-| `mdvGoTo(el, { flash })` | `navigation.js` | Reveal, smooth-scroll, focus, and optionally flash |
+| `mdvGoTo(el, { flash })` | `navigation.js` | Reveal, smooth-scroll, focus, and optionally flash. Outline links, search results, section-rail segments and diagram-node links go through it; the links panel's section links (`buildLinksPanel`) and a comment card's quote still call `scrollIntoView` themselves, so they do not unfold a folded target |
 | `mdvFlash(el)` | `navigation.js` | Two-second background highlight that gives back the author's own inline background colour |
 | `buildToc()` | `navigation.js` | Fills `#tocList` from `h1`–`h6`; hides the TOC when there are no headings and shows it again (per `tocVisible`) when there are |
 | `toggleToc()` | `navigation.js` | Mobile slide-in at 900px or less, otherwise hide/show plus full width; then `mdvSyncTocInert` |
 | `mdvHideMobileToc()` | `navigation.js` | Slides the narrow-screen outline out (an outline jump, Esc) |
 | `mdvSyncTocInert()` | `navigation.js` | Makes the outline inert while it cannot be seen (hidden when wide, off-canvas when narrow) |
-| `setupScrollSpy()` | `navigation.js` | Hands the scroll spy this render's headings, outline links and minimap segments; creates nothing |
+| `setupScrollSpy()` | `navigation.js` | Hands the scroll spy this render's headings, outline links and section-rail segments (each with its `h2`); creates nothing |
 | `mdvScrollSpySchedule()`, `mdvScrollSpyInvalidate()` | `navigation.js` | Run the update on the next frame; also forget which headings are visible |
 | `mdvHeadingVisible(h)` | `navigation.js` | Whether a heading can be seen: `checkVisibility()` (not in a folded section or a closed `<details>`), else `getClientRects()` |
 | `mdvScrollSpyUpdate()` | `navigation.js` | Binary search for the last visible heading above the reading line (the last one on screen at the very bottom of a page that scrolls) |
-| `mdvSetActiveHeading(h, index)` | `navigation.js` | Active outline link and minimap segment (`aria-current`), breadcrumb text |
-| `mdvMark(el, on)`, `mdvKeepInView(el, scroller)` | `navigation.js` | Toggle `.active` and `aria-current`; scroll only the outline or minimap so the entry is visible |
-| `buildSectionMinimap()` | `js/enhancements.js` | A rail of `h2` segments (only when there are 3 or more), the first element of `#mdBody`, sticky under the toolbar; labels drawn by CSS from `data-label` |
-| `mdvFitMinimap()`, `mdvUpdateMinimap()` | `js/enhancements.js` | Label mode or track mode by segment width (72 px); the current section (last `h2` above the reading line), read segments, `data-current` and `data-position` |
+| `mdvSetActiveHeading(h, index)` | `navigation.js` | Active outline link (`aria-current`) and breadcrumb text when the current heading changes; the rail (`mdvMarkRail`) then, and also when the visible headings change |
+| `mdvMarkRail(h, index)` | `navigation.js` | The only writer of the section rail's state: the current segment (the `h2` at or above the current heading, within its `h1`; `.active`, `aria-current`), the read ones (`.passed`), and `data-current`/`data-position` for the track |
+| `mdvMark(el, on)`, `mdvKeepInView(el, scroller)` | `navigation.js` | Toggle `.active` and `aria-current`; scroll only the outline or the rail so the entry is visible |
+| `buildSectionMinimap()` | `js/enhancements.js` | A rail of `h2` segments (only when there are 3 or more), the first element of `#mdBody`, sticky under the toolbar; labels (`mdvHeadingText`) drawn by CSS from `data-label`; a segment goes to its `h2` through `mdvGoTo`. The scroll spy marks where the reader is |
+| `mdvFitMinimap()` | `js/enhancements.js` | Label mode or track mode (`.is-track`) by segment width (72 px) |
 
 ### 11.6 Search and dialogs
 
@@ -851,7 +876,6 @@ Functions marked with a file name instead of a line were added or rewritten afte
 | `mdvAlignNumericColumns(body)` | `js/enhancements.js` | Right-aligns table columns whose cells are all numbers (`.mdv-num`, with tabular figures) |
 | `mdvTableScrollCues(body)` | `js/enhancements.js` | Marks the sides a table scrolls to (`mdv-more-left`, `mdv-more-right`), which CSS fades |
 | `mdvPolishDashboard(body)` | `js/enhancements.js` | The status pill reads a slug as words; a repository link's star glyph moves into a hidden `span.mdv-repo-star` (CSS draws a link icon) |
-| `mdvHeadingLabel(h)` | `js/enhancements.js` | A heading's own words, without the fold toggle, the `#` permalink and a comment chip. Named apart from `navigation.js`'s helpers: classic scripts share one scope |
 | `applyAbbreviationTooltips(meta)` | `js/enhancements.js` | Wraps frontmatter `abbreviations` keys in `<abbr class="abbr-tooltip" title>`, outside code, math, diagrams and existing `<abbr>` |
 | `mdvFrontmatterAbbreviations(meta)` | `js/enhancements.js` | The abbreviation map from either YAML shape; the indented map is read from `rawMarkdown`'s frontmatter, only when it parses to the same meta |
 
@@ -917,7 +941,7 @@ All comment functions are in `js/comments.js`; find them by name.
 | `mdvAnnotateBlocks(state)` | markdown-it core rule `mdv_blocks`: `data-mdv-block` numbers and `data-mdv-anchor` ids on top-level blocks |
 | `mdvWithBlockAttrs(html, token)` | Puts those attributes on the first element of HTML a renderer builds itself (raw HTML blocks, Mermaid fences) |
 | `mdvSplitFrontmatter(src)`, `mdvLineOffset(text, line)`, `mdvParseMarkdown(text)` | Map block numbers back to source lines with the viewer's own markdown-it (the last parse is kept) |
-| `mdvSameBlocks(body, blocks)` | Whether math pre-processing kept the block structure, so block numbers can be trusted |
+| `mdvSameBlocks(body, blocks)` | Returns true: it compared the source's top-level blocks with those of the old math pre-pass's output (`renderMath`), which no longer exists; math is a markdown-it rule now, so the rendered blocks are the source's |
 | `mdvLocateInsertion(elem)` | Where a new thread's marker goes: the start of the line of the top-level block holding `elem` |
 | `mdvShortId()`, `mdvNewCommentId()`, `mdvNormalize(t)` | Anchor ids, comment ids, text normalization |
 | `mdvBlockText(el)`, `mdvBlockLabel(el)` | A block's text without chips (hashed); a readable label for a thread card |

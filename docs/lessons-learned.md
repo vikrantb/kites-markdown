@@ -75,7 +75,9 @@ assuming the globals existed.
 
 - the markdown-it `highlight` callback checks `typeof hljs !== 'undefined'` and falls back to
   escaped plain text;
-- `renderMath` returns its input unchanged when `katex` is undefined;
+- `mdvTypeset` (`js/math.js`) shows the TeX source as code (`code.mdv-math-source`, delimiters
+  included) when `katex` is undefined, and the missing-library notice names Math (`MDV_LIBRARIES`
+  in `js/render.js`);
 - `renderMermaidDiagrams` returns early when `mermaid` is undefined;
 - each markdown-it plugin is registered only if its global exists (`if (window.markdownItAnchor)`
   and so on);
@@ -384,7 +386,7 @@ Plans for them belong in [roadmap.md](roadmap.md).
 |---|---|---|---|
 | The paste handler replaces the document | `document.addEventListener('paste', ...)` | Pasting more than ten characters while the search overlay is closed and focus is not in a text field renders the pasted text as a new document with no confirmation. The handler now ignores pastes into `input`, `textarea`, `select` and editable elements and clears `mdvFileHandle`, so the pasted text can no longer be saved over the opened file. Since 2026-10-10, comment changes not yet saved to the previous document are kept in a notice with a download button. | 9, 10 |
 | ~~Workspace match by name~~ | `mdvTryWorkspaceMatch` | **Fixed 2026-10-10:** linked only when the contents match. | 10, 11 |
-| Math runs before markdown | `renderMath` is called on the raw source in `renderMarkdown` | `$...$` inside fenced or inline code is turned into KaTeX too, so shell snippets such as `echo $HOME $PATH` are altered *(inferred)*. | 5 |
+| ~~Math runs before markdown~~ | `mdvMathInline`, `mdvMathBlock` and `mdvTypeset` in `js/math.js` | **Fixed 2026-10-10** (roadmap issue 8): math is a markdown-it rule with Pandoc's dollar rules, and code spans and code blocks are tokenized before it runs, so a shell snippet such as `echo $HOME $PATH` stays code and a price line such as `costs $5 and $10` stays text. Tested in `render-correctness.spec.mjs` over `tests/fixtures/math-dollars.md`. | 5 |
 | ~~Theme switch does not redraw diagrams~~ | `setTheme` → `renderMermaidDiagrams` | **Fixed 2026-10-10** (roadmap issue 9): each diagram keeps its source and is redrawn in the new palette. | 2 |
 | ~~Diagram title guessed from SVG text~~ | `openDiagramOverlay` | **Fixed 2026-10-10** (roadmap issue 16): the title is the type Mermaid reports. | 8 |
 | ~~Anchor fallbacks not wired~~ | `mdvResolveAnchor` | **Fixed 2026-10-10:** the dead resolver was removed; anchors use block numbers set at render time. See lesson 12. | 12 |
