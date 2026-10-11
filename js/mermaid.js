@@ -76,7 +76,11 @@ async function mdvRenderDiagram(el, palette) {
     if (!el.isConnected) return;
     el.innerHTML = svg;
     const svgEl = el.querySelector('svg');
-    if (svgEl) svgEl.classList.add('mdv-diagram');
+    if (svgEl) {
+      svgEl.classList.add('mdv-diagram');
+      mdvIsolateSvgIds(svgEl, id + '-', true);
+      try { mdvFinishDiagram(svgEl, diagramType, palette); } catch (e) { console.warn('diagram finish:', e); }
+    }
     el.classList.add('rendered');
     el.classList.remove('mermaid-error');
     el.dataset.mdvPalette = palette.key;
@@ -220,6 +224,136 @@ function mdvIsolateSvgIds(svg, prefix, keepRoot = false) {
   }
 }
 
+// ---------- Finishing touches Mermaid's own drawing cannot do ----------
+// Each needs the drawn geometry, so it runs on the SVG in the page; a diagram drawn while hidden (in a folded
+// section) keeps Mermaid's version until it is drawn again.
+function mdvFinishDiagram(svg, type, palette) {
+  mdvMatchLabelChips(svg);
+  if (type === 'pie') mdvPieLabelColours(svg, palette);
+  mdvTrimCompositeStates(svg);
+  if (type === 'class' || type === 'classDiagram') mdvRoundClassBoxes(svg);
+  if (type === 'journey' || type === 'timeline') mdvCentreTitle(svg);
+  if (type === 'timeline') mdvCentreTimelineText(svg);
+  if (type === 'gantt') mdvTodayBehindTasks(svg);
+}
+
+// An edge label masks the line behind it with a chip in the canvas colour. Inside a subgraph or a composite state the
+// chip takes that container's colour instead, so it does not show as a patch (--mdv-chip, read by themeCSS).
+function mdvMatchLabelChips(svg) {
+  const boxes = [...svg.querySelectorAll('g.cluster > rect, g.statediagram-cluster rect.inner')]
+    .map((r) => ({ r: r.getBoundingClientRect(), fill: getComputedStyle(r).fill }))
+    .filter((b) => b.r.width && b.fill && b.fill !== 'none');
+  if (!boxes.length) return;
+  for (const label of svg.querySelectorAll('g.edgeLabel')) {
+    const lr = label.getBoundingClientRect();
+    if (!lr.width) continue;
+    const cx = lr.left + lr.width / 2, cy = lr.top + lr.height / 2;
+    // The innermost container holding the label's centre: the smallest one.
+    let best = null;
+    for (const b of boxes) {
+      if (cx < b.r.left || cx > b.r.right || cy < b.r.top || cy > b.r.bottom) continue;
+      if (!best || b.r.width * b.r.height < best.r.width * best.r.height) best = b;
+    }
+    if (best) label.style.setProperty('--mdv-chip', best.fill);
+  }
+}
+
+// Mermaid draws every pie label in one colour. The series span light and dark slices, so each label takes whichever
+// of the two text colours reads better on its own slice.
+function mdvPieLabelColours(svg, p) {
+  const slices = [...svg.querySelectorAll('path.pieCircle')];
+  const labels = [...svg.querySelectorAll('text.slice')];
+  labels.forEach((label, i) => {
+    let slice = slices.length === labels.length ? slices[i] : null;
+    if (!slice) {
+      const m = (label.getAttribute('transform') || '').match(/translate\(\s*([-\d.]+)[ ,]+([-\d.]+)/);
+      slice = m && slices.find((sl) => sl.isPointInFill && sl.isPointInFill(new DOMPoint(Number(m[1]), Number(m[2]))));
+    }
+    const fill = slice && mdvColorHex(getComputedStyle(slice).fill);
+    if (fill) label.style.fill = mdvReadableOn(fill, p.seriesText, p.text);
+  });
+}
+
+// Of two text colours, the one with more contrast on `bg` (all "#rrggbb").
+function mdvReadableOn(bg, a, b) {
+  return mdvContrast(a, bg) >= mdvContrast(b, bg) ? a : b;
+}
+
+function mdvContrast(x, y) {
+  const lum = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+    .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+  const [hi, lo] = [lum(x), lum(y)].sort((m, n) => n - m);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+// A composite state is an outer box (title band) and an inner box (body) whose bottom edge sits 4 px above the
+// outer one, which drew a doubled bottom border. The body now reaches the outer box's bottom edge, and keeps only
+// its top edge as a line: the one under the title.
+function mdvTrimCompositeStates(svg) {
+  for (const inner of svg.querySelectorAll('g.statediagram-cluster rect.inner')) {
+    const outer = inner.parentElement && inner.parentElement.querySelector(':scope > rect.outer');
+    const w = parseFloat(inner.getAttribute('width')) || 0;
+    let h = parseFloat(inner.getAttribute('height')) || 0;
+    if (outer) {
+      const bottom = (parseFloat(outer.getAttribute('y')) || 0) + (parseFloat(outer.getAttribute('height')) || 0);
+      const top = parseFloat(inner.getAttribute('y')) || 0;
+      if (bottom > top + h) { h = bottom - top; inner.setAttribute('height', String(h)); }
+    }
+    if (w && h) inner.setAttribute('stroke-dasharray', `${w} ${w + 2 * h}`);
+  }
+}
+
+// Mermaid 11 draws class boxes as paths, which CSS cannot round. A box whose fill path is a plain rectangle is
+// redrawn as a rounded one, so classes share the corner radius of every other node.
+function mdvRoundClassBoxes(svg) {
+  const rad = 8;
+  for (const box of svg.querySelectorAll('g.node > g.basic.label-container')) {
+    const paths = [...box.querySelectorAll(':scope > path')];
+    const fill = paths[0];
+    const pts = fill && (fill.getAttribute('d') || '').match(/-?\d+(?:\.\d+)?/g);
+    if (!pts || pts.length !== 8) continue;
+    const xs = [pts[0], pts[2], pts[4], pts[6]].map(Number), ys = [pts[1], pts[3], pts[5], pts[7]].map(Number);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    if (new Set(xs.map((v) => v.toFixed(2))).size !== 2 || new Set(ys.map((v) => v.toFixed(2))).size !== 2) continue;
+    const r = Math.min(rad, (x1 - x0) / 2, (y1 - y0) / 2);
+    const d = `M${x0 + r} ${y0} H${x1 - r} Q${x1} ${y0} ${x1} ${y0 + r} V${y1 - r} Q${x1} ${y1} ${x1 - r} ${y1} ` +
+      `H${x0 + r} Q${x0} ${y1} ${x0} ${y1 - r} V${y0 + r} Q${x0} ${y0} ${x0 + r} ${y0} Z`;
+    for (const p of paths) p.setAttribute('d', d);
+  }
+}
+
+// Journey and timeline titles start at a fixed x; centre them over the drawing, as pie, Gantt and quadrant titles are.
+function mdvCentreTitle(svg) {
+  const title = svg.querySelector(':scope > text[font-size="4ex"], :scope > g > text[font-size="4ex"]');
+  const vb = svg.viewBox && svg.viewBox.baseVal;
+  if (!title || !vb || !vb.width) return;
+  title.setAttribute('x', String(vb.x + vb.width / 2));
+  title.setAttribute('text-anchor', 'middle');
+}
+
+// Timeline boxes put their text at the top; centre it vertically in its box.
+function mdvCentreTimelineText(svg) {
+  for (const node of svg.querySelectorAll('g.timeline-node')) {
+    const bg = node.querySelector('path.node-bkg');
+    const text = node.querySelector(':scope > g:last-child');
+    if (!bg || !text || !text.querySelector('text')) continue;
+    const m = (text.getAttribute('transform') || '').match(/translate\(\s*([-\d.]+)[ ,]+([-\d.]+)\s*\)/);
+    const b = bg.getBBox(), t = text.getBBox(); // t is in the text group's own space, before its translate
+    if (!m || !b.height || !t.height) continue;
+    const shift = (b.y + b.height / 2) - (Number(m[2]) + t.y + t.height / 2);
+    if (Math.abs(shift) >= 1) text.setAttribute('transform', `translate(${m[1]}, ${Number(m[2]) + shift})`);
+  }
+}
+
+// The Gantt "today" line is drawn last, over the task bars and their labels. Draw it behind the tasks.
+function mdvTodayBehindTasks(svg) {
+  const today = svg.querySelector('g.today');
+  const first = svg.querySelector('g > rect.task, g > .task');
+  const tasks = first && first.parentElement;
+  if (today && tasks && tasks.parentElement === today.parentElement) tasks.before(today);
+}
+
 // ---------- Palette: the current theme's --diagram-* tokens, as hex ----------
 
 const MDV_DIAGRAM_TOKENS = {
@@ -303,7 +437,7 @@ function mdvMermaidConfig(p, contentWidth) {
     errorBkgColor: p.dangerSoft, errorTextColor: p.danger,
     // Sequence
     actorBkg: p.node, actorBorder: p.nodeBorder, actorTextColor: p.text, actorLineColor: p.clusterBorder,
-    signalColor: p.line, signalTextColor: p.text, labelBoxBkgColor: p.cluster, labelBoxBorderColor: p.clusterBorder,
+    signalColor: p.line, signalTextColor: p.text, labelBoxBkgColor: p.cluster, labelBoxBorderColor: p.line,
     labelTextColor: p.text, loopTextColor: p.muted, activationBkgColor: p.alt, activationBorderColor: p.altBorder,
     sequenceNumberColor: p.onAccent,
     // State
@@ -316,15 +450,18 @@ function mdvMermaidConfig(p, contentWidth) {
     sectionBkgColor: soft[0], altSectionBkgColor: p.bg, sectionBkgColor2: soft[1], excludeBkgColor: p.cluster,
     taskBkgColor: s[0], taskBorderColor: s[0], taskTextColor: p.seriesText, taskTextLightColor: p.seriesText,
     taskTextDarkColor: p.text, taskTextOutsideColor: p.text, taskTextClickableColor: p.accent,
-    activeTaskBkgColor: soft[1], activeTaskBorderColor: s[1], doneTaskBkgColor: p.cluster, doneTaskBorderColor: p.line,
+    // Active tasks take the third series colour: the second is rose in the light theme, too close to critical red.
+    activeTaskBkgColor: soft[2], activeTaskBorderColor: s[2], doneTaskBkgColor: p.cluster, doneTaskBorderColor: p.line,
     critBkgColor: p.danger, critBorderColor: p.danger, gridColor: p.grid, todayLineColor: p.danger,
     // Pie
     pieTitleTextSize: '16px', pieTitleTextColor: p.text, pieSectionTextSize: '13px', pieSectionTextColor: p.seriesText,
     pieLegendTextSize: '13px', pieLegendTextColor: p.text, pieStrokeColor: p.bg, pieStrokeWidth: '2px',
     pieOuterStrokeWidth: '0px', pieOuterStrokeColor: p.bg, pieOpacity: '1',
-    // User journey
+    // User journey. Actor colours go through actor0-5: the journey.actorColours array cannot replace Mermaid's own,
+    // because its config merge appends arrays (its six defaults would stay first).
     fillType0: soft[0], fillType1: soft[1], fillType2: soft[2], fillType3: soft[3],
     fillType4: soft[4], fillType5: soft[5], fillType6: soft[6], fillType7: soft[7],
+    actor0: s[0], actor1: s[1], actor2: s[2], actor3: s[3], actor4: s[4], actor5: s[5], faceColor: p.bg,
     // Quadrant chart
     quadrant1Fill: soft[0], quadrant2Fill: soft[1], quadrant3Fill: soft[2], quadrant4Fill: soft[3],
     quadrant1TextFill: p.text, quadrant2TextFill: p.text, quadrant3TextFill: p.text, quadrant4TextFill: p.text,
@@ -347,7 +484,7 @@ function mdvMermaidConfig(p, contentWidth) {
   }
   for (let i = 0; i < 8; i++) {
     themeVariables['git' + i] = s[i];
-    themeVariables['gitBranchLabel' + i] = p.seriesText;
+    themeVariables['gitBranchLabel' + i] = mdvReadableOn(s[i], p.seriesText, p.text); // the label sits on the branch colour
     themeVariables['gitInv' + i] = p.bg;
   }
   themeVariables.commitLabelColor = p.text;
@@ -369,7 +506,8 @@ function mdvMermaidConfig(p, contentWidth) {
     flowchart: { curve: 'basis', padding: 18, nodeSpacing: 44, rankSpacing: 56, diagramPadding: 12, htmlLabels: true, useMaxWidth: true },
     sequence: {
       wrap: true, // notes and long messages wrap inside their boxes (known issue 10)
-      useMaxWidth: true, mirrorActors: false, width: 150, height: 52, actorMargin: 64, boxMargin: 12,
+      // boxMargin is also the gap between a message and a note under it (12 px read as cramped against a 52 px rhythm).
+      useMaxWidth: true, mirrorActors: false, width: 150, height: 52, actorMargin: 64, boxMargin: 18,
       boxTextMargin: 8, noteMargin: 14, messageMargin: 40, wrapPadding: 14,
       actorFontFamily: MDV_DIAGRAM_FONT, actorFontSize: 14, actorFontWeight: 600,
       noteFontFamily: MDV_DIAGRAM_FONT, noteFontSize: 13, noteFontWeight: 400,
@@ -385,7 +523,7 @@ function mdvMermaidConfig(p, contentWidth) {
     pie: { useMaxWidth: true, textPosition: 0.68 },
     journey: {
       useMaxWidth: true, leftMargin: 120, width: 140, taskMargin: 36, diagramMarginX: 24,
-      taskFontFamily: MDV_DIAGRAM_FONT, taskFontSize: 13, actorColours: s.slice(0, 6), sectionFills: soft, sectionColours: [p.text],
+      taskFontFamily: MDV_DIAGRAM_FONT, taskFontSize: 13,
     },
     mindmap: { useMaxWidth: true, padding: 14 },
     timeline: { useMaxWidth: true, padding: 8 },
@@ -411,16 +549,20 @@ function mdvMermaidThemeCss(p) {
     .flowchart-link, .edgePath .path { stroke-width: 1.5px; }
     .edgeLabel, .edgeLabel p, .edgeLabel span { color: ${p.muted}; }
     .edgeLabel rect { opacity: 1; }
-    .labelBkg, .edgeLabel .label span { background-color: ${p.labelBg}; background: ${p.labelBg}; }
+    .labelBkg, .edgeLabel .label span, .edgeLabel .label p {
+      background-color: var(--mdv-chip, ${p.labelBg}); background: var(--mdv-chip, ${p.labelBg}); }
     text[font-size="4ex"] { font-size: 20px; font-weight: 650; fill: ${p.text}; }
     .actor-line { stroke-dasharray: 3 4; stroke-width: 1px; }
     text.actor > tspan { font-weight: 600; }
+    /* A stick figure's name goes below its legs (Mermaid centres it on them), haloed where it meets the lifeline. */
+    text.actor-man { transform: translateY(11px); paint-order: stroke; stroke: ${p.bg}; stroke-width: 4px; stroke-linejoin: round; }
     #sequencenumber { fill: ${p.accent}; }
     .sequenceNumber { font-weight: 600; font-size: 11px; }
     .loopLine { stroke-dasharray: 4 3; stroke-width: 1.25px; }
-    .stateGroup rect, .statediagram-state rect.basic { rx: 10px; ry: 10px; }
-    .stateLabel .box, .edgeLabel .label rect { fill: ${p.labelBg}; }
-    .classGroup rect, .er.entityBox, g.classGroup rect { rx: 6px; ry: 6px; }
+    .stateGroup rect, .statediagram-state rect.basic { rx: 8px; ry: 8px; }
+    .stateLabel .box, .edgeLabel .label rect { fill: var(--mdv-chip, ${p.labelBg}); }
+    .classGroup rect, .er.entityBox, g.classGroup rect { rx: 8px; ry: 8px; }
+    [id$="-barbEnd"] path { fill: ${p.line}; }
     .er.relationshipLabelBox { fill: ${p.labelBg}; opacity: 1; }
     marker circle[fill="white"] { fill: ${p.bg}; }
     .pieCircle { stroke: ${p.bg}; stroke-width: 2px; opacity: 1; }
@@ -435,6 +577,12 @@ function mdvMermaidThemeCss(p) {
     .task { rx: 5px; ry: 5px; }
     .edge-depth-0 { stroke-width: 7px; } .edge-depth-1 { stroke-width: 4.5px; } .edge-depth-2 { stroke-width: 3px; }
     .edge-depth-3, .edge-depth-4, .edge-depth-5 { stroke-width: 2px; }
+    .today { stroke-width: 1.5px; stroke-dasharray: 5 4; opacity: 0.85; }
+    &[aria-roledescription="journey"] line, &[aria-roledescription="timeline"] line { stroke: ${p.line}; }
+    &[aria-roledescription="journey"] marker path, &[aria-roledescription="timeline"] marker path { fill: ${p.line}; stroke: none; }
+    &[aria-roledescription="journey"] .face { stroke: ${p.line}; }
+    &[aria-roledescription="journey"] .mouth { stroke: ${p.muted}; }
+    &[aria-roledescription="journey"] circle[fill="#666"] { fill: ${p.muted}; stroke: ${p.muted}; }
   `;
   // Mind maps and timelines colour their branches by section (the first one is section -1); Mermaid's own maths
   // would darken our palette, so each section gets a soft fill and a full-strength edge from the series.
