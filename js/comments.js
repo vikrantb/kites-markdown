@@ -1031,11 +1031,18 @@ async function mdvReloadFromDisk() {
     const read = await mdvReadDesktop(host.currentPath);
     if (read.res) return false;
     const doc = read.doc;
+    // A version that cannot be rendered never replaces the page the reader's comments sit on: the renderer
+    // shows a failure in place (stream S), which would read as a successful reload and settle the notice.
+    const check = mdvBuildContent(doc.text, mdvRandomKey());
+    if (!check.ok) {
+      console.warn('MDV: the version on disk could not be shown:', check.error);
+      return false;
+    }
     try { host.currentMtimeMs = doc.mtimeMs; } catch (e) { /* the bridge keeps it itself */ }
     rawMarkdown = doc.text;
     currentFileName = doc.name || currentFileName;
     try {
-      renderMarkdown(doc.text, doc.name || mdvDocName);
+      if (!renderMarkdown(doc.text, doc.name || mdvDocName)) return false;
     } catch (e) {
       console.warn('MDV: the version on disk could not be shown:', e);
       return false;
@@ -1094,6 +1101,12 @@ async function mdvOpenWithHandle(handle, opts) {
     return false;
   }
   if (opts.ifSeq != null && opts.ifSeq !== mdvLoadSeq) return false;
+  // A version that cannot be rendered never replaces the page on screen (see mdvReloadFromDisk)
+  const check = mdvBuildContent(disk.text, mdvRandomKey());
+  if (!check.ok) {
+    console.warn('MDV: "' + (handle.name || 'the file') + '" could not be shown:', check.error);
+    return false;
+  }
   // A file that is not UTF-8 is shown, and its comments are read-only (see the renderMarkdown hook)
   mdvBases.set(handle, { text: disk.text, gen: ++mdvGen, notUtf8: !disk.utf8 });
   mdvFileHandle = handle;
@@ -1879,7 +1892,7 @@ function mdvEncodingLock() {
     // The markers stay in the source, so they render as DOM comments and data-mdv-anchor attributes. The sidebar
     // follows the document even when rendering it fails part way.
     try {
-      orig(source, title);
+      return orig(source, title);
     } finally {
       setTimeout(() => {
         mdvAttachContextMenu();

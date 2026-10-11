@@ -297,15 +297,21 @@ test('a reload whose new version fails to render keeps the comment in its notice
   }, { plan: PLAN });
   await expect(page.locator('#mdvNotices .mdv-notice-conflict')).toBeVisible();
   // The other version cannot be shown (a renderer error, as with roadmap issue 17)
-  await page.evaluate(() => { window.renderFrontmatterDashboard = () => { throw new TypeError('the dashboard failed'); }; });
+  // The other version cannot be shown. Since stream S a frontmatter-dashboard error is caught and the page still
+  // renders, so the failure goes into the render pipeline itself (renderMarkdown would show it in place).
+  await page.evaluate(() => { window.__realParse = window.parseFrontmatter; window.parseFrontmatter = (src) => { if (src.startsWith('---')) throw new TypeError('the renderer failed'); return window.__realParse(src); }; });
   await page.locator('#mdvNotices .mdv-notice-conflict').getByRole('button', { name: 'Reload from disk' }).click();
   await page.waitForTimeout(300);
-  // One more comment, which saves
+  await page.evaluate(() => { window.parseFrontmatter = window.__realParse; });
+  // One more comment. The file on disk is still the other version, which could not be shown, so this save must not
+  // write over it either: before stream S's renderer kept a failed page in place, a failed reload made that version
+  // the base, and this save silently replaced the other program's edit with the old text plus this comment.
   await page.evaluate(async () => {
     await mdvAddComment(window.__t.para('The last paragraph'), null, 'SECOND');
     await mdvFlushWrites();
   });
-  expect(await page.evaluate(() => window.h.text)).toContain('SECOND');
+  expect(await page.evaluate(() => window.h.text), 'the other program\'s version is never written over').toContain('status: draft');
+  expect(await keptAnywhere(page, 'SECOND', 'h'), 'the second comment is somewhere: disk, screen or a notice').toBe(true);
   expect(await keptAnywhere(page, 'MY COMMENT', 'h'), 'the first comment is still somewhere: disk, screen or a notice').toBe(true);
   expect(await page.evaluate(() => mdvHasUnsavedWork())).toBe(true);
 });
@@ -502,11 +508,17 @@ test('desktop: a reload whose new version fails to render keeps the comment in i
   await openViewer(page, { desktop: DESKTOP });
   page.on('dialog', (d) => d.accept());
   await desktopConflict(page, '---\nstatus: draft\n---\n' + PLAN, 'DESKTOP');
-  await page.evaluate(() => { window.renderFrontmatterDashboard = () => { throw new TypeError('the dashboard failed'); }; });
+  // The other version cannot be shown. Since stream S a frontmatter-dashboard error is caught and the page still
+  // renders, so the failure goes into the render pipeline itself (renderMarkdown would show it in place).
+  await page.evaluate(() => { window.__realParse = window.parseFrontmatter; window.parseFrontmatter = (src) => { if (src.startsWith('---')) throw new TypeError('the renderer failed'); return window.__realParse(src); }; });
   await page.locator('#mdvNotices .mdv-notice-conflict').getByRole('button', { name: 'Reload from disk' }).click();
   await page.waitForTimeout(300);
+  await page.evaluate(() => { window.parseFrontmatter = window.__realParse; });
   expect(await page.evaluate(() => mdvNotices.some((n) => (n.text || '').includes('DESKTOP')))).toBe(true);
   expect(await page.evaluate(() => mdvHasUnsavedWork())).toBe(true);
+  // The page the comments sit on is still the one on screen: the version that could not be shown never replaced it
+  expect(await page.evaluate(() => rawMarkdown.includes('status: draft')), 'the unrenderable version never became the document').toBe(false);
+  await expect(page.locator('#mdBody')).toContainText('The first paragraph');
 });
 
 for (const takesNewMtime of [true, false]) {

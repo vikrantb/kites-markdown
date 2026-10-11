@@ -120,33 +120,38 @@ function mdvIsWebOrRelativeLink(link) {
   try { new URL(link, location.href); return true; } catch (e) { return false; }
 }
 
+// Builds a document's page content without touching the page: { ok, content, meta, narrations, error }.
+// renderMarkdown shows it; a caller that must not replace a good page with a broken one (a reload from disk)
+// can ask first, through the same pipeline, rather than a second copy of it.
+function mdvBuildContent(source, codeKey) {
+  try {
+    // Parse and strip YAML frontmatter
+    const parsed = parseFrontmatter(source);
+    // Extract narrations before rendering
+    const narrations = extractNarrations(parsed.body).narrations;
+    let dashboardHtml = '';
+    try { dashboardHtml = renderFrontmatterDashboard(parsed.meta); } catch (e) { console.warn('frontmatter dashboard:', e); }
+    const content = mdvSanitize(dashboardHtml + md.render(parsed.body, { mdvCodeKey: codeKey }));
+    return { ok: true, content, meta: parsed.meta, narrations };
+  } catch (err) {
+    return { ok: false, error: err, content: mdvRenderErrorHtml(err, source), meta: null, narrations: [] };
+  }
+}
+
+// True when the document rendered; false when a render error is shown in its place.
 function renderMarkdown(source, title) {
   const body = document.getElementById('mdBody');
   const welcome = document.getElementById('welcomeScreen');
 
   // Build the page content. Nothing in here may stop the document from showing: a failure is
   // reported in its place (callers such as loadFromUrl must never mistake it for a missing file).
-  let meta = null;
-  let content;
   const codeKey = mdvRandomKey();
-  window._frontmatter = null;
-  window._narrations = [];
-  try {
-    // Parse and strip YAML frontmatter
-    const parsed = parseFrontmatter(source);
-    meta = parsed.meta;
-    window._frontmatter = meta;
-
-    // Extract narrations before rendering
-    window._narrations = extractNarrations(parsed.body).narrations;
-
-    let dashboardHtml = '';
-    try { dashboardHtml = renderFrontmatterDashboard(meta); } catch (e) { console.warn('frontmatter dashboard:', e); }
-    content = mdvSanitize(dashboardHtml + md.render(parsed.body, { mdvCodeKey: codeKey }));
-  } catch (err) {
-    console.error('Render error:', err);
-    content = mdvRenderErrorHtml(err, source);
-  }
+  const built = mdvBuildContent(source, codeKey);
+  if (!built.ok) console.error('Render error:', built.error);
+  const meta = built.meta;
+  const content = built.content;
+  window._frontmatter = meta;
+  window._narrations = built.narrations;
   if (typeof content === 'string') body.innerHTML = content;
   else body.replaceChildren(content);
   mdvWireCodeBlocks(body, codeKey);
@@ -188,6 +193,7 @@ function renderMarkdown(source, title) {
   // Reset state
   allCollapsed = false;
   window.scrollTo({ top: 0 });
+  return built.ok;
 }
 
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
