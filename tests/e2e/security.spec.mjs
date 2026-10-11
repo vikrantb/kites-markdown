@@ -130,7 +130,7 @@ test('a hostile document runs nothing, goes nowhere and keeps its harmless conte
   expect(dom.dataImage).toBe(1);
   expect(dom.benignSvg).toBe(1);
   expect(dom.diagrams).toBe(1);
-  expect({ links: dom.repoLinks, badges: dom.repoBadges }, 'a non-web repository URL is a plain badge').toEqual({ links: 0, badges: 1 });
+  expect({ links: dom.repoLinks, badges: dom.repoBadges }, 'a non-web repository URL is a plain badge').toEqual({ links: 0, badges: 2 });
   expect(await page.evaluate(() => window.__mdvCsp), 'nothing reached the CSP').toEqual([]);
   expect(problems, problems.join('\n')).toEqual([]);
 });

@@ -4,6 +4,8 @@ status: draft
 repos:
   - name: scheme
     github: "javascript:window.__mdvPwned='frontmatter-scheme'"
+  - name: tab in the scheme
+    github: "java	script:window.__mdvPwned='frontmatter-tab'"
 ---
 
 # A hostile document

@@ -97,8 +97,7 @@ function renderFrontmatterDashboard(meta) {
       const repo = r && typeof r === 'object' ? r : { name: r };
       const name = mdvFrontmatterText(repo.name) || 'repo';
       const link = mdvFrontmatterText(repo.github);
-      // A web address or a relative path; any other scheme (javascript:, data:) is not a link.
-      if (link && (/^https?:\/\//i.test(link) || !/^[a-z][a-z0-9+.-]*:/i.test(link))) {
+      if (link && mdvIsWebOrRelativeLink(link)) {
         html += `<a class="fm-repo-badge" href="${mdvEscapeAttr(link)}" target="_blank" rel="noopener">&#9733; ${escapeHtml(name)}</a>`;
       } else {
         html += `<span class="fm-repo-badge">${escapeHtml(name)}</span>`;
@@ -109,6 +108,16 @@ function renderFrontmatterDashboard(meta) {
 
   html += '</div>';
   return html;
+}
+
+// A web address, or a path relative to the page; any other scheme (javascript:, data:) is not a
+// link. Decided on the URL as the browser parses it: the parser drops tabs and newlines, so
+// "java<TAB>script:" is a javascript: URL, which a pattern over the raw text would miss.
+function mdvIsWebOrRelativeLink(link) {
+  let absolute = null;
+  try { absolute = new URL(link); } catch (e) { /* not an absolute URL: a relative path */ }
+  if (absolute) return absolute.protocol === 'http:' || absolute.protocol === 'https:';
+  try { new URL(link, location.href); return true; } catch (e) { return false; }
 }
 
 function renderMarkdown(source, title) {
