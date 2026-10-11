@@ -126,6 +126,24 @@ test('a new version of the document on screen, shown while the next file is read
   expect(problems).toEqual([]);
 });
 
+test('after a reload of the page, Back reaches a document of the folder again, read through the folder', async ({ page }) => {
+  // The tab's places survive the reload (js/history.js, sessionStorage), but a file handle does not: Back reads the
+  // document again with mdvFolder.read, once the folder is back (js/folder.js remembers it)
+  const problems = await start(page);
+  await seed(page, { 'a.md': '# A\n\nThe first file.\n', 'b.md': '# B\n\nThe second file.\n' });
+  await openFolder(page);
+  await openInTree(page, 'a.md', 'A');
+  await openInTree(page, 'b.md', 'B');
+  await page.reload();
+  await expectTitle(page, 'B'); // the file on screen comes back ('current')
+  await expect(page.locator('#mdvFolderTree .is-current')).toHaveAttribute('data-path', 'b.md');
+  await expect(page.locator('#mdvBackBtn')).toBeEnabled();
+  await page.click('#mdvBackBtn');
+  await expectTitle(page, 'A');
+  await expect(page.locator('#mdvFolderTree .is-current')).toHaveAttribute('data-path', 'a.md');
+  expect(problems).toEqual([]);
+});
+
 test('going back to a document from the sidebar, quick open or the recent menu opens it where the reader left it', async ({ page }) => {
   const problems = await start(page);
   await seed(page, { 'long.md': LONG });

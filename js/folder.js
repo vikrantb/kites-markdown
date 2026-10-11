@@ -363,8 +363,9 @@ function mdvFolderFirstShown(ms) {
 }
 
 // ------- Reading and resolving (the contract) -------
-// message: a clause with no closing full stop, so a caller can build a sentence around it (stream L's link toast
-// says "<name> could not be opened: <message>."); this file's own toasts end it (mdvFolderSentence).
+// message: a clause with no closing full stop, so a caller can build a sentence around it (a link's toast, from
+// js/document-links.js, says "<name> could not be opened: <message>."); this file's own toasts end it
+// (mdvFolderSentence).
 function mdvFolderError(code, message) { return { code, message }; }
 function mdvFolderSentence(message) { return /[.!?…]$/.test(message) ? message : message + '.'; }
 
@@ -452,7 +453,7 @@ function mdvFolderResolve(fromPath, href) {
 
 // ------- The document on screen -------
 // Every render replaces #mdBody's children; this hears about it after the loader has finished (a microtask
-// later), whoever rendered: the folder's own opens, a link (stream L), live reload, File → Open, a restore.
+// later), whoever rendered: the folder's own opens, a link (js/document-links.js), live reload, File → Open, a restore.
 // What is on screen, in order of certainty:
 //   1. a document this file just asked mdvOpenDocument to show (its exact text is on screen);
 //   2. the same document load as before (a comment re-render keeps comments.js's mdvLoadSeq);
