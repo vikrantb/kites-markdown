@@ -2,9 +2,10 @@
 // Search in files: full text across the folder's Markdown (Cmd/Ctrl+Shift+F)
 // ============================================
 // A dialog like the document search (Cmd/Ctrl+K), over every file in the open folder: each file that holds
-// the words, its matching lines with the words marked, and how many matches it has. Enter or a click opens the
-// file and goes to the match: the rendered block that holds it is scrolled into view, flashed, and the words
-// themselves are highlighted for a moment.
+// the words, its matching lines (one row per line, every match on it marked) and how many matches it has. Enter
+// or a click opens the file and goes to the match: the rendered block that holds it is scrolled into view, flashed,
+// and the words themselves are highlighted for a moment. Enter pressed before the results for what was typed are
+// there (the first search of a large folder reads it first) goes to the first match once they are.
 //
 // The files are read the first time the dialog opens (the index), not before: a folder that is never searched
 // costs nothing. Reading and matching run in slices of about 12 ms with the page free in between, so typing,
@@ -13,8 +14,9 @@
 // are searched as they are now. A file over 1 MB, and anything past 64 MB in all, is not read (the dialog says
 // how many). The comment block at the end of a file (MDV-COMMENTS) is not searched: its JSON is not the text.
 //
-// Cmd/Ctrl+Shift+F also folds every section (app.js): it searches while the folder sidebar is shown, and folds
-// while it is not.
+// Cmd/Ctrl+Shift+F also folds every section (app.js): it searches whenever a folder is open, whether or not its
+// sidebar is shown (a narrow window hides it), and folds only when no folder is open. The toolbar's fold button
+// always folds.
 
 const MDV_XS_MAX_FILE_BYTES = 1024 * 1024;
 const MDV_XS_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -32,6 +34,8 @@ const mdvXs = {
   bytes: 0,
   query: '', gen: 0, timer: 0,
   lastResult: null,      // {q, files, matches, more} of the last finished search
+  shownFor: null,        // what was typed (as typed) for the results on screen
+  goWhenShown: null,     // {value, newWindow}: Enter came before the results for `value`; go once they are drawn
   options: [],           // the rows the keyboard moves through: {el, path, at}
   focus: -1,
   highlightTimer: 0,
@@ -81,6 +85,7 @@ function mdvXsBuild() {
   Object.assign(mdvXs, { overlay, input, list, status });
   input.addEventListener('input', () => {
     clearTimeout(mdvXs.timer);
+    mdvXs.goWhenShown = null; // typing on after Enter: the reader is still choosing
     mdvXs.timer = setTimeout(() => mdvXsRun(input.value), 120);
   });
   input.addEventListener('keydown', mdvXsKeys);
@@ -109,30 +114,43 @@ async function mdvXsStat(entry) {
   return { size: file.size, mtimeMs: file.lastModified, file };
 }
 
+// Takes a file out of the index, with the bytes its text counted against the budget.
+function mdvXsForget(path) {
+  const old = mdvXs.index.get(path);
+  if (!old) return false;
+  if (typeof old.text === 'string') mdvXs.bytes -= old.size || 0;
+  mdvXs.index.delete(path);
+  return true;
+}
+
 async function mdvXsReadOne(entry) {
   const cached = mdvXs.index.get(entry.path);
   let stat;
-  try { stat = await mdvXsStat(entry); } catch (e) { mdvXs.index.delete(entry.path); return false; }
+  try { stat = await mdvXsStat(entry); } catch (e) { return mdvXsForget(entry.path); }
+  if (mdvFolderState.kind === 'browser') { entry.size = stat.size; entry.mtimeMs = stat.mtimeMs; entry.statAt = Date.now(); }
   if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return false;
-  if (cached && cached.text) mdvXs.bytes -= cached.size || 0;
+  mdvXsForget(entry.path);
   if (stat.size > MDV_XS_MAX_FILE_BYTES) { mdvXs.index.set(entry.path, { skipped: 'large', size: stat.size, mtimeMs: stat.mtimeMs }); return true; }
-  if (mdvXs.bytes + (stat.size || 0) > MDV_XS_MAX_TOTAL_BYTES) { mdvXs.index.set(entry.path, { skipped: 'total', size: stat.size, mtimeMs: stat.mtimeMs }); return true; }
+  // The budget is taken before the read, so the files read at the same time cannot overrun it together.
+  const bytes = stat.size || 0;
+  if (mdvXs.bytes + bytes > MDV_XS_MAX_TOTAL_BYTES) { mdvXs.index.set(entry.path, { skipped: 'total', size: stat.size, mtimeMs: stat.mtimeMs }); return true; }
+  mdvXs.bytes += bytes;
   let text;
   try {
     text = mdvFolderState.kind === 'desktop' ? (await window.mdvHost.readDocument(entry.path)).text : await stat.file.text();
   } catch (e) {
-    mdvXs.index.delete(entry.path);
-    return false;
+    mdvXs.bytes -= bytes;
+    return !!cached;
   }
   text = mdvXsStripComments(String(text || ''));
   mdvXs.index.set(entry.path, { text, size: stat.size, mtimeMs: stat.mtimeMs });
-  mdvXs.bytes += stat.size || 0;
   return true;
 }
 
+// What the index belongs to: the folder as opened (folder.js openId), never its name, which two folders can share.
 function mdvXsFolderKey() {
   const s = mdvFolderState;
-  return s.kind + ':' + (s.kind === 'desktop' ? s.root : s.rootName);
+  return s.kind + ':' + s.openId;
 }
 
 // Brings the index up to date with the folder, a few files at a time. Resolves true when anything changed.
@@ -148,7 +166,7 @@ function mdvXsRefreshIndex() {
     const listed = new Set(entries.map((e) => e.path));
     let changed = false;
     for (const path of [...mdvXs.index.keys()]) {
-      if (!listed.has(path)) { const old = mdvXs.index.get(path); if (old.text) mdvXs.bytes -= old.size || 0; mdvXs.index.delete(path); changed = true; }
+      if (!listed.has(path) && mdvXsForget(path)) changed = true;
     }
     mdvXs.progress = { done: 0, total: entries.length };
     let sliceStart = performance.now();
@@ -202,7 +220,7 @@ async function mdvXsRun(query) {
   const gen = ++mdvXs.gen;
   mdvXs.query = query;
   const q = query.trim().toLowerCase();
-  if (q.length < 2) { mdvXsRender(null); return; }
+  if (q.length < 2) { mdvXsRender(null, query); return; }
   const pattern = mdvXsPattern(q);
   if (!mdvXs.index.size && mdvXs.indexing) {
     mdvXsRenderStatus();
@@ -218,15 +236,21 @@ async function mdvXsRun(query) {
     pattern.lastIndex = 0;
     let m = pattern.exec(doc.text);
     if (!m) continue;
+    // One row per line: a second match on a line already listed is counted, and marked in that row's snippet.
     const hits = [];
-    let count = 0;
+    let count = 0, lines = 0, lineEnd = -1;
     while (m) {
       count++;
-      if (hits.length < MDV_XS_PER_FILE) hits.push({ at: m.index, length: m[0].length });
+      if (m.index > lineEnd) {
+        lines++;
+        if (hits.length < MDV_XS_PER_FILE) hits.push({ at: m.index, length: m[0].length });
+        lineEnd = doc.text.indexOf('\n', m.index);
+        if (lineEnd < 0) lineEnd = doc.text.length;
+      }
       m = pattern.exec(doc.text);
     }
     matches += count;
-    if (files.length < MDV_XS_MAX_FILES) files.push({ entry, doc, hits, count });
+    if (files.length < MDV_XS_MAX_FILES) files.push({ entry, doc, hits, count, lines });
     else more = true;
     if (performance.now() - sliceStart > MDV_XS_SLICE_MS) {
       await mdvXsYield();
@@ -235,17 +259,25 @@ async function mdvXsRun(query) {
     }
   }
   if (gen !== mdvXs.gen) return;
-  mdvXsRender({ q, files, matches, more });
+  mdvXsRender({ q, files, matches, more }, query);
 }
 
 // ------- Drawing -------
-function mdvXsRender(result) {
+// forValue: what was typed (as typed) that these results answer.
+function mdvXsRender(result, forValue) {
   const list = mdvXs.list;
   mdvXs.options = [];
   mdvXs.focus = -1;
   mdvXs.input.removeAttribute('aria-activedescendant');
   mdvXs.lastResult = result;
-  if (!result) { list.replaceChildren(); mdvXs.input.setAttribute('aria-expanded', 'false'); mdvXsRenderStatus(); return; }
+  mdvXs.shownFor = forValue == null ? null : forValue;
+  if (!result) {
+    list.replaceChildren();
+    mdvXs.input.setAttribute('aria-expanded', 'false');
+    mdvXsRenderStatus();
+    if (mdvXs.goWhenShown && mdvXs.goWhenShown.value === forValue) mdvXs.goWhenShown = null;
+    return;
+  }
   const frag = document.createDocumentFragment();
   for (const f of result.files) {
     const group = document.createElement('div');
@@ -290,10 +322,11 @@ function mdvXsRender(result) {
       group.appendChild(row);
       mdvXs.options.push({ el: row, path: f.entry.path, at, doc: f.doc });
     }
-    if (f.count > f.hits.length) {
+    if (f.lines > f.hits.length) {
       const rest = document.createElement('div');
       rest.className = 'mdv-xs-more';
-      rest.textContent = `${f.count - f.hits.length} more in this file`;
+      const more = f.lines - f.hits.length;
+      rest.textContent = `${more} more line${more === 1 ? '' : 's'} in this file`;
       group.appendChild(rest);
     }
     frag.appendChild(group);
@@ -303,6 +336,12 @@ function mdvXsRender(result) {
   mdvXs.input.setAttribute('aria-expanded', String(mdvXs.options.length > 0));
   if (mdvXs.options.length > 1) mdvXsSetFocus(1); else if (mdvXs.options.length) mdvXsSetFocus(0);
   mdvXsRenderStatus();
+  // Enter came before these results: go to the first match now (with none, the dialog stays and says so).
+  const go = mdvXs.goWhenShown;
+  if (go && go.value === forValue) {
+    mdvXs.goWhenShown = null;
+    if (mdvXs.options.length && mdvXsIsOpen()) mdvXsChoose(Math.max(0, mdvXs.focus), go.newWindow);
+  }
 }
 
 function mdvXsRenderStatus() {
@@ -314,7 +353,8 @@ function mdvXsRenderStatus() {
   if (!s.kind) text = 'Open a folder to search its files';
   else if (mdvXs.progress && (!r || !mdvXs.index.size)) text = `Reading ${mdvXs.progress.done.toLocaleString()} of ${mdvXs.progress.total.toLocaleString()} files…`;
   else if (!r) text = mdvXs.query.trim().length === 1 ? 'Type at least 2 characters' : `${plural(s.entries.length, 'file', 'files')} to search`;
-  else if (!r.files.length) text = 'No matches';
+  // The folder searched is named: in the desktop app it is the document's own folder unless the reader chose another.
+  else if (!r.files.length) text = `No matches in “${s.rootName}”`;
   else {
     text = `${plural(r.matches, 'match', 'matches')} in ${plural(r.files.length, 'file', 'files')}`;
     if (r.more) text += ` (the first ${MDV_XS_MAX_FILES} files)`;
@@ -343,17 +383,19 @@ function mdvXsKeys(e) {
   else if (e.key === 'ArrowUp' && n) { e.preventDefault(); mdvXsSetFocus(mdvXs.focus <= 0 ? n - 1 : mdvXs.focus - 1); }
   else if (e.key === 'Enter') {
     e.preventDefault();
-    clearTimeout(mdvXs.timer);
     const newWindow = { metaKey: e.metaKey, ctrlKey: e.ctrlKey };
-    // Enter right after typing: search what was typed first, then go to its first match.
-    if (mdvXs.query !== mdvXs.input.value) {
-      const gen = mdvXs.gen + 1;
-      mdvXsRun(mdvXs.input.value).then(() => {
-        if (gen === mdvXs.gen && mdvXs.options.length) mdvXsChoose(Math.max(0, mdvXs.focus), newWindow);
-      });
+    const value = mdvXs.input.value;
+    if (mdvXs.lastResult && mdvXs.shownFor === value) {
+      if (n) mdvXsChoose(Math.max(0, mdvXs.focus), newWindow);
       return;
     }
-    if (n) mdvXsChoose(Math.max(0, mdvXs.focus), newWindow);
+    // The results on screen are not (yet) for what was typed: the debounce has not run, the first search is still
+    // reading the folder, or a long search is part-way. Go to the first match when its results are drawn.
+    mdvXs.goWhenShown = { value, newWindow };
+    if (mdvXs.query !== value) {
+      clearTimeout(mdvXs.timer);
+      mdvXsRun(value);
+    }
   }
 }
 
@@ -383,21 +425,38 @@ function mdvXsContext(doc, at, q) {
   return { words, occurrence, heading };
 }
 
+// The rendered block that holds the match. Every block of the page that holds the words is a candidate, taken in
+// reading order (the document search's index lists every heading before every block), with the occurrences of the
+// words it holds numbered through the page as they are in the file. A candidate scores
+//   10 for each word of the match's line (3 letters or more) it holds,
+//   5 when it sits under the heading the match sits under in the file,
+//   less the distance between the match's occurrence number and the ones it holds;
+// the best wins, the earliest on a tie. So a line with no long word ("- v2") still finds its block by where it falls
+// in the file. With no candidate (the words are in a diagram's source, say), the heading above the match.
 function mdvXsReveal(q, context) {
   const index = typeof mdvSearchIndex === 'function' ? mdvSearchIndex() : [];
   const candidates = index.filter((b) => b.lower.includes(q) && b.element && b.element.isConnected);
+  candidates.sort((a, b) => (a.element === b.element ? 0
+    : a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+  const heading = context.heading ? context.heading.replace(/[`*_~]/g, '').trim().toLowerCase() : null;
   let target = null;
-  if (candidates.length) {
-    let best = -1;
-    candidates.forEach((b, k) => {
-      const overlap = context.words.reduce((n, w) => n + (b.lower.includes(w) ? 1 : 0), 0);
-      const score = overlap * 10 - Math.abs(k - context.occurrence);
-      if (score > best) { best = score; target = b.element; }
-    });
-  } else if (context.heading) {
-    const want = context.heading.replace(/[`*_~]/g, '').trim().toLowerCase();
+  let best = -Infinity;
+  let seen = 0; // occurrences in the blocks before this one
+  for (const b of candidates) {
+    let held = 0;
+    for (let at = b.lower.indexOf(q); at >= 0; at = b.lower.indexOf(q, at + q.length)) held++;
+    const first = seen, last = seen + Math.max(1, held) - 1;
+    seen += held;
+    const distance = context.occurrence < first ? first - context.occurrence : context.occurrence > last ? context.occurrence - last : 0;
+    const overlap = context.words.reduce((n, w) => n + (b.lower.includes(w) ? 1 : 0), 0);
+    const section = b.type === 'heading' ? b.lower : (b.headingText || '').toLowerCase();
+    const under = heading && section === heading ? 1 : 0;
+    const score = overlap * 10 + under * 5 - distance;
+    if (score > best) { best = score; target = b.element; }
+  }
+  if (!target && heading) {
     target = [...document.querySelectorAll('#mdBody h1, #mdBody h2, #mdBody h3, #mdBody h4, #mdBody h5, #mdBody h6')]
-      .find((h) => mdvHeadingText(h).toLowerCase() === want) || null;
+      .find((h) => mdvHeadingText(h).toLowerCase() === heading) || null;
   }
   if (!target) return false;
   mdvGoTo(target, { flash: true });
@@ -462,13 +521,17 @@ mdvRegisterActions({
   'folder-search-backdrop': { click: (el, arg, event) => { if (event.target === el) mdvXsClose(); } },
 });
 
+// With a folder open the key always searches, whether or not the sidebar is shown: a narrow window hides it, and a
+// reader who hid it still has the folder. The fold row it shares the keys with says when it applies.
 document.addEventListener('DOMContentLoaded', () => {
+  const sameKeys = (row) => row.mod && row.shift && row.key === 'f';
+  mdvFolderRelabelShortcut((row) => sameKeys(row) && /fold/i.test(row.label), 'Fold or unfold all sections (no folder open)');
   mdvFolderAddShortcut({
-    mod: true, shift: true, key: 'f', label: 'Search in the folder’s files (while the folder is shown)', modal: 'mdvFolderSearch',
+    mod: true, shift: true, key: 'f', label: 'Search in the folder’s files', modal: 'mdvFolderSearch',
     run: () => {
       if (mdvXsIsOpen()) mdvXsClose();
-      else if (mdvTreeShown() && mdvFolderState.kind) mdvXsOpen();
+      else if (mdvFolderState.kind) mdvXsOpen();
       else toggleAllSections();
     },
-  }, (row) => row.mod && row.shift && row.key === 'f');
+  }, sameKeys);
 });
