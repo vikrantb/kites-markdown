@@ -80,3 +80,76 @@ pub fn inform(app: &AppHandle, parent_label: Option<String>, title: &str, messag
     });
   });
 }
+
+/// Where a download the page starts is saved (Export HTML: a file the page made, as a blob: URL). macOS's web view
+/// cancels every download unless the app handles it, so the app asks where to save it, in a Save panel that starts
+/// with the page's name for it in Downloads. Any other download is refused: a document cannot start one (js/host.js
+/// takes over its links), and nothing but the viewer's own export should write a file. Windows' WebView2 has its own
+/// download flow and keeps it. Returns whether the download goes on.
+#[cfg(target_os = "macos")]
+pub fn save_download(webview: &tauri::Webview, event: tauri::webview::DownloadEvent<'_>) -> bool {
+  use tauri::webview::DownloadEvent;
+  match event {
+    DownloadEvent::Requested { url, destination } => {
+      if url.scheme() != "blob" {
+        return false;
+      }
+      let mut dialog = rfd::FileDialog::new().set_title("Export").set_can_create_directories(true);
+      if let Some(name) = destination.file_name().map(|n| suggested_name(&n.to_string_lossy())) {
+        dialog = dialog.set_file_name(name);
+      }
+      if let Some(folder) = destination.parent() {
+        dialog = dialog.set_directory(folder);
+      }
+      let window = webview.window();
+      dialog = dialog.set_parent(&window);
+      match dialog.save_file() {
+        Some(path) => {
+          *destination = path;
+          true
+        }
+        None => false,
+      }
+    }
+    DownloadEvent::Finished { success, .. } => {
+      if !success {
+        crate::doc_windows::notify_page(webview.app_handle(), webview.label(), "The export could not be saved.");
+      }
+      true
+    }
+    _ => true,
+  }
+}
+
+/// The name the page gave a download, without the " (1)" the web view adds when Downloads already has one.
+#[cfg(target_os = "macos")]
+fn suggested_name(name: &str) -> String {
+  let (stem, ext) = match name.rfind('.') {
+    Some(i) if i > 0 => (&name[..i], &name[i..]),
+    _ => (name, ""),
+  };
+  let numbered = stem
+    .strip_suffix(')')
+    .and_then(|s| s.rfind(" (").map(|i| (i, &s[i + 2..])))
+    .filter(|(_, n)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+  let stem = match numbered {
+    Some((i, _)) => &stem[..i],
+    None => stem,
+  };
+  format!("{stem}{ext}")
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+  use super::suggested_name;
+
+  #[test]
+  fn the_suggested_name_drops_the_number_the_web_view_adds() {
+    assert_eq!(suggested_name("plan.html"), "plan.html");
+    assert_eq!(suggested_name("plan (1).html"), "plan.html");
+    assert_eq!(suggested_name("plan (12).html"), "plan.html");
+    assert_eq!(suggested_name("plan (draft).html"), "plan (draft).html");
+    assert_eq!(suggested_name("plan ().html"), "plan ().html");
+    assert_eq!(suggested_name("notes"), "notes");
+  }
+}

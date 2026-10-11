@@ -78,6 +78,11 @@ as it has been opened once: an app that declares a file type becomes the automat
   place in it. If you have comment changes that are not in the file yet, the window waits and offers
   **Reload** instead, and so does **View → Reload**: loading the file's version is then your choice.
 - **Comments** (still experimental, see the [README](../README.md)) are saved into the file itself.
+- **Export and print:** the toolbar's share icon exports the document as one HTML file (a Save panel asks
+  where it goes; on Windows, WebView2's download flow saves it), prints it or saves it as a PDF through the
+  native print panel, copies it as rich text, or copies a link to the section you are reading. A section link
+  is the document's path with the section (`/home/me/notes/plan.md#risks`); written as a link in a
+  document, it opens that section when it is the same document. See [features.md](features.md#export-and-copy).
 - **Paste:** pasting Markdown into an empty window shows it; it is not saved anywhere. That window then
   keeps it: a file you open later opens in a new window. A window that shows a file keeps showing that
   file.
@@ -127,7 +132,7 @@ desktop/
   scripts/run-self-test.mjs                  runs and checks the self-test (local and CI)
   scripts/make-icons.mjs                     app-icon.svg → src-tauri/icons/
   src-tauri/tauri.conf.json                  identity, CSP, asset protocol, file associations, installers
-  src-tauri/capabilities/default.json        what a window may call: Tauri core + the mdv_* commands
+  src-tauri/capabilities/default.json        what a window may call: Tauri core, printing its page, the mdv_* commands
   src-tauri/Info.plist                       imports net.daringfireball.markdown; exports the app's own type for the rarer extensions
   src-tauri/windows/hooks.nsh                Windows: Open with, Default apps, a quoted open command
   src-tauri/src/                             the shell (Rust): see below
@@ -146,7 +151,7 @@ js/host.js                                   the bridge in the page: window.mdvH
 | `registry.rs` | Which window shows which file, and which versions of it the page has seen |
 | `watch.rs` | Live reload: a folder watch per document, debounced, ignoring the app's own saves |
 | `default_app.rs` | Make default: Launch Services on macOS, Settings on Windows |
-| `menu.rs`, `dialogs.rs`, `prefs.rs` | The menu bar, native dialogs, the one remembered setting |
+| `menu.rs`, `dialogs.rs`, `prefs.rs` | The menu bar, native dialogs (on a Mac, the Save panel for a download the page starts: Export HTML), the one remembered setting |
 | `selftest.rs`, `self-test.js` | Self-test mode |
 
 **How files arrive.** macOS sends an "open documents" event (Finder double-click, Open With, `open -a`),
@@ -237,6 +242,12 @@ to run script, and the page must not be able to reach beyond its own document.
    - saving accepts only the calling window's own file, and only over the exact version (the bytes) the
      page's text was made from;
    - external links accept only `http:`, `https:` and `mailto:`.
+
+   Two things outside the bridge: the window may print its own page (`core:webview:allow-print`: on a Mac,
+   Tauri routes `window.print()` through that command to the native print panel), and on a Mac a download
+   the page starts goes through a Save panel, where the person chooses the file. Only a `blob:` download
+   (Export HTML, a file the page made) is offered; any other download is refused, and a document cannot
+   start one, since `js/host.js` takes over its links.
 3. **The window never leaves the app.** Navigation to anything but the app's own page is refused, and
    requests for new windows are refused (a web link opens in the browser instead).
 4. **Images load only from the folders of the documents opened in this session, and below them** (the
@@ -281,4 +292,4 @@ document was opened.
 - **Fonts:** the app uses the viewer's fallback fonts (system fonts): it loads nothing from the internet, so
   the web fonts the browser build uses are left out.
 - **Not in v1:** tabs, Quick Look previews, a document icon of its own for `.md` files, an "Open Recent"
-  menu, and printing from the menu.
+  menu, and a Print item in the menu bar (the toolbar's Export menu prints).

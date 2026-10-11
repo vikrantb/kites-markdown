@@ -256,6 +256,11 @@ fn create_window(app: &AppHandle, label: &str, title: &str) -> tauri::Result<Web
       .initialization_script(selftest::CAPTURE_SCRIPT)
       .initialization_script(selftest::PAGE_SCRIPT);
   }
+  // Export HTML hands the page's file over as a download, which macOS's web view would cancel: ask where to save it.
+  #[cfg(target_os = "macos")]
+  {
+    builder = builder.on_download(|webview, event| crate::dialogs::save_download(&webview, event));
+  }
   let window = builder.build()?;
   #[cfg(target_os = "macos")]
   crate::js_dialogs::install(&window);
