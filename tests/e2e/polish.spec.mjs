@@ -326,6 +326,10 @@ test('a jump to a section starts its fill at 0: the fill counts from where the j
   expect(s.active).toEqual(['decisions-taken']);
   expect(s.progress).toBeLessThan(0.02); // the reader has read nothing of it yet
   expect(s.passed).toBe(16); // the sections above it are filled: the rail shows where the reader is
+  await readAt(page, 'decisions-taken', 0.5); // positive control: the fill does move, half way through the section
+  const half = (await railState(page)).progress;
+  expect(half).toBeGreaterThan(0.45);
+  expect(half).toBeLessThan(0.55);
 });
 
 test("in the label form too, the title's introduction is marked: a 'you are here' dot at the start of the next section's bar", async ({ page }) => {
