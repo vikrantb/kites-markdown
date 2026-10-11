@@ -1,7 +1,6 @@
 // Live reload's watch (js/live-reload.js): looks that hang or race, files that keep changing or go away, the mark that
 // says a newer version waits, comment boxes and saves, and the note that says what changed.
 import { test, expect } from '@playwright/test';
-import { waitForLayoutSettled } from './support/viewer.mjs';
 import {
   collectErrors, servedFile, longDocument, recordOpens, setVisibility, openHandleFile, writeHandleFile, openApp, windowFile, otherFile,
 } from './support/live.mjs';

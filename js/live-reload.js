@@ -114,7 +114,8 @@ async function mdvLiveTick() {
   if (document.visibilityState === 'hidden') return;
   const target = mdvLiveTarget();
   if (!target) return;
-  if (mdvLive.look && mdvLive.look.gen === mdvLive.gen) return; // that look schedules the next; it ends by its timeout at the latest
+  // A look on its way schedules the next one. It ends by its timeout at the latest, and a new document drops it.
+  if (mdvLive.look) return;
   if (mdvLive.pending && mdvLiveCommentsAsking()) mdvLiveClearPending(); // the comment code asks instead
   else mdvLiveBoxChanged();
   let soon = false;

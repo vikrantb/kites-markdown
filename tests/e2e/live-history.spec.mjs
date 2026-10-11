@@ -4,31 +4,38 @@
 import { test, expect } from '@playwright/test';
 import { waitForLayoutSettled } from './support/viewer.mjs';
 import {
-  MOD, ALT_LEFT, collectErrors, servedFile, longDocument, scrollHeadingTo, expectHeadingAt, recordOpens,
+  ALT_LEFT, collectErrors, servedFile, longDocument, expectHeadingAt, recordOpens,
 } from './support/live.mjs';
 
 const h1 = (page) => page.locator('#mdBody h1');
 
-test('after a reload of the tab, Back from an in-document jump does not read the page again', async ({ page }, info) => {
+test('after a reload of the tab, Back between places of the same document does not read the page again', async ({ page }, info) => {
   const errors = collectErrors(page);
   const a = servedFile(info, 'a.md', '# A\n\n[To B](b.md)\n');
-  servedFile(info, 'b.md', longDocument('Document B', '', { 1: 'Contents: [Jump to nine](#section-9).\n\n' }));
+  servedFile(info, 'b.md', longDocument('Document B', '', { 1: 'Contents: [Jump to nine](#section-9), [jump to two](#section-2).\n\n' }));
   await page.goto(`markdown-viewer.html?file=${a.path}`);
   await page.waitForSelector('#mdBody h1');
   await page.locator('#mdBody a', { hasText: 'To B' }).click();
   await expect(h1(page)).toHaveText(/Document B/);
+  await page.locator('#mdBody a', { hasText: 'Jump to nine' }).click(); // a place made before the reload
+  await expect.poll(() => new URL(page.url()).hash).toBe('#section-9');
   await page.reload();
   await page.waitForSelector('#section-9');
   // An unsaved comment (over http there is no file to save it into), then a probe the page loses if it is drawn again
   await page.evaluate(() => mdvAddComment(document.querySelector('#mdBody p'), null, 'My unsaved note'));
   await page.evaluate(() => { document.querySelector('#mdBody h1').dataset.probe = 'kept'; });
-  await page.locator('#mdBody a', { hasText: 'Jump to nine' }).click();
+  const kept = () => page.evaluate(() => ({ probe: document.querySelector('#mdBody h1').dataset.probe, dirty: mdvDirty, note: rawMarkdown.includes('My unsaved note') }));
+  // A place made after the reload, then Back to it, then Back to the places made before the reload
+  await page.locator('#mdBody a', { hasText: 'jump to two' }).click();
+  await expect.poll(() => new URL(page.url()).hash).toBe('#section-2');
+  await page.goBack();
   await expect.poll(() => new URL(page.url()).hash).toBe('#section-9');
+  await page.waitForTimeout(800);
+  expect(await kept()).toEqual({ probe: 'kept', dirty: true, note: true });
   await page.goBack();
   await expect.poll(() => new URL(page.url()).hash).toBe('');
   await page.waitForTimeout(800);
-  expect(await page.evaluate(() => ({ probe: document.querySelector('#mdBody h1').dataset.probe, dirty: mdvDirty, note: rawMarkdown.includes('My unsaved note') })))
-    .toEqual({ probe: 'kept', dirty: true, note: true });
+  expect(await kept()).toEqual({ probe: 'kept', dirty: true, note: true });
   expect(errors).toEqual([]);
 });
 

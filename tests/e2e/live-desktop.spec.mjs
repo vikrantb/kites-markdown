@@ -2,8 +2,7 @@
 // opening the window's own file again, the Go menu, Back reading the window's file, and the names notices use. The
 // shell is the stand-in desktop.spec.mjs uses, with the app's Content Security Policy.
 import { test, expect } from '@playwright/test';
-import { waitForLayoutSettled } from './support/viewer.mjs';
-import { recordOpens, openApp, callsTo, windowFile, otherFile, longDocument } from './support/live.mjs';
+import { recordOpens, setVisibility, openApp, windowFile, otherFile, longDocument } from './support/live.mjs';
 
 const h1 = (page) => page.locator('#mdBody h1');
 
@@ -16,7 +15,11 @@ async function followTheLink(page) {
 test('desktop: View → Reload reloads a document opened from a link', async ({ page }) => {
   const errors = await openApp(page, { doc: windowFile, disk: { [otherFile.path]: otherFile } });
   await followTheLink(page);
+  // The page's own looks stop (a hidden window), so only View → Reload can show the new version
+  await setVisibility(page, 'hidden');
   await page.evaluate((p) => Object.assign(window.__shell.disk[p], { text: '# The other file\n\nOpened from a link, then edited.\n', mtimeMs: 2600, version: 'v-2600' }), otherFile.path);
+  await page.waitForTimeout(2600);
+  await expect(page.locator('#mdBody')).not.toContainText('then edited');
   // The shell's View → Reload names the window's own file
   await page.evaluate((d) => window.__shell.emit('mdv://document-changed', d), Object.assign({}, windowFile, { reason: 'reload' }));
   await expect(page.locator('#mdBody')).toContainText('Opened from a link, then edited.');
