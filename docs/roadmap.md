@@ -129,15 +129,17 @@ Fixed in the initial import, and kept here as a record:
 | # | Issue | Evidence | Fix direction |
 |---|---|---|---|
 | 8 | ~~Two `$` on one line become math, even in prices and code.~~ **Fixed.** Math is a markdown-it rule (`js/math.js`) with Pandoc's dollar rules; code is tokenized before inline rules, so math never matches inside a code span or block. | Was verified with `../samples/repro-dollar-signs.md`. Now: that sample plus `tests/fixtures/math-dollars.md` (23 cases) in `render-correctness.spec.mjs` — prices and both code samples stay text, one formula renders; kitchen-sink math still renders (4 inline + 1 display). | Done |
-| 9 | Dark theme: diagrams keep their light-theme colours, and sequence-diagram labels and arrows are `#333` on `#1C1C24` | Verified: after `setTheme('dark')`, Mermaid's config is still `theme: 'default'` and already-rendered diagrams are skipped | Keep each diagram's source; re-initialize Mermaid with the matching theme and re-render all diagrams on a theme change |
-| 10 | Mermaid sequence-diagram notes overflow their box | Verified: 384px of text in a 295px note, in both themes | Try `sequence: { wrap: true }` |
-| 11 | Section minimap labels overlap and clip when a document has many `h2` sections | Seen in a screenshot of `kitchen-sink.md` (20 sections) | Truncate with an ellipsis or scroll; show the full title on hover |
+| 9 | ~~Dark theme: diagrams keep their light-theme colours, and sequence-diagram labels and arrows are `#333` on `#1C1C24`~~ | **Fixed 2026-10-10.** `tests/e2e/visuals.spec.mjs` › *a theme change redraws every diagram in the dark palette, and back*: the flowchart node takes the dark fill and sequence text reaches at least 4.5:1 on the dark card. On the old code the same test fails: the node stays `rgb(236, 236, 255)` | Each diagram keeps its source (`data-mdv-source`); `renderMermaidDiagrams` redraws every diagram whose palette differs from the current theme's. The palette is Mermaid's `base` theme fed from the `--diagram-*` tokens in `css/viewer.css`, in all three themes |
+| 10 | ~~Mermaid sequence-diagram notes overflow their box~~ | **Fixed 2026-10-10.** `tests/e2e/visuals.spec.mjs` › *sequence-diagram notes stay inside their box*, light and dark: every note line lies inside its note rectangle. On the old code the note text starts 57px left of its box | `sequence: { wrap: true }`, with the sequence fonts set to the font the page draws them in, so text is measured as it is shown |
+| 11 | ~~Section minimap labels overlap and clip when a document has many `h2` sections~~ | **Fixed 2026-10-10.** `tests/e2e/visuals.spec.mjs` › *minimap labels stay inside their segments…* and *a minimap with room shows each label, truncated with an ellipsis…*. On the old code 13 of the kitchen sink's 17 labels are wider than their segment | Labels are drawn by CSS from `data-label`, truncated with an ellipsis, and shown in full in a tooltip on hover or keyboard focus. The minimap is a rail that sticks under the toolbar (`tests/e2e/visuals-layout.spec.mjs`); segments too narrow for a readable label become a track (read, current, ahead) and the rail names the current section and its position |
 | 12 | ~~Narration comments before a diagram or table under a heading are never found~~ **Fixed 2026-10-10** | Verified in Chrome before and after: `tests/e2e/reading-aids.spec.mjs` fails on main and passes now ([Reading aids](#reading-aids-fixed-2026-10-10)) | Done: `addSectionToggles` moves comment nodes with their blocks |
-| 13 | The copy button copies the language label and the word "Copy" with the code (e.g. `pythonCopydef hello…`) | Verified | Copy only the inner `code` element's text |
-| 14 | Clicking a diagram node never jumps to its section; the handler never attaches | Read ([features.md](features.md)) | — |
-| 15 | Frontmatter `abbreviations` do nothing | Read ([features.md](features.md)) | — |
-| 16 | Diagram overlay titles are guessed by regex: any source containing "pie" is titled "Pie Chart" | Read ([features.md](features.md)) | Use the diagram type Mermaid reports |
+| 13 | ~~The copy button copies the language label and the word "Copy" with the code (e.g. `pythonCopydef hello…`)~~ | **Fixed 2026-10-10.** `tests/e2e/visuals.spec.mjs` › *the copy button copies only the code*: the clipboard holds exactly the code. On the old code it holds `pythonCopydef drain(…`, plus a trailing newline | `copyCode` copies the inner `code.hljs` element and drops the fence's closing newline |
+| 14 | ~~Clicking a diagram node never jumps to its section; the handler never attaches~~ | **Fixed 2026-10-10.** `tests/e2e/visuals.spec.mjs` › *a diagram node named like a heading jumps to that section* and *a linked node in the expanded view closes it and jumps*. On the old code no node is linked (0 of the expected 3) | Nodes are linked after each diagram is drawn, by exact match of the label with a heading. A linked node is underlined, focusable and announced as a link; a click or Enter scrolls to the heading, unfolding collapsed sections, and flashes it |
+| 15 | ~~Frontmatter `abbreviations` do nothing~~ | **Fixed 2026-10-10.** `tests/e2e/visuals.spec.mjs` › *frontmatter abbreviations become tooltips, as a map or as a list*. On the old code no tooltip is created | `applyAbbreviationTooltips` accepts both YAML shapes. The indented map, which `parseFrontmatter` turns into an empty list, is read from the document's own frontmatter |
+| 16 | ~~Diagram overlay titles are guessed by regex: any source containing "pie" is titled "Pie Chart"~~ | **Fixed 2026-10-10.** `tests/e2e/visuals.spec.mjs` › *the expanded view is titled by the type Mermaid reports*. The old code titled the kitchen sink's flowchart and sequence diagram "Diagram" | The title is the `diagramType` that `mermaid.render` returns, plus the diagram's own title when it has one ("Pie chart · Estimated effort by area") |
 | 17 | ~~A frontmatter `status:` or `date:` with no value stops the whole document from rendering, and `?file=` then shows "File not found" for a file that exists.~~ **Fixed.** Dashboard fields are coerced to text (`mdvFrontmatterText`), the dashboard build is wrapped, and `renderMarkdown` catches any render failure and shows an error block with the document's text — never a blank page, never "not found". | Was verified in Chrome. Now: `render-correctness.spec.mjs` renders `tests/fixtures/frontmatter-empty-fields.md` (empty `status:`/`date:`) and `frontmatter-odd-shapes.md`, and asserts a forced render failure shows the error block with the document text, not the not-found prompt. | Done |
+
+Before and after the visual-system change that closed issues 9, 10, 11, 13, 14, 15 and 16: [light theme](images/visuals-light-before-after.png), [diagrams in the dark theme](images/visuals-dark-diagrams-before-after.png), [code blocks and callouts](images/visuals-code-callouts-before-after.png).
 
 ### Robustness and polish
 
@@ -222,15 +224,18 @@ The final review across all docs found these gaps:
   have names and work from the keyboard; a hidden outline and the invisible `#` permalinks are out of
   the Tab order; headings are named by their own words (all covered by browser tests, in Chrome's
   accessibility tree; no screen reader was used). ARIA labels on the icon-only toolbar buttons came with stream S (checked by
-  `render-correctness.spec.mjs`). Still open: keyboard and focus handling in the diagram overlay (its Expand
-  button is invisible when focused, and the overlay neither takes nor returns the focus), the links
-  panel (its off-screen entries are tab stops), the settings panel and the comments sidebar; a skip
-  link past the outline and the minimap; the contrast of the selected search result.
+  `render-correctness.spec.mjs`). The diagram overlay was done in the visual-system change: it takes the
+  focus when it opens, keeps Tab inside it (its controls, then the nodes that link to a section), closes on
+  Esc and gives the focus back to what opened it, and its Expand button shows when it has the focus (the
+  focus return and the Tab order are covered by `visuals.spec.mjs` and `visuals-overlay.spec.mjs`). Still
+  open: the links panel (its off-screen entries are tab stops), the settings panel and the comments
+  sidebar; a skip link past the outline and the minimap; the contrast of the selected search result.
 - **Performance on large documents.** *Partly done 2026-10-10:* re-rendering a 3,000-section document
   is about 5.6 times faster, and the reading aids no longer create observers per render (numbers in
-  [Reading aids](#reading-aids-fixed-2026-10-10)). Still open: every render re-parses the whole
-  document, and `buildSectionMinimap` still creates an `IntersectionObserver` per render that is never
-  disconnected (the scroll spy now does its job, so it can be deleted).
+  [Reading aids](#reading-aids-fixed-2026-10-10)). The section rail no longer creates an
+  `IntersectionObserver` either: it was rebuilt without one, and the scroll spy is now the only code
+  that marks it (the rail's own page-lifetime scroll listener, `mdvUpdateMinimap`, was deleted too).
+  Still open: every render re-parses the whole document.
 - **Line numbers drift.** `architecture.md` cites line numbers "as of the initial import". Either
   refresh them with each change or replace them with function names.
 
@@ -238,8 +243,9 @@ The final review across all docs found these gaps:
 
 1. ~~**Make comments safe** (known issues 1–6).~~ **Done 2026-10-10**, with a browser test for each.
 2. ~~**Sanitize rendered HTML** (issue 7).~~ Done: DOMPurify + CSP + Mermaid strict (stream S), keeping HTML comments intact.
-3. **Fix the rendering bugs readers hit first:** ~~dollar signs (8)~~ done (stream S), dark-theme
-   diagrams (9), the copy button (13). Each has a verified repro above.
+3. ~~**Fix the rendering bugs readers hit first:** dollar signs (8), dark-theme diagrams (9), the copy
+   button (13).~~ Done 2026-10-10: dollar signs in stream S, dark-theme diagrams and the copy button in
+   the visual-system change. Each fix has a test, named in the table above.
 4. ~~**Decide the form factor**~~ **Done:** A + D (above). The code is split into classic scripts, and the
    desktop app is [desktop.md](desktop.md).
 5. **Build the renderer registry,** then add the first one or two visualizations from the

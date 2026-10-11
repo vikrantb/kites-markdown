@@ -213,13 +213,13 @@ function buildLinksPanel(links) {
       a.appendChild(label);
       if (type !== 'anchor') a.appendChild(url);
 
-      // Click anchor links: scroll to target
+      // A section link goes to its target as an outline entry does (see In-document links, below)
       if (type === 'anchor') {
         a.addEventListener('click', (e) => {
           e.preventDefault();
-          const target = document.getElementById(item.href.slice(1));
-          if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          const target = mdvLinkTarget(item.href);
           toggleLinksPanel();
+          if (target) mdvGoTo(target);
         });
       }
 
@@ -230,13 +230,101 @@ function buildLinksPanel(links) {
 }
 
 // ============================================
+// In-document links
+// ============================================
+// A link to a place in the document (href="#…": a heading, a footnote, any element with that id) goes there as an
+// outline entry does, through mdvGoTo (navigation.js): the folded sections around the target unfold, a closed
+// <details> around it opens, the page scrolls and the focus moves there. The browser's own jump only scrolled, and a
+// target inside a folded section has no box, so nothing happened. The links panel's section links go the same way.
+
+// The element an in-document link points at, found as the browser finds a fragment: an id equal to the fragment as
+// written, else an <a name> equal to it; then the same for the percent-decoded fragment. Only inside the document:
+// a link that names one of the viewer's own elements is left to the browser.
+function mdvLinkTarget(href) {
+  if (typeof href !== 'string' || href.length < 2 || href[0] !== '#') return null;
+  const body = document.getElementById('mdBody');
+  const raw = href.slice(1);
+  let decoded = raw;
+  try { decoded = decodeURIComponent(raw); } catch (e) { /* not valid percent-encoding: only the fragment as written */ }
+  for (const name of new Set([raw, decoded])) {
+    const byId = document.getElementById(name);
+    if (byId && body.contains(byId)) return byId;
+    const byName = body.querySelector(`a[name="${CSS.escape(name)}"]`);
+    if (byName) return byName;
+  }
+  return null;
+}
+
+// One listener for the page's lifetime. A click with a modifier key (a new tab or window) keeps the browser's
+// behaviour, and so does the "#" permalink after each heading, whose point is the address it puts in the location
+// bar. The address changes as the browser's jump changed it, so Back returns to where the reader was.
+document.getElementById('mdBody').addEventListener('click', (e) => {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const a = e.target.closest && e.target.closest('a[href^="#"]');
+  if (!a || a.classList.contains('header-anchor')) return;
+  const target = mdvLinkTarget(a.getAttribute('href'));
+  if (!target) return;
+  e.preventDefault();
+  if (location.hash !== a.hash) {
+    try { history.pushState(history.state, '', a.hash); } catch (err) { /* an address that cannot change: the jump still happens */ }
+  }
+  mdvGoTo(target);
+});
+
+// ============================================
 // Copy code
 // ============================================
-function copyCode(btn) {
-  const code = btn.closest('pre').querySelector('code');
-  navigator.clipboard.writeText(code.textContent).then(() => {
-    btn.textContent = 'Copied!'; btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+// Copies only the code (known issue 13). markdown-it wraps the highlight callback's output in its own
+// <pre><code>, so the block holds the header (language label and this button) and then the inner code element:
+// copy that inner element, never the outer one. Takes the button itself (what an inline handler used to pass) or finds it in
+// whatever a delegated listener passes (an element or an event, in any argument position).
+function copyCode(...args) {
+  let btn = null;
+  for (const a of args) {
+    if (a && a.nodeType === 1) { btn = a.closest('.copy-btn') || a; break; }
+    if (a && a.target && a.target.closest) { btn = a.target.closest('.copy-btn'); break; }
+  }
+  if (!btn || !btn.closest) return;
+  const block = btn.closest('pre') || btn.closest('.code-block');
+  if (!block) return;
+  const codes = [...block.querySelectorAll('code')].filter((c) => !c.contains(btn));
+  const code = block.querySelector('code.hljs') || codes[codes.length - 1];
+  if (!code) return;
+  const text = code.textContent.replace(/\n$/, ''); // the fence's closing newline is not part of the code
+  mdvCopyText(text).then(
+    () => mdvFlashCopyButton(btn, 'Copied!', 'copied'),
+    () => mdvFlashCopyButton(btn, 'Copy failed', 'copy-failed'),
+  );
+}
+
+const mdvCopyResetTimers = new WeakMap();
+function mdvFlashCopyButton(btn, text, cls) {
+  clearTimeout(mdvCopyResetTimers.get(btn));
+  btn.textContent = text;
+  btn.classList.remove('copied', 'copy-failed');
+  btn.classList.add(cls);
+  mdvCopyResetTimers.set(btn, setTimeout(() => {
+    btn.textContent = 'Copy';
+    btn.classList.remove('copied', 'copy-failed');
+  }, 1600));
+}
+
+// The async clipboard needs a secure context (http://localhost and file:// count); otherwise fall back to a
+// hidden textarea and the legacy copy command.
+function mdvCopyText(text) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    ta.remove();
+    if (ok) resolve(); else reject(new Error('copy refused'));
   });
 }
 

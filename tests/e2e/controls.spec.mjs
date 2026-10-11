@@ -132,13 +132,20 @@ test('overlays: shortcuts backdrop, image lightbox, diagram zoom, fit and close'
   const zoomLabel = page.locator('#diagramZoomLabel');
   await page.locator('.mermaid-wrapper .diagram-expand-btn').first().click();
   await expect(page.locator('#diagramOverlay')).toHaveClass(/show/);
-  await expect(zoomLabel).toHaveText('Fit');
+  // The overlay opens fitted to the screen (stream V): the Fit button is pressed and the label shows the scale
+  // that fits, as a percentage; Fit toggles between that and actual size.
+  const fitBtn = page.locator('#diagramFitBtn');
+  await expect(fitBtn).toHaveAttribute('aria-pressed', 'true');
+  await expect(zoomLabel).toHaveText(/^\d+%$/);
+  await fitBtn.click();
+  await expect(fitBtn).toHaveAttribute('aria-pressed', 'false');
+  await expect(zoomLabel).toHaveText('100%');
   await controls.nth(1).click();
   await expect(zoomLabel).toHaveText('125%');
   await controls.nth(0).click();
   await expect(zoomLabel).toHaveText('100%');
-  await page.locator('#diagramFitBtn').click();
-  await expect(zoomLabel).toHaveText('Fit');
+  await fitBtn.click();
+  await expect(fitBtn).toHaveAttribute('aria-pressed', 'true');
   await controls.nth(3).click();
   await expect(page.locator('#diagramOverlay')).not.toHaveClass(/show/);
 

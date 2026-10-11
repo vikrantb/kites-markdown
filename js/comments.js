@@ -335,7 +335,8 @@ function mdvAnnotateBlocks(state) {
 }
 
 // Puts a block's number and anchors on the first element of HTML that a renderer builds itself, since such HTML
-// drops token attributes: raw HTML blocks, and fences drawn by a custom renderer (Mermaid's)
+// drops token attributes: raw HTML blocks, fences drawn by a custom renderer (Mermaid's) and display formulas
+// (js/math.js draws each in a <p class="mdv-math-display">)
 function mdvWithBlockAttrs(html, token) {
   const block = token.attrGet('data-mdv-block');
   if (block == null) return html;
@@ -360,6 +361,13 @@ if (typeof md !== 'undefined' && md && md.core && md.renderer) {
     const out = mdvPrevHtmlBlock ? mdvPrevHtmlBlock(tokens, idx, options, env, self) : tokens[idx].content;
     return mdvWithBlockAttrs(out, tokens[idx]);
   };
+  // Without its number a display formula could not take a thread: the thread was saved unattached
+  const mdvPrevMathBlock = md.renderer.rules.math_block;
+  if (mdvPrevMathBlock) {
+    md.renderer.rules.math_block = function (tokens, idx, options, env, self) {
+      return mdvWithBlockAttrs(mdvPrevMathBlock(tokens, idx, options, env, self), tokens[idx]);
+    };
+  }
 }
 
 // Map of anchor id -> the element it marks
@@ -426,21 +434,10 @@ function mdvChipHost(el, anchor) {
 }
 
 // ------- Where a new thread's marker goes -------
-// True when the text markdown-it renders (after math pre-processing) has the same top-level blocks as the
-// source, so a rendered block's number is also its index in the source.
-function mdvSameBlocks(body, blocks) {
-  if (typeof renderMath !== 'function') return true;
-  let processed;
-  try { processed = renderMath(body); } catch (e) { return false; }
-  if (processed === body) return true;
-  const rendered = mdvParseMarkdown(processed);
-  if (!rendered) return false;
-  const other = mdvTopBlocks(rendered);
-  return other.length === blocks.length && other.every((t, i) => t.type === blocks[i].type && t.tag === blocks[i].tag);
-}
-
 // Returns {offset, index}: the source offset of the line where the top-level block holding `elem` begins,
 // and that block's number. A marker there never splits a list, a table or a quote. Null when unknown.
+// The page's block numbers come from the same markdown-it parse of the same body (math is one of its rules), so a
+// rendered block's number is its index in mdvTopBlocks here.
 function mdvLocateInsertion(elem) {
   const src = String(mdvDocText || '');
   const parts = mdvSplitFrontmatter(src);
@@ -453,9 +450,10 @@ function mdvLocateInsertion(elem) {
   let target = null;
   // A fenced code block carries the number on the <code> inside its <pre>
   const top = elem && elem.closest ? (elem.closest('[data-mdv-block]') || elem.querySelector(':scope > [data-mdv-block]')) : null;
-  if (top && mdvSameBlocks(parts.body, blocks)) {
+  if (top) {
     const t = blocks[Number(top.getAttribute('data-mdv-block'))];
-    const tagOk = t && (t.type === 'fence' || t.type === 'code_block' || t.type === 'html_block' || t.tag === top.tagName.toLowerCase());
+    const tagOk = t && (t.type === 'fence' || t.type === 'code_block' || t.type === 'html_block' || t.type === 'math_block' ||
+      t.tag === top.tagName.toLowerCase());
     if (t && t.map && tagOk) target = t;
   }
   if (!target) {
@@ -1412,7 +1410,8 @@ function mdvRenderSidebar() {
       if (quote) {
         quote.style.cursor = 'pointer';
         quote.title = 'Show in the document';
-        quote.addEventListener('click', () => host.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+        // As a search result shows its block (mdvGoTo, navigation.js): unfolded if folded, centred, flashed
+        quote.addEventListener('click', () => mdvGoTo(host, { flash: true }));
       }
     }
   });
