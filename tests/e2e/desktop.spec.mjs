@@ -148,6 +148,12 @@ test.describe('in a browser', () => {
     await page.locator('#dropZone .drop-btn').click();
     await chooser;
   });
+
+  test('a bridge installed before the page scripts is kept (the comment tests stand in for the app this way)', async ({ page }) => {
+    await page.addInitScript(() => { window.mdvHost = { kind: 'desktop', currentPath: '/docs/plan.md', currentMtimeMs: 5, stand: 'in' }; });
+    await page.goto('markdown-viewer.html');
+    expect(await page.evaluate(() => [mdvHost.kind, mdvHost.stand, mdvHost.currentPath])).toEqual(['desktop', 'in', '/docs/plan.md']);
+  });
 });
 
 test.describe('in the desktop app (stand-in shell)', () => {

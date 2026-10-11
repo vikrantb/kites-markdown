@@ -25,6 +25,8 @@
   const tauri = window.__TAURI_INTERNALS__ && window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__ : null;
 
   if (!tauri) {
+    // A bridge installed before the page's scripts ran (the comment tests' stand-in for the app) is kept.
+    if (window.mdvHost) return;
     const none = () => Promise.resolve(null);
     window.mdvHost = {
       kind: 'browser',
