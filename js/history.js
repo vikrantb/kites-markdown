@@ -1,55 +1,70 @@
 // ============================================
-// Back and forward between documents, and links that open in the viewer
+// Back and forward between documents
 // ============================================
-// A reader follows a link from a handoff to the plan it names, reads, and comes back. Each document shown is a
-// place in the browser's own history, so the address, the browser's Back and Forward buttons and these agree:
-//   - Alt+← and Alt+→ and the two toolbar buttons (data-action history-back / history-forward). They move
-//     through the browser's history, one step at a time: after an in-document link (js/links.js), Back first
-//     returns to where the reader was in the same document, as the browser's own Back does.
-//   - A document comes back as the reader left it, at the same place (the seam restores the position taken
-//     when it was left); live reload (js/live-reload.js) then looks at once whether its file changed since.
-//   - A relative link to a Markdown file opens inside the viewer, through the load seam (mdvOpenDocument):
-//       a folder is open (window.mdvFolder)   mdvFolder.resolve, then mdvFolder.read
-//       the desktop app                       mdvHost.readDocument, in the same window (Cmd/Ctrl-click opens
-//                                             it in a window of its own: js/host.js)
-//       a page served over http(s)            fetch, relative to the document's own address (Cmd/Ctrl-click
-//                                             opens the viewer in a new tab)
-//       otherwise (a file:// page)            the browser's own behaviour
-//     A link to the document on screen with a #fragment goes there, as an in-document link does.
+// A reader follows a link from a handoff to the plan it names, reads, and comes back. Each document shown is a place
+// in the tab's own history, so the address, the browser's Back and Forward and these agree.
 //
-// Documents opened any other way (the comment code's writable open, the desktop bridge) are followed too: the
-// seam reports every document shown (mdvOnDocumentOpening / mdvOnDocumentOpened, js/files.js).
+//   - The toolbar's ‹ and ›, Alt+← and Alt+→, and the desktop app's Go menu (⌘[ and ⌘] on a Mac) go to the previous
+//     or next DOCUMENT. They step over the places inside the document on screen (an in-document link, a "#"
+//     permalink), and each button names the document it goes to. The browser's own Back and Forward (and its ⌘[ and
+//     ⌘]) still move one place at a time.
+//   - A document comes back as the reader left it: at the same words (js/reading-place.js), with the focus on the link
+//     they followed out of it, and with the comment changes it had, still unsaved (so live reload asks before it
+//     replaces them). Its file is read again first, so the version on disk now is the one shown; when it changed
+//     since, a note says so.
+//   - The tab keeps its places across a reload of the page: they are written to sessionStorage, so Back and Forward
+//     still name and reach them (a document opened through a handle cannot be read again after a reload, and says so).
+//
+// Every place this page makes in the tab's history carries a state {mdvDoc: {id, n, kind, path, name}}: the document
+// (id) and the place's position in the tab's history (n, counted from the first place this page saw). The places in
+// one document share its id. js/links.js makes an in-document place with mdvHistoryPushPlace; a place the browser
+// makes itself (the "#" permalink after a heading) is named when it arrives. A page that shows one document and is
+// never navigated does not touch the tab's history at all.
+//
+// Links that open in the viewer are js/document-links.js.
 
-const MDV_MARKDOWN_FILE = /\.(?:md|markdown|mdown|mkd|mkdn|mdwn|mdtxt|mdtext)$/i;
-// The documents whose text stays in memory, nearest the current one first; the others are read again from
-// their file when the reader returns to them (pasted text cannot be, so it always stays)
+// The documents whose text stays in memory, nearest the current one first; the others are read again from their file
+// when the reader returns to them (pasted text, and text with unsaved comment changes, always stays)
 const MDV_HISTORY_TEXTS = 40;
+// Back reads the file again before showing it; past this, the kept text is shown and live reload follows
+const MDV_HISTORY_FRESH_MS = 600;
+// A document that is no longer kept in memory may take longer to read
+const MDV_HISTORY_READ_MS = 10000;
+const MDV_HISTORY_STORE = 'mdv-history';
+const MDV_HISTORY_POSITIONS = 120; // places kept in sessionStorage around the current one
 
 const mdvHistory = {
-  entries: new Map(), // id → {id, doc, position}: a document and the reader's place in it when they left it
-  order: [],          // entry ids in the order of the browser's history, as far as this page has seen it
-  index: -1,          // where the document on screen sits in `order`
+  docs: new Map(),   // id → {id, doc, position, link, unsaved}: a document shown in this tab, as the reader left it
+  order: [],         // tab history position → document id, as far as this page knows (in-document places repeat it)
+  index: -1,         // the tab's position now (Back moves it at once; its document follows once it is read)
+  shown: null,       // the id of the document on screen
   seq: 0,
-  going: null,        // the latest Back/Forward or link being followed; an older one that finishes later gives way
+  going: null,       // the latest Back/Forward or link being followed; an older one that finishes later gives way
+  leaving: null,     // {href, nth}: the link the reader is following out of the document on screen
+  fragment: false,   // the browser is making an in-document place of its own (a "#" permalink was clicked)
 };
 
-function mdvHistoryCurrent() {
-  const id = mdvHistory.order[mdvHistory.index];
-  return id ? mdvHistory.entries.get(id) || null : null;
-}
+function mdvHistoryRecord() { return mdvHistory.shown ? mdvHistory.docs.get(mdvHistory.shown) || null : null; }
 
 // Ids stay unique across page reloads: the browser keeps the states of entries made before one
 function mdvHistoryNewId() { return 'd' + Date.now().toString(36) + '-' + (++mdvHistory.seq).toString(36); }
 
-// What the browser keeps for an entry: enough to read the document again after the page reloads
-function mdvHistoryState(entry, n) {
-  const d = entry.doc;
-  return { mdvDoc: { id: entry.id, n, kind: d.kind, path: d.path || null, name: d.name } };
+function mdvHistoryAdd(doc, id) {
+  const record = { id: id || mdvHistoryNewId(), doc, position: null, link: null, unsaved: false };
+  mdvHistory.docs.set(record.id, record);
+  return record;
 }
 
-// The address of a document's entry: ?file= names it where a reload of the page can load it again (a ?file=
-// link over http; the name of a chosen or dropped file and "pasted", as the viewer always wrote them). A file
-// opened through a handle has no such address: without ?file=, a reload reopens the last file.
+// What the browser keeps for a place: enough to read its document again after the page reloads
+function mdvHistoryState(id, n) {
+  const record = mdvHistory.docs.get(id);
+  const d = record ? record.doc : {};
+  return { mdvDoc: { id, n, kind: d.kind, path: d.path || null, name: d.name } };
+}
+
+// The address of a document's place: ?file= names it where a reload of the page can load it again (a ?file= link
+// over http; the name of a chosen or dropped file and "pasted", as the viewer always wrote them). A file opened
+// through a handle has no such address: without ?file=, a reload reopens the last file.
 function mdvHistoryUrl(doc, { first = false, fragment = null } = {}) {
   const url = new URL(location.href);
   if (first && !(doc.kind === 'file' || doc.kind === 'pasted')) return url.href;
@@ -68,75 +83,103 @@ function mdvHistoryWrite(method, state, url) {
   }
 }
 
-function mdvHistoryAdd(doc) {
-  const entry = { id: mdvHistoryNewId(), doc, position: null };
-  mdvHistory.entries.set(entry.id, entry);
-  return entry;
-}
-
-// The tab's current entry is named after its document only when the reader leaves it, so a page that only shows
-// one document never touches the tab's history (a fragment link's entries copy the state it then has)
-function mdvHistoryTag(entry) {
+// The tab's place now names its document, so the browser's Back and Forward find it. Done only when the reader moves
+// on from it, so a page that only shows one document never touches the tab's history.
+function mdvHistoryTagHere() {
+  const id = mdvHistory.order[mdvHistory.index] || mdvHistory.shown;
+  if (!id || mdvHistory.index < 0) return;
   const st = history.state && history.state.mdvDoc;
-  if (st && st.id === entry.id) return;
-  mdvHistoryWrite('replaceState', Object.assign({}, history.state, mdvHistoryState(entry, mdvHistory.index)), location.href);
+  if (st && st.id === id && st.n === mdvHistory.index) return;
+  mdvHistory.order[mdvHistory.index] = id;
+  mdvHistoryWrite('replaceState', Object.assign({}, history.state, mdvHistoryState(id, mdvHistory.index)), location.href);
 }
 
-// Just before a document replaces the page (the old one is still on screen): the browser keeps the old entry's
-// scroll position as it moves on, and the old entry keeps the reader's place and the document as they leave it.
+// A new place after the one on screen: the browser drops the places that were after it
+function mdvHistoryMoveTo(n, id) {
+  mdvHistory.order = mdvHistory.order.slice(0, n);
+  mdvHistory.order[n] = id;
+  mdvHistory.index = n;
+}
+
+// An in-document place (js/links.js, and a link to the document on screen): a new place of the same document
+function mdvHistoryPushPlace(hash) {
+  const id = mdvHistory.shown;
+  if (!id || mdvHistory.index < 0) {
+    try { history.pushState(history.state, '', hash); } catch (e) { /* the jump still happens */ }
+    return;
+  }
+  mdvHistoryTagHere();
+  mdvHistoryMoveTo(mdvHistory.index + 1, id);
+  mdvHistoryWrite('pushState', mdvHistoryState(id, mdvHistory.index), hash);
+  mdvHistoryChanged();
+}
+
+// The browser made an in-document place itself (a "#" permalink): it is named as one of the document on screen
+function mdvHistoryNoteFragment() {
+  if (!mdvHistory.fragment) return;
+  mdvHistory.fragment = false;
+  const id = mdvHistory.shown;
+  if (!id || mdvHistory.index < 0 || (history.state && history.state.mdvDoc)) return;
+  mdvHistoryMoveTo(mdvHistory.index + 1, id);
+  mdvHistoryWrite('replaceState', Object.assign({}, history.state, mdvHistoryState(id, mdvHistory.index)), location.href);
+  mdvHistoryChanged();
+}
+
+// Comment work not in the file yet, as the reader leaves a document (js/live-reload.js reads the comment code's state)
+function mdvHistoryUnsavedNow() { return typeof mdvCommentWorkUnsaved === 'function' ? mdvCommentWorkUnsaved() : false; }
+
+// Just before a document replaces the page (the old one is still on screen): the record of the one being left keeps
+// the reader's place, the link they followed, and its text as it is now, with any comment changes
 mdvOnDocumentOpening((event) => {
   if (event.kind === 'first' || event.kind === 'reload') return;
-  let out = mdvHistoryCurrent();
+  let out = mdvHistoryRecord();
   if (!out && event.previous) {
-    // A document that was on screen before the viewer followed renders (the #demo page) gets the page's entry
+    // A document that was on screen before the viewer followed renders (the #demo page) gets the page's place
     out = mdvHistoryAdd(event.previous);
     mdvHistory.order = [out.id];
     mdvHistory.index = 0;
+    mdvHistory.shown = out.id;
   }
   if (out) {
     out.position = event.position;
-    // With the comment changes made since it opened, as it is on screen now
-    if (typeof event.previousText === 'string') out.doc = Object.assign({}, out.doc, { text: event.previousText });
+    out.link = event.kind === 'open' ? mdvHistory.leaving : null;
+    out.unsaved = mdvHistoryUnsavedNow();
+    if (typeof event.previousText === 'string' && event.previousText !== out.doc.text) {
+      const sourceText = typeof out.doc.sourceText === 'string' ? out.doc.sourceText : out.doc.text;
+      out.doc = Object.assign({}, out.doc, { text: event.previousText, sourceText });
+    }
   }
+  mdvHistory.leaving = null;
   if (event.kind === 'history') {
     const { id, n } = event.history;
-    if (!mdvHistory.entries.has(id)) mdvHistory.entries.set(id, { id, doc: event.doc, position: null });
+    if (!mdvHistory.docs.has(id)) mdvHistoryAdd(event.doc, id);
     mdvHistory.order[n] = id;
     mdvHistory.index = n;
+    mdvHistory.shown = id;
     return;
   }
   const entry = mdvHistoryAdd(event.doc);
+  mdvHistory.shown = entry.id;
   if (event.push && out) {
-    mdvHistoryTag(out);
-    mdvHistory.order = mdvHistory.order.slice(0, mdvHistory.index + 1);
-    mdvHistory.order.push(entry.id);
-    mdvHistory.index = mdvHistory.order.length - 1;
-    mdvHistoryWrite('pushState', mdvHistoryState(entry, mdvHistory.index), mdvHistoryUrl(event.doc, { fragment: event.fragment }));
+    mdvHistoryTagHere();
+    mdvHistoryMoveTo(mdvHistory.index + 1, entry.id);
+    mdvHistoryWrite('pushState', mdvHistoryState(entry.id, mdvHistory.index), mdvHistoryUrl(event.doc, { fragment: event.fragment }));
   } else {
     if (mdvHistory.index < 0) mdvHistory.index = 0;
     mdvHistory.order[mdvHistory.index] = entry.id;
-    mdvHistoryWrite('replaceState', mdvHistoryState(entry, mdvHistory.index), mdvHistoryUrl(event.doc, { fragment: event.fragment }));
+    mdvHistoryWrite('replaceState', mdvHistoryState(entry.id, mdvHistory.index), mdvHistoryUrl(event.doc, { fragment: event.fragment }));
   }
 });
 
-// Once it is on screen: the entry holds the document as shown
+// Once it is on screen: the record holds the document as shown
 mdvOnDocumentOpened((event) => {
-  if (event.kind === 'first') {
-    // The page's own entry is this document's (named when the reader leaves it). After a reload of the page it
-    // keeps its place among the entries the tab kept.
-    const prior = history.state && history.state.mdvDoc;
-    const entry = mdvHistoryAdd(event.doc);
-    const n = prior && Number.isInteger(prior.n) ? prior.n : 0;
-    mdvHistory.order = [];
-    mdvHistory.order[n] = entry.id;
-    mdvHistory.index = n;
-    // A chosen, dropped or pasted document names itself in the address, as the viewer always did
-    if (event.doc.kind === 'file' || event.doc.kind === 'pasted') {
-      mdvHistoryWrite('replaceState', Object.assign({}, history.state, mdvHistoryState(entry, n)), mdvHistoryUrl(event.doc, { first: true }));
+  if (event.kind === 'first') mdvHistoryFirst(event.doc);
+  else {
+    const record = mdvHistoryRecord();
+    if (record) {
+      record.doc = event.doc;
+      if (event.kind !== 'history') record.unsaved = false;
     }
-  } else {
-    const entry = mdvHistoryCurrent();
-    if (entry) entry.doc = event.doc;
   }
   // A link's tooltip (js/links.js) names a link of the document that was replaced: the pointer that rested on
   // the link that was followed never left it, so nothing else would hide it
@@ -144,84 +187,217 @@ mdvOnDocumentOpened((event) => {
     const tip = document.getElementById('linkTooltip');
     if (tip) tip.classList.remove('visible');
   }
-  mdvHistoryTrim();
-  mdvHistoryButtons();
+  mdvHistoryChanged();
 });
 
-// Entries the browser dropped (a new document after going back) go; far ones keep only where to read them from
+// The first document of the page. After a reload of the page, the tab's place on screen still names a document: when
+// it is this one, the place keeps its id (the in-document places after it carry that id too), and the places the tab
+// kept come back from sessionStorage.
+function mdvHistoryFirst(doc) {
+  const prior = history.state && history.state.mdvDoc;
+  const n = prior && Number.isInteger(prior.n) && prior.n >= 0 ? prior.n : 0;
+  const same = !!prior && typeof prior.id === 'string' && prior.name === doc.name && (prior.path || null) === (doc.path || null);
+  mdvHistory.docs = new Map();
+  mdvHistory.order = [];
+  if (prior && typeof prior.id === 'string') mdvHistoryLoad(prior);
+  const record = (same && mdvHistory.docs.get(prior.id)) || mdvHistoryAdd(doc, same ? prior.id : null);
+  record.doc = doc;
+  mdvHistory.order[n] = record.id;
+  mdvHistory.index = n;
+  mdvHistory.shown = record.id;
+  // A chosen, dropped or pasted document names itself in the address, as the viewer always did
+  if (doc.kind === 'file' || doc.kind === 'pasted') {
+    mdvHistoryWrite('replaceState', Object.assign({}, history.state, mdvHistoryState(record.id, n)), mdvHistoryUrl(doc, { first: true }));
+  }
+}
+
+// ------- Keeping the places across a reload of the page -------
+function mdvHistorySave() {
+  const { order, index } = mdvHistory;
+  if (index < 0) return;
+  const from = Math.max(0, index - MDV_HISTORY_POSITIONS / 2);
+  const kept = order.map((id, n) => (n >= from && n < from + MDV_HISTORY_POSITIONS ? id || null : null));
+  const docs = {};
+  for (const id of kept) {
+    const r = id && mdvHistory.docs.get(id);
+    if (r && !docs[id]) {
+      const d = r.doc || {};
+      docs[id] = { doc: { kind: d.kind, path: d.path || null, name: d.name, title: d.title || null }, position: r.position || null, link: r.link || null };
+    }
+  }
+  try { sessionStorage.setItem(MDV_HISTORY_STORE, JSON.stringify({ v: 1, order: kept, docs })); } catch (e) { /* storage off: only this page's life */ }
+}
+
+function mdvHistoryLoad(prior) {
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem(MDV_HISTORY_STORE) || 'null'); } catch (e) { saved = null; }
+  if (!saved || saved.v !== 1 || !Array.isArray(saved.order) || saved.order[prior.n] !== prior.id || !saved.docs) return;
+  mdvHistory.order = saved.order.map((id) => (typeof id === 'string' && saved.docs[id] ? id : undefined));
+  for (const [id, r] of Object.entries(saved.docs)) {
+    if (!r || !r.doc) continue;
+    const record = mdvHistoryAdd(Object.assign({}, r.doc, { path: r.doc.path || null }), id);
+    record.position = r.position || null;
+    record.link = r.link || null;
+  }
+}
+
+// After every change: the far texts go, the buttons follow, and the places are written down
+function mdvHistoryChanged() {
+  mdvHistoryTrim();
+  mdvHistoryButtons();
+  mdvHistorySave();
+}
+
+// Records of places the browser dropped (a new document after going back) go; far ones keep only where to read them from
 function mdvHistoryTrim() {
   const live = new Set(mdvHistory.order.filter(Boolean));
-  for (const id of [...mdvHistory.entries.keys()]) if (!live.has(id)) mdvHistory.entries.delete(id);
+  for (const id of [...mdvHistory.docs.keys()]) if (!live.has(id)) mdvHistory.docs.delete(id);
   const near = new Set();
   for (let d = 0; near.size < MDV_HISTORY_TEXTS && d < mdvHistory.order.length; d++) {
     for (const j of [mdvHistory.index - d, mdvHistory.index + d]) if (mdvHistory.order[j]) near.add(mdvHistory.order[j]);
   }
-  for (const [id, entry] of mdvHistory.entries) {
-    const d = entry.doc;
-    if (near.has(id) || !d || typeof d.text !== 'string') continue;
+  for (const [id, record] of mdvHistory.docs) {
+    const d = record.doc;
+    if (near.has(id) || record.unsaved || !d || typeof d.text !== 'string') continue;
     const readable = !!d.handle || (!!d.path && (d.kind === 'http' || d.kind === 'desktop' || d.kind === 'folder'));
-    if (readable) entry.doc = Object.assign({}, d, { text: undefined });
+    if (readable) record.doc = Object.assign({}, d, { text: undefined, sourceText: undefined });
   }
 }
 
 // ------- Going back and forward -------
-function mdvHistoryBack() {
-  if (mdvHistory.index <= 0) return false; // nothing before: Alt+← stays the browser's
-  history.back();
+// The nearest place before (dir -1) or after (+1) that belongs to another document: {n, record}, or {n, record: null}
+// for a place this page does not know (one from before a reload of the page), or null
+function mdvHistoryTarget(dir) {
+  const { order, index } = mdvHistory;
+  if (index < 0) return null;
+  const here = mdvHistory.shown || order[index];
+  for (let n = index + dir; n >= 0 && (dir < 0 || n < order.length); n += dir) {
+    const id = order[n];
+    if (!id) return { n, record: null };
+    if (id !== here) return { n, record: mdvHistory.docs.get(id) || null };
+  }
+  return null;
+}
+
+function mdvHistoryGo(dir) {
+  const target = mdvHistoryTarget(dir);
+  if (!target) return false; // nothing there: Alt+← and the like stay the browser's
+  history.go(target.n - mdvHistory.index);
   return true;
 }
-function mdvHistoryForward() {
-  if (mdvHistory.index < 0 || mdvHistory.index >= mdvHistory.order.length - 1) return false;
-  history.forward();
-  return true;
-}
+function mdvHistoryBack() { return mdvHistoryGo(-1); }
+function mdvHistoryForward() { return mdvHistoryGo(1); }
 
 window.addEventListener('popstate', (e) => {
   const st = e.state && e.state.mdvDoc;
-  if (!st) return;
-  const current = mdvHistoryCurrent();
-  if (current && current.id === st.id) return; // a place in the same document (an in-document link): the browser's
-  mdvHistoryShow(st);
+  if (!st) { mdvHistoryNoteFragment(); return; }
+  const from = mdvHistory.index;
+  if (Number.isInteger(st.n)) { mdvHistory.order[st.n] = st.id; mdvHistory.index = st.n; }
+  // A place in the document on screen: the browser scrolls there
+  if (st.id === mdvHistory.shown) { mdvHistoryChanged(); return; }
+  mdvHistoryShow(st, from);
+});
+window.addEventListener('hashchange', mdvHistoryNoteFragment);
+
+// The "#" permalink after a heading is the browser's own jump; the place it makes is named when it arrives
+document.addEventListener('click', (e) => {
+  const a = e.target && e.target.closest ? e.target.closest('#mdBody a.header-anchor[href^="#"]') : null;
+  if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  if (location.hash === a.hash) return;
+  mdvHistoryTagHere();
+  mdvHistory.fragment = true;
 });
 
-async function mdvHistoryShow(st) {
+// Back or Forward moved the tab to a place of another document (`from` is where it was): that document is read and shown
+async function mdvHistoryShow(st, from) {
   const going = mdvHistory.going = {};
-  const entry = mdvHistory.entries.get(st.id);
-  let doc = entry ? entry.doc : null;
-  // A document no longer kept in memory, or one from before the page was reloaded, is read again
-  if (!doc || (typeof doc.text !== 'string' && !doc.handle)) {
-    doc = await mdvHistoryRead(doc || st);
+  const record = mdvHistory.docs.get(st.id) || null;
+  const kept = record && record.doc && typeof record.doc.text === 'string' ? record.doc : null;
+  let doc = kept;
+  let readAgain = false;
+  // The version on disk now, unless the reader left comment changes in the kept text: those stay, and live reload asks
+  // before it replaces them
+  if (!(kept && record.unsaved)) {
+    const fresh = await mdvHistoryRead(record && record.doc ? record.doc : st, kept ? MDV_HISTORY_FRESH_MS : MDV_HISTORY_READ_MS);
     if (mdvHistory.going !== going) return; // the reader went somewhere else meanwhile
+    if (fresh) {
+      readAgain = true;
+      doc = Object.assign({}, record ? record.doc : null, fresh);
+      if (typeof fresh.text === 'string') doc.sourceText = fresh.text;
+    }
   }
   if (!doc) {
     mdvHistoryProblem(st.name || 'That document', 'it can no longer be opened from here');
-    mdvHistoryReturn(st);
+    mdvHistoryReturn(st, from);
     return;
   }
-  const shown = await mdvOpenDocument(doc, { push: false, history: { id: st.id, n: st.n }, position: entry ? entry.position : null });
-  if (shown || mdvHistory.going !== going) return;
-  mdvHistoryProblem(doc.name, 'it could not be read');
-  mdvHistoryReturn(st);
+  const opens = mdvOpenSeq;
+  const shown = await mdvOpenDocument(doc, { push: false, history: { id: st.id, n: st.n }, position: record ? record.position : null });
+  if (mdvHistory.going !== going) return;
+  if (!shown) {
+    if (mdvOpenSeq !== opens + 1) return; // a newer open overtook this one
+    mdvHistoryProblem(doc.name, 'it could not be read');
+    mdvHistoryReturn(st, from);
+    return;
+  }
+  // Its comment changes are still not in its file: the comment code says so again, and live reload asks before it
+  // replaces them
+  if (record && record.unsaved && typeof doc.text === 'string' && rawMarkdown === doc.text && typeof mdvDirty !== 'undefined') {
+    mdvDirty = true;
+    record.unsaved = true;
+  }
+  // The file changed while the reader was away
+  const left = kept && (typeof kept.sourceText === 'string' ? kept.sourceText : kept.text);
+  if (readAgain && typeof left === 'string' && rawMarkdown !== left && typeof mdvLiveToast === 'function') mdvLiveToast('Updated since you left');
+  mdvHistoryFocus(record);
 }
 
-// The browser moved to an entry whose document could not be shown: it moves back to the one on screen, so the
-// address and the buttons never name a document the page does not show (that popstate names the current entry)
-function mdvHistoryReturn(st) {
-  const here = mdvHistory.index;
-  if (here >= 0 && Number.isInteger(st.n) && st.n !== here) history.go(here - st.n);
+// The focus goes back to the link the reader followed out of the document, or to the words they are back at, so
+// Tab goes on from there
+function mdvHistoryFocus(record) {
+  const body = document.getElementById('mdBody');
+  if (!body) return;
+  const link = record && record.link && typeof mdvFindLink === 'function' ? mdvFindLink(record.link) : null;
+  if (link) { link.focus({ preventScroll: true }); return; }
+  const place = typeof mdvBlockAtLine === 'function' ? mdvBlockAtLine(body, mdvToolbarHeight() + 8) : null;
+  const el = place || body.querySelector('h1, h2, h3, h4, h5, h6') || body;
+  if (typeof mdvFocusInDocument === 'function') mdvFocusInDocument(el);
 }
 
-// Reads a document again from where it came from: {kind, path, name}
-async function mdvHistoryRead(src) {
+// The browser moved to a place whose document could not be shown: it moves back to where it was, so the address and
+// the buttons never name a document the page does not show (that popstate names a place of the document on screen)
+function mdvHistoryReturn(st, from) {
+  if (!(from >= 0) || !Number.isInteger(st.n) || st.n === from || mdvHistory.index !== st.n) return;
+  history.go(from - st.n);
+}
+
+// Reads a document again from where it came from ({kind, path, name, handle}), within `ms`: a document, or null.
+// A file with a handle is read by the load seam itself (through the comment code), so it comes back without text.
+async function mdvHistoryRead(src, ms) {
   try {
-    if (src.kind === 'http' && src.path) return await mdvFetchDocument(new URL(src.path, location.href), src.path);
+    if (src.handle) return Object.assign({}, src, { text: undefined, sourceText: undefined });
+    if (src.kind === 'http' && src.path) return await mdvFetchDocument(new URL(src.path, location.href), src.path, ms);
     if (src.kind === 'desktop' && src.path && window.mdvHost && typeof window.mdvHost.readDocument === 'function') {
-      return mdvFromDesktop(await window.mdvHost.readDocument(src.path));
+      return mdvFromDesktop(await mdvWithin(window.mdvHost.readDocument(src.path), ms));
     }
     const folder = window.mdvFolder;
-    if (src.path && folder && folder.kind && typeof folder.read === 'function') return await folder.read(src.path);
-  } catch (e) { /* gone, or unreadable */ }
+    if (src.path && folder && folder.kind && typeof folder.read === 'function') return await mdvWithin(folder.read(src.path), ms);
+  } catch (e) { /* gone, unreadable, or too slow */ }
   return null;
+}
+
+// Resolves as `promise` does, or rejects after `ms`
+function mdvWithin(promise, ms) {
+  if (!(ms > 0)) return promise;
+  let timer = 0;
+  const late = new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error('it took too long')), ms); });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+function mdvHistoryProblem(name, why) {
+  const text = `${name} could not be opened: ${why}.`;
+  if (typeof mdvShowToast === 'function') mdvShowToast(text, 'error');
+  else console.warn(text);
 }
 
 // ------- The toolbar's Back and Forward -------
@@ -229,23 +405,21 @@ function mdvHistoryKeyNames() {
   return (typeof MDV_IS_MAC !== 'undefined' && MDV_IS_MAC) ? ['⌥←', '⌥→'] : ['Alt+←', 'Alt+→'];
 }
 
-// Shown once there is somewhere to go; each names where it goes
+// Shown once there is somewhere to go; each names the document it goes to
 function mdvHistoryButtons() {
   const nav = document.getElementById('mdvHistoryNav');
   const back = document.getElementById('mdvBackBtn');
   const forward = document.getElementById('mdvForwardBtn');
   if (!nav || !back || !forward) return;
-  const { order, index, entries } = mdvHistory;
-  const canBack = index > 0;
-  const canForward = index >= 0 && index < order.length - 1;
-  const before = canBack ? entries.get(order[index - 1]) : null;
-  const after = canForward ? entries.get(order[index + 1]) : null;
+  const before = mdvHistoryTarget(-1);
+  const after = mdvHistoryTarget(1);
   const keys = mdvHistoryKeyNames();
-  nav.hidden = !canBack && !canForward;
-  back.disabled = !canBack;
-  forward.disabled = !canForward;
-  const backName = before ? 'Back to ' + before.doc.name : 'Back';
-  const forwardName = after ? 'Forward to ' + after.doc.name : 'Forward';
+  nav.hidden = !before && !after;
+  back.disabled = !before;
+  forward.disabled = !after;
+  const name = (t) => (t && t.record && t.record.doc && t.record.doc.name) || '';
+  const backName = name(before) ? 'Back to ' + name(before) : 'Back';
+  const forwardName = name(after) ? 'Forward to ' + name(after) : 'Forward';
   back.setAttribute('aria-label', backName);
   forward.setAttribute('aria-label', forwardName);
   back.title = `${backName} (${keys[0]})`;
@@ -264,164 +438,3 @@ document.addEventListener('DOMContentLoaded', () => {
   mdvRegisterShortcut('Alt+ArrowRight', () => mdvHistoryForward(), 'Forward to the next document');
   mdvHistoryButtons();
 });
-
-// ------- Links that open in the viewer -------
-// A link in the document (or in the links panel) to a Markdown file, written as a path: {href, path, fragment}.
-// href is the link without its #fragment; path is the file's path, percent-decoded. A web, mail or file: URL,
-// an in-document link and a link to any other kind of file are not one.
-function mdvMarkdownLink(raw) {
-  const href = String(raw == null ? '' : raw).trim();
-  if (!href || href.startsWith('#') || href.startsWith('//')) return null;
-  const windows = /^[a-zA-Z]:[\\/]/.test(href) || /^\\\\[^\\]/.test(href);
-  if (!windows && /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(href)) return null;
-  const hash = href.indexOf('#');
-  const fragment = hash >= 0 ? href.slice(hash + 1) : '';
-  const rest = hash >= 0 ? href.slice(0, hash) : href;
-  const query = rest.indexOf('?');
-  let path = query >= 0 ? rest.slice(0, query) : rest;
-  if (!windows) {
-    try { path = decodeURIComponent(path); } catch (e) { /* not valid percent-encoding: as written */ }
-  }
-  if (!path || !MDV_MARKDOWN_FILE.test(path)) return null;
-  return { href: rest, path, fragment };
-}
-
-// How a link opens in the viewer: {kind, path, same, read()}, or null to leave it to the browser (or the bridge)
-function mdvPlanLink(link) {
-  const shown = mdvShownDocument();
-  const folder = window.mdvFolder;
-  if (folder && folder.kind && typeof folder.resolve === 'function' && typeof folder.read === 'function' && (!shown || shown.kind !== 'http')) {
-    let path = null;
-    try { path = folder.resolve(shown ? shown.path : null, link.href); } catch (e) { path = null; }
-    if (path) {
-      const same = !!shown && !!shown.path && mdvSamePath(path, shown.path, shown.kind);
-      return { kind: 'folder', path, same, read: () => folder.read(path) };
-    }
-  }
-  const host = window.mdvHost;
-  if (mdvInDesktopApp()) {
-    if (typeof host.resolvePath !== 'function' || typeof host.readDocument !== 'function') return null;
-    // Resolved against the document on screen: the bridge follows it (mdvPointBridgeAt). With no folder to resolve
-    // against (pasted text), js/host.js says so.
-    const abs = host.resolvePath(link.path);
-    if (!abs) return null;
-    const same = !!shown && !!shown.path && mdvSamePath(abs, shown.path, 'desktop');
-    return { kind: 'desktop', path: abs, same, read: async () => mdvFromDesktop(await host.readDocument(abs)) };
-  }
-  if (/^https?:$/.test(location.protocol)) {
-    const base = shown && shown.kind === 'http' && shown.path ? new URL(shown.path, location.href) : new URL(location.href);
-    let url;
-    try { url = new URL(link.href, base); } catch (e) { return null; }
-    if (url.origin !== location.origin) return null;
-    url.hash = '';
-    const path = mdvPagePath(url);
-    const same = !!shown && shown.kind === 'http' && mdvSamePath(path, shown.path, 'http');
-    return { kind: 'http', path, url, same, read: () => mdvFetchDocument(url, path) };
-  }
-  return null;
-}
-
-// The ?file= value that loads `url`: relative to the viewer's folder when it is inside it
-function mdvPagePath(url) {
-  const folder = new URL('.', location.href).pathname;
-  let path = url.pathname.startsWith(folder) ? url.pathname.slice(folder.length) : url.pathname;
-  try { path = decodeURIComponent(path); } catch (e) { /* as written */ }
-  return path + url.search;
-}
-
-function mdvBaseName(path) {
-  let name = String(path).split(/[\\/]/).pop();
-  try { name = decodeURIComponent(name); } catch (e) { /* as written */ }
-  return name;
-}
-
-async function mdvFetchDocument(url, path) {
-  const resp = await fetch(url, { cache: 'no-store' });
-  if (!resp.ok) throw new Error(resp.status === 404 ? 'it was not found' : 'the server answered ' + resp.status);
-  const text = await resp.text();
-  return { name: mdvBaseName(url.pathname), text, path, kind: 'http', fetchedText: text };
-}
-
-// A document the desktop bridge read: {path, name, text, mtimeMs, version, …}
-function mdvFromDesktop(d) {
-  if (!d || typeof d.text !== 'string') throw new Error('it could not be read');
-  return { name: d.name, text: d.text, path: d.path, mtimeMs: d.mtimeMs, kind: 'desktop' };
-}
-
-function mdvHistoryProblem(name, why) {
-  const text = `${name} could not be opened: ${why}.`;
-  if (typeof mdvShowToast === 'function') mdvShowToast(text, 'error');
-  else console.warn(text);
-}
-
-async function mdvFollowPlan(plan, link) {
-  if (plan.same) {
-    mdvGoToFragment(link.fragment);
-    return;
-  }
-  const going = mdvHistory.going = {};
-  let doc = null;
-  try {
-    doc = await plan.read();
-  } catch (e) {
-    if (mdvHistory.going === going) mdvHistoryProblem(mdvBaseName(link.path), (e && (e.message || e.code)) || 'it could not be read');
-    return;
-  }
-  if (mdvHistory.going !== going) return; // the reader went somewhere else meanwhile
-  if (!doc || (typeof doc.text !== 'string' && !doc.handle)) {
-    mdvHistoryProblem(mdvBaseName(link.path), 'it could not be read');
-    return;
-  }
-  const shown = await mdvOpenDocument(doc, { push: true, fragment: link.fragment || null });
-  if (!shown) mdvHistoryProblem(doc.name || mdvBaseName(link.path), 'it could not be shown');
-}
-
-// A link to the document on screen: to its #fragment, as an in-document link goes (js/links.js)
-function mdvGoToFragment(fragment) {
-  if (!fragment) return;
-  const target = typeof mdvLinkTarget === 'function' ? mdvLinkTarget('#' + fragment) : null;
-  if (!target) return;
-  if (location.hash !== '#' + fragment) {
-    try { history.pushState(history.state, '', '#' + fragment); } catch (e) { /* the jump still happens */ }
-  }
-  mdvGoTo(target);
-}
-
-// Over http, Cmd/Ctrl-click opens the viewer for the linked file in a new tab (the browser would show its raw text)
-function mdvViewerAddressFor(link) {
-  const plan = /^https?:$/.test(location.protocol) && !mdvInDesktopApp() ? mdvPlanLink(link) : null;
-  if (!plan || plan.kind !== 'http') return null;
-  const url = new URL(location.href);
-  url.search = '';
-  url.searchParams.set('file', plan.path);
-  url.hash = link.fragment ? '#' + link.fragment : '';
-  return url.href;
-}
-
-// In the capture phase on window: before js/host.js, which would open the file in a window of its own, and before
-// the page's other click listeners
-window.addEventListener('click', (e) => {
-  if (e.defaultPrevented || e.button !== 0) return;
-  const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
-  if (!a) return;
-  const inPanel = !a.closest('#mdBody') && !!a.closest('#linksPanelContent');
-  if (!inPanel && !a.closest('#mdBody')) return;
-  const link = mdvMarkdownLink(a.getAttribute('href'));
-  if (!link) return;
-  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
-    // The desktop app opens it in a window of its own (js/host.js); over http, the viewer opens in a new tab
-    const address = !e.altKey ? mdvViewerAddressFor(link) : null;
-    if (!address) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    window.open(address, '_blank', 'noopener');
-    return;
-  }
-  const plan = mdvPlanLink(link);
-  if (!plan) return;
-  e.preventDefault();
-  e.stopImmediatePropagation();
-  if (typeof closeDropdowns === 'function') closeDropdowns();
-  if (inPanel && typeof toggleLinksPanel === 'function') toggleLinksPanel();
-  mdvFollowPlan(plan, link);
-}, true);

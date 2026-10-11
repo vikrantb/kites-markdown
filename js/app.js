@@ -56,7 +56,7 @@ function mdvTypedKey(e) {
 
 function mdvShortcutMatches(e, s) {
   if (!!s.mod !== (e.ctrlKey || e.metaKey) || !!s.alt !== e.altKey) return false;
-  if ((/^[a-z]$/.test(s.key) || s.key.length > 1) && !!s.shift !== e.shiftKey) return false;
+  if ((/^[a-z]$/.test(s.key) || s.key.length > 1 || s.exactShift) && !!s.shift !== e.shiftKey) return false;
   return mdvTypedKey(e) === s.key || (!!s.code && e.code === s.code);
 }
 
@@ -66,7 +66,12 @@ function mdvShortcutMatches(e, s) {
 // key's name ('ArrowLeft', 'Enter'). fn(event) runs when the keys are pressed, except while typing in a text field
 // or while a dialog is open; when it returns false, the key is left to the browser. description names it in the
 // sheet. Returns false, adding nothing, when another shortcut already has those keys. A script that loads before
-// this one registers from a DOMContentLoaded listener: every script has run by then.
+// this one registers from a DOMContentLoaded listener: every script has run by then. The physical key is accepted too
+// where the typed character can differ: punctuation that other layouts move ('[' on a German keyboard), and a letter
+// with Alt, which types another character on a Mac (Option+R is "®").
+const MDV_PHYSICAL_KEYS = { '[': 'BracketLeft', ']': 'BracketRight', '\\': 'Backslash', '.': 'Period', ',': 'Comma',
+  '/': 'Slash', ';': 'Semicolon', "'": 'Quote', '`': 'Backquote', '-': 'Minus', '=': 'Equal' };
+
 function mdvRegisterShortcut(combo, fn, description) {
   const parts = String(combo).split('+');
   let key = parts.pop();
@@ -81,6 +86,10 @@ function mdvRegisterShortcut(combo, fn, description) {
   }
   if (!key || typeof fn !== 'function') throw new TypeError(`mdvRegisterShortcut: "${combo}" needs a key and a function`);
   row.key = key.length === 1 ? key.toLowerCase() : key;
+  // Matched by the physical key, a punctuation shortcut counts Shift too: Cmd+Shift+[ (the browser's previous tab)
+  // is the key of Cmd+[ with Shift held, and stays the browser's
+  if (MDV_PHYSICAL_KEYS[row.key]) { row.code = MDV_PHYSICAL_KEYS[row.key]; row.exactShift = true; }
+  else if (row.alt && /^[a-z]$/.test(row.key)) row.code = 'Key' + row.key.toUpperCase();
   // The same keys as the matcher sees them: Shift counts for letters and named keys only
   const shiftCounts = /^[a-z]$/.test(row.key) || row.key.length > 1;
   const same = (s) => !!s.mod === !!row.mod && !!s.alt === !!row.alt && s.key === row.key && (!shiftCounts || !!s.shift === !!row.shift);

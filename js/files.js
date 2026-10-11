@@ -43,6 +43,33 @@ function readFile(file) {
   reader.readAsText(file);
 }
 
+// A file dropped on the page is read through a handle where the browser gives one (Chromium:
+// DataTransferItem.getAsFileSystemHandle), so live reload follows it like any file opened with a handle. A file chosen
+// with the Open button, or dropped elsewhere, is read once (readFile): a File is a snapshot, and that copy says so
+// (js/live-reload.js), with a way to follow the file where the browser has one. The handle only reads; the comment
+// code asks for permission to write the first time a comment is saved.
+const MDV_OPEN_TYPES = [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown', '.mdx'], 'text/plain': ['.txt', '.text'] } }];
+
+function mdvCanOpenWithHandle() { return !mdvInDesktopApp() && typeof window.showOpenFilePicker === 'function'; }
+
+function mdvOpenFileHandle(handle, opts) {
+  return mdvOpenDocument({ handle, name: handle.name, kind: 'handle' }, opts);
+}
+
+// Picks a file through the File System Access picker and shows it, followed (the "Follow…" of a copy). `opts` as
+// mdvOpenDocument's. Resolves false when the reader cancels.
+async function mdvPickToFollow(opts) {
+  if (!mdvCanOpenWithHandle()) return false;
+  let handle;
+  try {
+    [handle] = await window.showOpenFilePicker({ multiple: false, types: MDV_OPEN_TYPES });
+  } catch (err) {
+    if (!err || err.name !== 'AbortError') console.warn('MDV: the file could not be opened:', err);
+    return false;
+  }
+  return mdvOpenFileHandle(handle, opts);
+}
+
 // Drag & drop
 const dropZone = document.getElementById('dropZone');
 ['dragenter','dragover'].forEach(evt => {
@@ -55,7 +82,12 @@ const dropZone = document.getElementById('dropZone');
 document.body.addEventListener('drop', e => {
   e.preventDefault(); e.stopPropagation();
   const file = e.dataTransfer.files[0];
-  if (file && /\.(md|markdown|mdx|txt|text)$/i.test(file.name)) readFile(file);
+  if (!file || !/\.(md|markdown|mdx|txt|text)$/i.test(file.name)) return;
+  // The handle must be asked for during the drop event itself
+  const item = [...e.dataTransfer.items].find((i) => i.kind === 'file');
+  const asked = item && !mdvInDesktopApp() && typeof item.getAsFileSystemHandle === 'function' ? item.getAsFileSystemHandle() : null;
+  if (!asked) { readFile(file); return; }
+  asked.then((h) => (h && h.kind === 'file' ? h : null), () => null).then((h) => (h ? mdvOpenFileHandle(h) : readFile(file)));
 });
 
 // Paste
@@ -96,7 +128,7 @@ async function loadFromUrl() {
           const text = await resp.text();
           // A fetched document has no writable handle. If the last-opened file was restored while this
           // fetch was in flight, the seam unlinks it, so a comment save cannot overwrite it.
-          await mdvOpenDocument({ name: filePath.split('/').pop(), text, path: p, kind: 'http', title: filePath, fetchedText: text });
+          await mdvOpenDocument({ name: filePath.split('/').pop(), text, path: p, kind: 'http', title: filePath });
           return;
         }
       } catch (_) {}
@@ -148,32 +180,40 @@ async function loadFromUrl() {
 // ============================================
 // The load seam: every document is shown through mdvOpenDocument
 // ============================================
-// The file chooser and drag-and-drop (readFile), paste, ?file= links (loadFromUrl), links between
-// documents and Back/Forward (js/history.js), live reload (js/live-reload.js) and the folder features all
-// show a document through it; none of them renders one any other way.
+// The file chooser and drag-and-drop (readFile, or a handle), paste, ?file= links (loadFromUrl), links between
+// documents (js/document-links.js), Back/Forward (js/history.js), live reload (js/live-reload.js) and the folder
+// features all show a document through it; none of them renders one any other way.
 //
 //   mdvOpenDocument({name, text, path, handle, mtimeMs}, {push}) → Promise<boolean>
 //
-//   doc.name      the file name, for the title
-//   doc.text      the Markdown. With a handle, text the comment code has not read through that handle (or
-//                 no text at all) is read again through mdvOpenWithHandle, which records the version a
-//                 comment save compares the file with (CLAUDE.md)
-//   doc.path      where it came from: the ?file= path over http, an absolute path in the desktop app, a path
-//                 in the open folder; none for pasted text. The document's links are resolved against it.
-//   doc.handle    the FileSystemFileHandle it was read from (browser), or none
-//   doc.mtimeMs   when the file last changed, when known
-//   doc.kind      optional: 'http' (fetched from a server), 'file' (chosen or dropped), 'pasted', 'handle',
-//                 'folder', 'desktop'; inferred when absent (only an http loader says 'http')
-//   doc.title     optional: what the toolbar shows (a relative path shows as the breadcrumb)
-//   opts.push     true (the default): a new place in Back/Forward. false: the current place shows it instead.
-//   opts.fragment open at this id (a link's #fragment) instead of at the top
-//   opts.position open at this reading position (mdvReadingPosition(), taken when the reader left it)
-//   opts.history  set only by js/history.js: Back/Forward moved the browser to this entry
+//   doc.name       the file name, for the title
+//   doc.text       the Markdown. With a handle, text the comment code has not read through that handle (or
+//                  no text at all) is read again through mdvOpenWithHandle, which records the version a
+//                  comment save compares the file with (CLAUDE.md)
+//   doc.path       where it came from: the ?file= path over http, an absolute path in the desktop app, a path
+//                  in the open folder; none for pasted text. The document's links are resolved against it.
+//   doc.handle     the FileSystemFileHandle it was read from (browser), or none
+//   doc.mtimeMs    when the file last changed, when known
+//   doc.kind       optional: 'http' (fetched from a server), 'file' (chosen or dropped, no handle), 'pasted',
+//                  'handle', 'folder', 'desktop'; inferred when absent (only an http loader says 'http')
+//   doc.title      optional: what the toolbar shows (a relative path shows as the breadcrumb)
+//   doc.sourceText optional: the text as its file or server gave it, when doc.text differs from it (Back shows a
+//                  document with the comment changes it had when the reader left). Live reload compares the file
+//                  with this version.
+//   opts.push      true (the default): a new place in Back/Forward. false: the current place shows it instead.
+//   opts.fragment  open at this id (a link's #fragment) instead of at the top
+//   opts.position  open at this reading position (mdvReadingPosition(), taken when the reader left it)
+//   opts.history   set only by js/history.js: Back/Forward moved the browser to this entry
 //
-// It resolves true once the document is on screen, and false when it could not be shown (the one on screen
-// stays). The same document opened again (a live reload, say) keeps the reader's place: the heading at the
-// top of the window stays where it was on screen or, with no heading above it, the same proportion of the
-// page, while diagrams and images settle. Any other document opens at the top, or at opts.fragment.
+// It resolves true once the document is on screen, and false when it could not be shown (the one on screen stays)
+// or when a newer open overtook it: the newest open wins. A file read through a handle takes time; an open that
+// starts meanwhile (or any other document shown meanwhile) makes the slower one give up before it renders, so it
+// can never replace the document the reader chose since, nor add a place to Back/Forward. mdvOpenSeq counts the
+// opens: a caller that got false while mdvOpenSeq moved past its own open was overtaken, not refused.
+//
+// The same document opened again (a live reload, say) keeps the reader's place (js/reading-place.js): the words at
+// the top of the window stay where they were, folded sections stay folded. Any other document opens at the top, or
+// at opts.fragment.
 //
 // Every render of a document, through the seam or not (the comment code reopening a file, the desktop
 // bridge, a test), is followed (mdvTrackRenders), so what follows the document always knows what is shown:
@@ -181,13 +221,15 @@ async function loadFromUrl() {
 //   mdvOnDocumentOpening(fn)  fn(event) just before a document replaces the page, while the old one is still
 //                             on screen (Back/Forward records the reader's place in it here)
 //   mdvOnDocumentOpened(fn)   fn(event) once it is on screen (the title, live reload, recent documents)
+//   mdvOnDocumentDrawn(fn)    fn() after every render of the page, the comment code's own redraws included
 // event: {kind, doc, previous, position, push, fragment, history, previousText}; kind is 'first' (nothing was
 // on screen), 'open' (another document), 'reload' (the same document again) or 'history' (Back/Forward).
-// Both return an unsubscribe function.
+// Each returns an unsubscribe function.
 
 let mdvShown = null;        // {doc}: the document on screen; null while the welcome screen shows
-let mdvPendingOpen = null;  // {doc, opts, position, viaHandle}: the render the seam has started
-const mdvDocumentHooks = { opening: [], opened: [] };
+let mdvPendingOpen = null;  // {doc, opts, position, viaHandle, seq}: the newest open the seam has started, until it renders
+let mdvOpenSeq = 0;         // counts opens; an open that a newer one overtook gives up before it renders
+const mdvDocumentHooks = { opening: [], opened: [], drawn: [] };
 
 function mdvAddDocumentHook(list, fn) {
   list.push(fn);
@@ -195,6 +237,7 @@ function mdvAddDocumentHook(list, fn) {
 }
 function mdvOnDocumentOpening(fn) { return mdvAddDocumentHook(mdvDocumentHooks.opening, fn); }
 function mdvOnDocumentOpened(fn) { return mdvAddDocumentHook(mdvDocumentHooks.opened, fn); }
+function mdvOnDocumentDrawn(fn) { return mdvAddDocumentHook(mdvDocumentHooks.drawn, fn); }
 function mdvShownDocument() { return mdvShown ? mdvShown.doc : null; }
 
 function mdvEmitDocument(list, event) {
@@ -210,37 +253,40 @@ async function mdvOpenDocument(doc, opts) {
   doc = mdvNormalizeDocument(doc);
   mdvTrackRenders();
   const desktop = mdvInDesktopApp();
+  const viaHandle = !desktop && !!doc.handle && mdvMustReadThroughHandle(doc);
+  if (viaHandle ? typeof mdvOpenWithHandle !== 'function' : typeof doc.text !== 'string') return false;
+  const seq = ++mdvOpenSeq;
   const previous = mdvShownDocument();
   const position = previous ? mdvReadingPosition() : null;
-  const keepPlace = !!previous && mdvSameDocument(previous, doc);
   mdvStopHoldingPlace();
-  if (!desktop && doc.handle && mdvMustReadThroughHandle(doc)) {
-    if (typeof mdvOpenWithHandle !== 'function') return false;
-    mdvPendingOpen = { doc, opts, position, viaHandle: true };
+  if (viaHandle) {
+    mdvPendingOpen = { doc, opts, position, viaHandle: true, seq };
+    // Another document shown while the file is read (ifSeq), or a newer open begun (wanted): this one gives up
+    const loads = typeof mdvLoadSeq === 'number' ? mdvLoadSeq : null;
     let shown = false;
     try {
-      shown = !!(await mdvOpenWithHandle(doc.handle, { prompt: false }));
+      shown = !!(await mdvOpenWithHandle(doc.handle, { prompt: false, ifSeq: loads, wanted: () => seq === mdvOpenSeq }));
     } catch (e) {
       console.warn('MDV: "' + doc.name + '" could not be opened:', e);
     } finally {
-      if (mdvPendingOpen && mdvPendingOpen.doc === doc) mdvPendingOpen = null;
+      if (mdvPendingOpen && mdvPendingOpen.seq === seq) mdvPendingOpen = null;
     }
     if (!shown) return false;
   } else {
-    if (typeof doc.text !== 'string') return false;
     if (desktop && doc.path) mdvPointBridgeAt(doc);
     // A document is only linked to the file handle it was read from (CLAUDE.md)
     if (typeof mdvFileHandle !== 'undefined') mdvFileHandle = desktop ? null : doc.handle;
     rawMarkdown = doc.text;
     currentFileName = doc.name;
-    mdvPendingOpen = { doc, opts, position, viaHandle: false };
+    mdvPendingOpen = { doc, opts, position, viaHandle: false, seq };
     try {
       renderMarkdown(doc.text, mdvDocumentTitle(doc));
     } finally {
-      if (mdvPendingOpen && mdvPendingOpen.doc === doc) mdvPendingOpen = null;
+      if (mdvPendingOpen && mdvPendingOpen.seq === seq) mdvPendingOpen = null;
     }
   }
   if (opts.fragment && mdvOpenAtFragment(opts.fragment)) return true;
+  const keepPlace = !!previous && mdvSameDocument(previous, doc);
   const place = opts.position || (keepPlace ? position : null);
   if (place) mdvRestoreReadingPosition(place);
   // Any other document opens at its top at once. (The stylesheet scrolls smoothly, so renderMarkdown's own scroll
@@ -255,6 +301,7 @@ function mdvNormalizeDocument(doc) {
   d.path = d.path == null || d.path === '' ? null : String(d.path);
   d.name = String(d.name || (d.handle && d.handle.name) || (d.path && d.path.split(/[\\/]/).pop()) || 'Untitled');
   d.mtimeMs = Number.isFinite(d.mtimeMs) ? d.mtimeMs : null;
+  if (typeof d.sourceText !== 'string') delete d.sourceText;
   // The http loaders say 'http'; any other path with no handle is a file of the open folder
   if (!d.kind) {
     if (mdvInDesktopApp()) d.kind = d.path ? 'desktop' : 'pasted';
@@ -289,9 +336,12 @@ function mdvSameDocument(a, b) {
   if (!a || !b) return false;
   if (a.path && b.path) return a.kind === b.kind && mdvSamePath(a.path, b.path, a.kind);
   if (a.handle || b.handle) return a.handle === b.handle;
-  if (a.path || b.path) return false;
-  // Text with no file behind it: the same page again (the demo, a test's render), unless it was pasted
-  return a.kind === b.kind && a.kind !== 'pasted' && a.name === b.name;
+  if (a.path || b.path || a.kind !== b.kind) return false;
+  // A chosen or dropped file is known by its name only, and two folders can hold a README.md each: it is the same
+  // document only as the same text. Pasted text is always new.
+  if (a.kind === 'file') return a.name === b.name && typeof a.text === 'string' && a.text === b.text;
+  // Text with no file behind it: the same page again (the demo, a test's render)
+  return a.kind !== 'pasted' && a.name === b.name;
 }
 
 // The comment code records, per handle, the version of the file it read or wrote (mdvBases). Text it has not
@@ -350,10 +400,15 @@ function mdvTrackRenders() {
   const inner = window.renderMarkdown;
   window.renderMarkdown = function (source, title) {
     // The comment code drawing the same version again in place (mdvRerender) is not a new document
-    if (typeof mdvOwnRender !== 'undefined' && mdvOwnRender) return inner.apply(this, arguments);
+    if (typeof mdvOwnRender !== 'undefined' && mdvOwnRender) {
+      const drawn = inner.apply(this, arguments);
+      mdvEmitDocument(mdvDocumentHooks.drawn, null);
+      return drawn;
+    }
     const pending = mdvTakePendingOpen(source);
     const previous = mdvShownDocument();
     const doc = pending ? pending.doc : mdvDescribeRender(source, title);
+    if (!pending) doc.text = String(source == null ? '' : source); // a chosen file is the same document only as the same text
     const kind = !previous ? 'first'
       : pending && pending.opts.history ? 'history'
       : mdvSameDocument(previous, doc) ? 'reload' : 'open';
@@ -372,10 +427,11 @@ function mdvTrackRenders() {
     doc.text = String(source == null ? '' : source);
     if (kind === 'reload') {
       // Keep what only the earlier record knew (the folder path of a file the comment code read again)
-      for (const k of ['path', 'title', 'fetchedText']) if (doc[k] == null && previous[k] != null) doc[k] = previous[k];
+      for (const k of ['path', 'title']) if (doc[k] == null && previous[k] != null) doc[k] = previous[k];
     }
     mdvShown = { doc };
     mdvShowTitle(doc);
+    mdvEmitDocument(mdvDocumentHooks.drawn, null);
     mdvEmitDocument(mdvDocumentHooks.opened, event);
     return result;
   };
@@ -388,93 +444,3 @@ function mdvTrackRenders() {
   }
 }
 document.addEventListener('DOMContentLoaded', mdvTrackRenders);
-
-// ------- The reader's place -------
-// The last heading at or above the top of the window and where it sits on screen, so a reload puts it back in
-// the same place; with no heading above, how far down the page the window is. Headings folded away (a folded
-// section, a closed <details>) have no place on screen and are skipped.
-function mdvReadingPosition() {
-  const max = document.documentElement.scrollHeight - window.innerHeight;
-  const position = { atTop: window.scrollY < 4, ratio: max > 0 ? Math.min(1, window.scrollY / max) : 0, id: null, text: null, offset: 0 };
-  const body = document.getElementById('mdBody');
-  if (!body || position.atTop) return position;
-  const line = mdvToolbarHeight() + 8;
-  let chosen = null;
-  for (const h of body.querySelectorAll('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]')) {
-    if (!mdvCanSee(h)) continue;
-    if (h.getBoundingClientRect().top <= line) chosen = h;
-    else break;
-  }
-  if (chosen) {
-    position.id = chosen.id;
-    position.text = mdvHeadingWords(chosen);
-    position.offset = chosen.getBoundingClientRect().top;
-  }
-  return position;
-}
-
-function mdvCanSee(el) { return typeof mdvHeadingVisible === 'function' ? mdvHeadingVisible(el) : el.getClientRects().length > 0; }
-function mdvHeadingWords(h) { return typeof mdvHeadingText === 'function' ? mdvHeadingText(h) : String(h.textContent || '').trim(); }
-function mdvToolbarHeight() { return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--toolbar-height')) || 48; }
-
-// The heading a position names: the one with its id and words; else the first with its words (an edit above it
-// renumbered the ids of headings that share a name); else the one with its id
-function mdvPositionHeading(position) {
-  const body = document.getElementById('mdBody');
-  if (!body || !position.id) return null;
-  const usable = (h) => !!h && body.contains(h) && /^H[1-6]$/.test(h.tagName) && mdvCanSee(h);
-  const byId = document.getElementById(position.id);
-  if (usable(byId) && (!position.text || mdvHeadingWords(byId) === position.text)) return byId;
-  if (position.text) {
-    for (const h of body.querySelectorAll('h1, h2, h3, h4, h5, h6')) if (usable(h) && mdvHeadingWords(h) === position.text) return h;
-  }
-  return usable(byId) ? byId : null;
-}
-
-let mdvStopHoldingPlace = () => {};
-
-// Puts the reader back at `position`, and keeps them there while diagrams and images change the layout after the
-// first paint, until the layout settles (2.5 s) or the reader scrolls, clicks or types.
-function mdvRestoreReadingPosition(position) {
-  mdvStopHoldingPlace();
-  if (!position) return;
-  const place = () => {
-    if (position.atTop) { window.scrollTo({ top: 0, behavior: 'instant' }); return; }
-    const el = position.el && position.el.isConnected ? position.el : mdvPositionHeading(position);
-    if (el) {
-      window.scrollTo({ top: window.scrollY + el.getBoundingClientRect().top - position.offset, behavior: 'instant' });
-    } else {
-      const max = document.documentElement.scrollHeight - window.innerHeight;
-      window.scrollTo({ top: Math.max(0, (position.ratio || 0) * max), behavior: 'instant' });
-    }
-  };
-  place();
-  const body = document.getElementById('mdBody');
-  if (!body || typeof ResizeObserver === 'undefined') return;
-  const inputs = ['wheel', 'touchstart', 'keydown', 'mousedown'];
-  let done = false;
-  const observer = new ResizeObserver(() => { if (!done) place(); });
-  const stop = () => {
-    if (done) return;
-    done = true;
-    clearTimeout(timer);
-    observer.disconnect();
-    for (const t of inputs) window.removeEventListener(t, stop, true);
-  };
-  const timer = setTimeout(stop, 2500);
-  observer.observe(body);
-  for (const t of inputs) window.addEventListener(t, stop, true);
-  mdvStopHoldingPlace = stop;
-}
-
-// Opens at a link's #fragment: unfolded, at the top of the window, with the focus there (as an in-document
-// link goes, js/links.js), and held there while the layout settles
-function mdvOpenAtFragment(fragment) {
-  const target = typeof mdvLinkTarget === 'function' ? mdvLinkTarget('#' + fragment) : null;
-  if (!target) return false;
-  if (typeof mdvReveal === 'function') mdvReveal(target);
-  target.scrollIntoView({ block: 'start', behavior: 'instant' });
-  if (typeof mdvFocusInDocument === 'function') mdvFocusInDocument(target);
-  mdvRestoreReadingPosition({ el: target, offset: target.getBoundingClientRect().top });
-  return true;
-}

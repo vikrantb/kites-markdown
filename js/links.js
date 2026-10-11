@@ -266,7 +266,9 @@ document.getElementById('mdBody').addEventListener('click', (e) => {
   if (!target) return;
   e.preventDefault();
   if (location.hash !== a.hash) {
-    try { history.pushState(history.state, '', a.hash); } catch (err) { /* an address that cannot change: the jump still happens */ }
+    // A place of its own in Back/Forward (js/history.js names it as one of this document's)
+    if (typeof mdvHistoryPushPlace === 'function') mdvHistoryPushPlace(a.hash);
+    else try { history.pushState(history.state, '', a.hash); } catch (err) { /* an address that cannot change: the jump still happens */ }
   }
   mdvGoTo(target);
 });
