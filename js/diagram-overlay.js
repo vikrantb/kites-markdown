@@ -16,8 +16,14 @@ const MDV_PAN_KEEP = 64; // pixels of the diagram that always stay on screen whi
 
 const mdvView = {
   wrapper: null, scale: 1, x: 0, y: 0, w: 0, h: 0,
-  pointers: new Map(), gesture: null, tween: 0, returnFocus: null, wired: false,
+  pointers: new Map(), gesture: null, tween: 0, goal: null, returnFocus: null, wired: false,
 };
+
+// Where the view is heading: the end of a running animation, otherwise where it is. Zoom and pan steps start from
+// here, so two quick presses of + compound fully instead of multiplying a half-way scale.
+function mdvViewGoal() {
+  return mdvView.goal || { scale: mdvView.scale, x: mdvView.x, y: mdvView.y };
+}
 
 function mdvOverlayEls() {
   return {
@@ -54,6 +60,7 @@ function closeDiagramOverlay() {
   const { overlay, container } = mdvOverlayEls();
   if (!overlay) return;
   cancelAnimationFrame(mdvView.tween);
+  mdvView.goal = null;
   overlay.classList.remove('show');
   overlay.setAttribute('aria-hidden', 'true');
   container.replaceChildren();
@@ -100,10 +107,17 @@ function mdvCentred(scale) {
 
 // Zoom by `factor`, keeping the diagram point under (px, py) — body coordinates — where it is.
 function mdvZoomAt(factor, px, py, animate) {
-  const scale = mdvClampScale(mdvView.scale * factor);
-  const k = scale / mdvView.scale;
+  const from = mdvViewGoal();
+  const scale = mdvClampScale(from.scale * factor);
+  const k = scale / from.scale;
   diagramFitMode = false;
-  mdvSetView({ scale, x: px - (px - mdvView.x) * k, y: py - (py - mdvView.y) * k }, animate);
+  mdvSetView({ scale, x: px - (px - from.x) * k, y: py - (py - from.y) * k }, animate);
+}
+
+function mdvPanBy(dx, dy) {
+  const from = mdvViewGoal();
+  diagramFitMode = false;
+  mdvSetView({ scale: from.scale, x: from.x + dx, y: from.y + dy }, true);
 }
 
 function mdvClampScale(s) {
@@ -112,6 +126,7 @@ function mdvClampScale(s) {
 
 function mdvSetView(target, animate) {
   cancelAnimationFrame(mdvView.tween);
+  mdvView.goal = null;
   const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!animate || reduce) {
     Object.assign(mdvView, target);
@@ -119,6 +134,7 @@ function mdvSetView(target, animate) {
     return;
   }
   const from = { scale: mdvView.scale, x: mdvView.x, y: mdvView.y };
+  mdvView.goal = { scale: target.scale, x: target.x, y: target.y };
   const start = performance.now();
   const duration = 180;
   const step = (now) => {
@@ -129,6 +145,7 @@ function mdvSetView(target, animate) {
     mdvView.y = from.y + (target.y - from.y) * e;
     mdvApplyView();
     if (t < 1) mdvView.tween = requestAnimationFrame(step);
+    else mdvView.goal = null;
   };
   mdvView.tween = requestAnimationFrame(step);
 }
@@ -148,7 +165,6 @@ function mdvApplyView() {
   container.style.transform = `translate(${mdvView.x}px, ${mdvView.y}px)`;
   diagramZoomLevel = Math.round(mdvView.scale * 100);
   if (label) label.textContent = diagramZoomLevel + '%';
-  body.classList.toggle('fit', diagramFitMode);
   if (fitBtn) {
     fitBtn.classList.toggle('active', diagramFitMode);
     fitBtn.setAttribute('aria-pressed', String(diagramFitMode));
@@ -176,28 +192,6 @@ function mdvPlaceClone(source) {
   mdvView.h = h;
 }
 
-function mdvIsolateSvgIds(svg, prefix) {
-  const ids = new Map();
-  for (const el of [svg, ...svg.querySelectorAll('[id]')]) {
-    if (!el.id) continue;
-    ids.set(el.id, prefix + el.id);
-    el.id = prefix + el.id;
-  }
-  if (!ids.size) return;
-  const swapRef = (_, id) => (ids.has(id) ? `url(#${ids.get(id)})` : `url(#${id})`);
-  for (const el of [svg, ...svg.querySelectorAll('*')]) {
-    for (const attr of [...el.attributes]) {
-      if (attr.value.includes('url(#')) el.setAttribute(attr.name, attr.value.replace(/url\(#([^)]+)\)/g, swapRef));
-      else if ((attr.name === 'href' || attr.name === 'xlink:href') && attr.value[0] === '#' && ids.has(attr.value.slice(1))) {
-        el.setAttribute(attr.name, '#' + ids.get(attr.value.slice(1)));
-      }
-    }
-  }
-  for (const style of svg.querySelectorAll('style')) {
-    style.textContent = style.textContent.replace(/#([A-Za-z][\w-]*)/g, (m, id) => (ids.has(id) ? '#' + ids.get(id) : m));
-  }
-}
-
 // "Pie chart · Estimated effort by area": the type Mermaid reported, plus the diagram's own title if it has one.
 function mdvDiagramOverlayTitle(wrapper, svg) {
   const type = (typeof mdvDiagramTypeTitle === 'function') ? mdvDiagramTypeTitle(wrapper.dataset.diagramType) : 'Diagram';
@@ -217,6 +211,32 @@ function mdvRefreshDiagramOverlay(wrapper) {
   mdvPlaceClone(source);
   if (diagramFitMode) mdvDiagramFit(false);
   else mdvSetView({ scale, x, y }, false);
+}
+
+// A node that links to a section, chosen by click, Enter or Space: close the view and go there.
+function mdvFollowNodeLink(link) {
+  const id = link.getAttribute('data-mdv-section');
+  closeDiagramOverlay();
+  if (typeof mdvJumpToSection === 'function') mdvJumpToSection(id);
+}
+
+// Pan just enough that a node reached by Tab is on screen.
+function mdvRevealInView(el) {
+  const b = mdvOverlayEls().body.getBoundingClientRect();
+  const r = el.getBoundingClientRect();
+  const margin = 24;
+  let dx = 0, dy = 0;
+  if (r.left < b.left + margin) dx = b.left + margin - r.left;
+  else if (r.right > b.right - margin) dx = b.right - margin - r.right;
+  if (r.top < b.top + margin) dy = b.top + margin - r.top;
+  else if (r.bottom > b.bottom - margin) dy = b.bottom - margin - r.bottom;
+  if (dx || dy) mdvPanBy(dx, dy);
+}
+
+// mermaid.js calls this before drawing a new document: a view of a diagram that is no longer on the page (another
+// file opened, dropped or pasted) closes, rather than keep showing the old document and missing theme changes.
+function mdvCloseDetachedDiagramOverlay() {
+  if (mdvOverlayIsOpen() && !(mdvView.wrapper && mdvView.wrapper.isConnected)) closeDiagramOverlay();
 }
 
 // ---------- One-time wiring: controls, pointer, wheel, keyboard ----------
@@ -306,6 +326,7 @@ function mdvOnPointerDown(e) {
   const body = mdvOverlayEls().body;
   try { body.setPointerCapture(e.pointerId); } catch (_) { /* the pointer is already gone */ }
   cancelAnimationFrame(mdvView.tween);
+  mdvView.goal = null;
   mdvView.pointers.set(e.pointerId, mdvBodyPoint(e));
   mdvStartGesture(e.target);
 }
@@ -357,10 +378,8 @@ function mdvOnPointerUp(e) {
   // A click (no drag) on a node that links to a section closes the view and goes there.
   if (e.type === 'pointerup' && g && g.kind === 'drag' && !g.moved && g.target && g.target.closest) {
     const link = g.target.closest('[data-mdv-section]');
-    if (link && typeof mdvJumpToSection === 'function') {
-      const id = link.getAttribute('data-mdv-section');
-      closeDiagramOverlay();
-      mdvJumpToSection(id);
+    if (link) {
+      mdvFollowNodeLink(link);
       return;
     }
   }
@@ -383,20 +402,27 @@ document.addEventListener('keydown', (e) => {
     case '-': case '_': diagramZoom(-1); break;
     case '0': mdvDiagramFit(true); break;
     case '1': mdvDiagramActualSize(true); break;
-    case 'ArrowLeft': diagramFitMode = false; mdvSetView({ scale: mdvView.scale, x: mdvView.x + pan, y: mdvView.y }, true); break;
-    case 'ArrowRight': diagramFitMode = false; mdvSetView({ scale: mdvView.scale, x: mdvView.x - pan, y: mdvView.y }, true); break;
-    case 'ArrowUp': diagramFitMode = false; mdvSetView({ scale: mdvView.scale, x: mdvView.x, y: mdvView.y + pan }, true); break;
-    case 'ArrowDown': diagramFitMode = false; mdvSetView({ scale: mdvView.scale, x: mdvView.x, y: mdvView.y - pan }, true); break;
+    case 'ArrowLeft': mdvPanBy(pan, 0); break;
+    case 'ArrowRight': mdvPanBy(-pan, 0); break;
+    case 'ArrowUp': mdvPanBy(0, pan); break;
+    case 'ArrowDown': mdvPanBy(0, -pan); break;
     case 'Tab': {
-      // Keep focus inside the dialog.
-      const items = [...overlay.querySelectorAll('button:not([disabled])')].filter((b) => b.offsetParent !== null);
+      // Focus stays inside the dialog and visits the controls, then the nodes that link to a section.
+      const items = [...overlay.querySelectorAll('button:not([disabled])')].filter((b) => b.offsetParent !== null)
+        .concat([...body.querySelectorAll('[data-mdv-section]')]);
       if (!items.length) return;
-      const first = items[0], last = items[items.length - 1];
-      const active = document.activeElement;
-      const outside = !overlay.contains(active) || active === body;
-      if (e.shiftKey && (outside || active === first)) { last.focus(); break; }
-      if (!e.shiftKey && (outside || active === last)) { first.focus(); break; }
-      return;
+      const at = items.indexOf(document.activeElement);
+      const next = at < 0 ? (e.shiftKey ? items[items.length - 1] : items[0])
+        : items[(at + (e.shiftKey ? -1 : 1) + items.length) % items.length];
+      next.focus({ preventScroll: true }); // the view pans itself; scrolling the body would offset it
+      if (body.contains(next)) mdvRevealInView(next);
+      break;
+    }
+    case 'Enter': case ' ': {
+      const link = document.activeElement && document.activeElement.closest && document.activeElement.closest('[data-mdv-section]');
+      if (!link || !body.contains(link)) return;
+      mdvFollowNodeLink(link);
+      break;
     }
     default: return;
   }

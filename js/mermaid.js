@@ -37,6 +37,7 @@ if (typeof mermaid !== 'undefined') mermaid.initialize({ startOnLoad: false, sec
 // Called by renderMarkdown after every render and by setTheme after a theme change. Renders every diagram that
 // has not been drawn in the current palette yet. Returns a promise that settles when this pass is done.
 function renderMermaidDiagrams() {
+  if (typeof mdvCloseDetachedDiagramOverlay === 'function') mdvCloseDetachedDiagramOverlay();
   if (typeof mermaid === 'undefined') return Promise.resolve();
   // Keep each new diagram's source now, synchronously: once it is drawn the element holds an SVG instead.
   for (const el of document.querySelectorAll('.mermaid')) {
@@ -173,6 +174,52 @@ async function mdvDiagramFontsReady() {
   }
 }
 
+// ---------- Ids: one set per diagram ----------
+
+// Gives every id inside a diagram's SVG a prefix and rewrites what refers to it: url(#…) in attributes and styles,
+// href, aria-labelledby/-describedby, and #id selectors in its <style>. Mermaid reuses plain ids such as
+// "arrowhead" in every diagram, and url(#arrowhead) resolves to the first element with that id in the page, so a
+// timeline drew the sequence diagram's arrowhead. keepRoot leaves the <svg>'s own id, which Mermaid's styles use.
+function mdvIsolateSvgIds(svg, prefix, keepRoot = false) {
+  const ids = new Map();
+  const seen = new Map();
+  for (const el of [svg, ...svg.querySelectorAll('[id]')]) {
+    const id = el.id;
+    if (!id || (keepRoot && el === svg)) continue;
+    // Mermaid can repeat an id inside one diagram (every timeline box is "node-undefined"): the second and later get
+    // a number. A reference resolves to the first, as the browser would.
+    const n = (seen.get(id) || 0) + 1;
+    seen.set(id, n);
+    const base = id.startsWith(prefix) ? id : prefix + id;
+    if (n === 1) {
+      if (base !== id) ids.set(id, base);
+      el.id = base;
+    } else {
+      el.id = `${base}-${n}`;
+    }
+  }
+  if (!ids.size) return;
+  const swapUrl = (m, id) => (ids.has(id) ? `url(#${ids.get(id)})` : m);
+  for (const el of [svg, ...svg.querySelectorAll('*')]) {
+    for (const attr of [...el.attributes]) {
+      const v = attr.value;
+      if (v.includes('url(#')) el.setAttribute(attr.name, v.replace(/url\(#([^)]+)\)/g, swapUrl));
+      else if ((attr.name === 'href' || attr.name === 'xlink:href') && v[0] === '#' && ids.has(v.slice(1))) {
+        el.setAttribute(attr.name, '#' + ids.get(v.slice(1)));
+      } else if (attr.name === 'aria-labelledby' || attr.name === 'aria-describedby') {
+        el.setAttribute(attr.name, v.split(/\s+/).map((ref) => ids.get(ref) || ref).join(' '));
+      }
+    }
+  }
+  // In a stylesheet only selectors name ids (a colour such as #fff in a declaration stays); url(#…) can be anywhere.
+  const swapSelector = (m, id) => (ids.has(id) ? '#' + ids.get(id) : m);
+  for (const style of svg.querySelectorAll('style')) {
+    style.textContent = style.textContent
+      .replace(/(^|[{}])([^{}]*)(?=\{)/g, (m, brace, sel) => brace + sel.replace(/#([A-Za-z_][\w-]*)/g, swapSelector))
+      .replace(/url\(#([^)]+)\)/g, swapUrl);
+  }
+}
+
 // ---------- Palette: the current theme's --diagram-* tokens, as hex ----------
 
 const MDV_DIAGRAM_TOKENS = {
@@ -189,10 +236,12 @@ const MDV_DIAGRAM_SERIES = 8;
 function mdvDiagramPalette() {
   const cs = getComputedStyle(document.documentElement);
   const p = { dark: (typeof currentTheme !== 'undefined' && currentTheme === 'dark'), series: [], seriesSoft: [] };
-  for (const [key, prop] of Object.entries(MDV_DIAGRAM_TOKENS)) p[key] = mdvColorHex(cs.getPropertyValue(prop)) || '#888888';
+  // A translucent token is seen on the diagram's card, so it is resolved over the card's colour.
+  const card = mdvColorHex(cs.getPropertyValue('--diagram-bg'), mdvColorHex(cs.getPropertyValue('--bg-card')) || '#ffffff') || '#ffffff';
+  for (const [key, prop] of Object.entries(MDV_DIAGRAM_TOKENS)) p[key] = mdvColorHex(cs.getPropertyValue(prop), card) || '#888888';
   for (let i = 1; i <= MDV_DIAGRAM_SERIES; i++) {
-    p.series.push(mdvColorHex(cs.getPropertyValue('--diagram-series-' + i)) || p.accent);
-    p.seriesSoft.push(mdvColorHex(cs.getPropertyValue('--diagram-series-soft-' + i)) || p.node);
+    p.series.push(mdvColorHex(cs.getPropertyValue('--diagram-series-' + i), card) || p.accent);
+    p.seriesSoft.push(mdvColorHex(cs.getPropertyValue('--diagram-series-soft-' + i), card) || p.node);
   }
   const { series, seriesSoft, dark, ...rest } = p;
   p.key = [dark ? 'dark' : 'light', 'font' + mdvDiagramFontEpoch, ...Object.values(rest), ...series, ...seriesSoft].join('|');
@@ -201,8 +250,9 @@ function mdvDiagramPalette() {
 
 let mdvColorTools = null;
 // Any CSS colour (hex, rgb(), color-mix(), a named colour) → "#rrggbb". Hex passes straight through; anything
-// else is resolved by the browser on a probe element and read back from a one-pixel canvas.
-function mdvColorHex(value) {
+// else is resolved by the browser on a probe element and read back from a one-pixel canvas, composited over
+// `under` (the surface it is seen on) when it is translucent.
+function mdvColorHex(value, under = '#ffffff') {
   value = String(value || '').trim();
   if (!value) return null;
   if (/^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase();
@@ -221,7 +271,7 @@ function mdvColorHex(value) {
     probe.style.color = value;
     if (!probe.style.color) return null;
     ctx.clearRect(0, 0, 1, 1);
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = under;
     ctx.fillRect(0, 0, 1, 1);
     ctx.fillStyle = getComputedStyle(probe).color;
     ctx.fillRect(0, 0, 1, 1);
