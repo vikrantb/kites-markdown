@@ -3,24 +3,49 @@
 // text and links meet WCAG AA in every theme, and nothing on a phone runs off the side of the page.
 import { test, expect } from '@playwright/test';
 import { readdirSync } from 'node:fs';
-import { THEMES, open, renderSource } from './visuals-helpers.mjs';
+import { THEMES, open, renderSource, settled } from './visuals-helpers.mjs';
 
 const SAMPLES = readdirSync(new URL('../../samples/', import.meta.url)).filter((f) => f.endsWith('.md')).sort();
+
+// A long agent handoff, as a reader opens one most days: a title and its introduction, 27 sections of prose, and among
+// them a 12-step deploy pipeline (a flowchart about 2,900 px wide), a sequence diagram with 7 participants and a
+// Gantt chart.
+const HANDOFF_SECTIONS = ['Summary', 'Context', 'Goals', 'Non-goals', 'Current state', 'Architecture', 'Deploy path',
+  'Request flow', 'State model', 'Data model', 'Schedule', 'Cost split', 'Throughput', 'Risks', 'Mitigations',
+  'Open questions', 'Decisions taken', 'Rollout plan', 'Monitoring', 'Alerts', 'Runbook', 'Testing', 'Known issues',
+  'Dependencies', 'Staffing', 'Appendix', 'Next steps'];
+function handoff() {
+  const prose = 'The worker reads each job document and writes a status update before it moves on to the next stage. '.repeat(12);
+  const diagrams = {
+    'Deploy path': ['flowchart LR', ...Array.from({ length: 11 }, (_, i) => `  S${i}[Step ${i + 1}: build stage ${i + 1}] --> S${i + 1}[Step ${i + 2}: build stage ${i + 2}]`)],
+    'Request flow': ['sequenceDiagram', ...['Client', 'Gateway', 'Auth', 'Queue', 'Worker', 'Store', 'Notifier'].map((p) => `  participant ${p}`),
+      '  Client->>Gateway: submit request', '  Gateway->>Queue: create job document', '  Queue->>Worker: lease job',
+      '  Worker->>Store: write result', '  Worker->>Notifier: notify', '  Notifier-->>Client: done'],
+    Schedule: ['gantt', '  dateFormat YYYY-MM-DD', '  section Build', '  Design :a1, 2026-10-01, 4d', '  Implement :a2, after a1, 6d',
+      '  section Verify', '  Test :b1, after a2, 3d', '  Review :b2, after b1, 2d', '  section Rollout', '  Canary :c1, after b2, 2d',
+      '  Full rollout :c2, after c1, 3d'],
+  };
+  return `# Status report: queue sharding\n\n${prose}\n\n` + HANDOFF_SECTIONS.map((s) =>
+    `## ${s}\n\n${prose}\n\n${diagrams[s] ? '```mermaid\n' + diagrams[s].join('\n') + '\n```\n\n' : ''}${prose}\n`).join('\n');
+}
 
 // ---------------------------------------------------------------------------------------------
 // The section rail
 // ---------------------------------------------------------------------------------------------
 
-// Scrolls so the reader is `frac` of the way through the section that heading `id` starts (0: its heading is just
-// above the reading line), as scrolling would, and lets the scroll spy run.
+// Scrolls so the reader is `frac` of the way through the section that heading `id` starts, as the rail counts it, and
+// lets the scroll spy run. A section starts where a jump to its heading lands (0: the heading at the page's
+// scroll-padding-top, under the toolbar and the rail) and ends where the next section becomes current (1: the next
+// h1 or h2 at the reading line).
 async function readAt(page, id, frac = 0) {
   await page.evaluate(async ([hid, f]) => {
     const line = Math.max(80, innerHeight * 0.3);
+    const land = Math.min(parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0, line);
     const docTop = (el) => el.getBoundingClientRect().top + scrollY;
     const heading = document.getElementById(hid);
     const all = [...document.querySelectorAll('#mdBody h1, #mdBody h2')];
     const next = all[all.indexOf(heading) + 1];
-    const start = docTop(heading) - line;
+    const start = docTop(heading) - land;
     const end = (next ? docTop(next) : document.documentElement.scrollHeight) - line;
     window.scrollTo({ top: start + 1 + f * (end - start - 2), behavior: 'instant' });
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -255,6 +280,73 @@ test('the rail adds no scroll listener of its own: the page keeps the scroll spy
     expect((await railState(page)).progress).toBeGreaterThan(0.4); // the fill still follows the reader
   }
   expect(await scrollListeners(page)).toEqual(known);
+});
+
+test('the fill restyles only the current segment as the reader scrolls, however many sections the rail has', async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  const filler = 'Line of text that fills the section. '.repeat(40);
+  await renderSource(page, '# Run log\n\nIntro.\n\n' + Array.from({ length: 120 }, (_, k) => `## Step ${k}\n\n${filler}\n\n${filler}\n`).join('\n'));
+  await readAt(page, 'step-60', 0.2);
+  // The jump made 60 segments read at once; let their transitions (a bar thickening) finish before measuring.
+  await page.waitForFunction(() => document.querySelector('#mdBody .section-minimap').getAnimations({ subtree: true }).length === 0);
+  const browser = page.context().browser();
+  await browser.startTracing(page, { categories: ['devtools.timeline'] });
+  const steps = [];
+  for (let i = 0; i < 6; i++) {
+    steps.push(await page.evaluate(async () => {
+      window.scrollBy({ top: 12, behavior: 'instant' }); // the page scrolls smoothly otherwise
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const seg = document.querySelector('#mdBody .minimap-segment.active');
+      return `${seg.dataset.targetId} ${getComputedStyle(seg).getPropertyValue('--p')}`;
+    }));
+  }
+  const recalcs = JSON.parse((await browser.stopTracing()).toString()).traceEvents
+    .filter((e) => e.name === 'UpdateLayoutTree' && e.args && typeof e.args.elementCount === 'number')
+    .map((e) => e.args.elementCount);
+  // Positive controls: the reader stayed in one section, its fill moved at every step, and the trace saw restyles.
+  expect(new Set(steps.map((s) => s.split(' ')[0]))).toEqual(new Set(['step-60']));
+  expect(new Set(steps).size).toBe(6);
+  expect(recalcs.length).toBeGreaterThan(5);
+  // The current segment and its two pseudo-elements, plus the page's progress bar: written on the rail, the fill
+  // restyled every segment, 484 elements a frame with these 120.
+  expect(Math.max(...recalcs), recalcs.join(' ')).toBeLessThan(20);
+});
+
+test('a jump to a section starts its fill at 0: the fill counts from where the jump lands the heading', async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  await renderSource(page, handoff());
+  await page.locator('#tocList .toc-link[data-target="decisions-taken"]').click();
+  // The jump scrolls smoothly. Positive control: it puts the heading at the top of the reading area (the page's
+  // scroll-padding-top, 112 px), above the reading line (270 px at this height), where the fill used to start counting.
+  const top = () => page.$eval('#decisions-taken', (h) => Math.abs(h.getBoundingClientRect().top - 112) < 3);
+  await expect.poll(top, { timeout: 10_000 }).toBe(true);
+  await settled(() => page.evaluate(() => Math.round(window.scrollY)));
+  const s = await railState(page);
+  expect(s.active).toEqual(['decisions-taken']);
+  expect(s.progress).toBeLessThan(0.02); // the reader has read nothing of it yet
+  expect(s.passed).toBe(16); // the sections above it are filled: the rail shows where the reader is
+});
+
+test("in the label form too, the title's introduction is marked: a 'you are here' dot at the start of the next section's bar", async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  const prose = 'The status of each part of the work, written by the agent that did it. '.repeat(20);
+  await renderSource(page, `# Status report\n\n${prose}\n\n${prose}\n\n` + ['Done', 'Doing', 'Blocked', 'Next'].map((h) => `## ${h}\n\n${prose}\n\n${prose}\n`).join('\n'));
+  await expect(page.locator('#mdBody .section-minimap')).not.toHaveClass(/is-track/); // four sections: the label form
+  // Per segment: whether its background draws a dot (a radial gradient) whose colour is the accent.
+  const dots = () => page.$$eval('#mdBody .minimap-segment', (segs) => segs.map((s) => {
+    const image = getComputedStyle(s).backgroundImage;
+    const at = image.indexOf('radial-gradient(');
+    if (at < 0) return false;
+    const colour = image.slice(at).match(/(?:rgba?|color|oklch|oklab|lab|lch|hsla?)\([^()]*\)/)[0];
+    return window.mdvTestColor.dE(colour, getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()) < 2;
+  }));
+  await readAt(page, 'status-report', 0.5);
+  const s = await railState(page);
+  expect(s.outline).toBe('status-report'); // the outline marks the title
+  expect(s.intro).toBe(true);
+  expect(await dots()).toEqual([true, false, false, false]); // a dot in the accent, on the first section's bar
+  await readAt(page, 'doing', 0.3);
+  expect(await dots()).toEqual([false, false, false, false]); // in a section, the current segment says where
 });
 
 // ---------------------------------------------------------------------------------------------

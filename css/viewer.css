@@ -1317,15 +1317,17 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
 
 /* ===== Section rail: where the reader is, section by section =====
    The first element of the document, ahead of the dashboard and the title as chrome (never between them), and it
-   sticks under the toolbar while reading. A slim progress strip with one segment per H2 section: the sections read
-   are filled, the current one is in the accent and filled as far as the reader has got (--mdv-rail-progress, set
-   on every frame of scrolling), and the ones ahead are an empty track. The column's top padding shrinks to make
-   room for it.
+   sticks under the toolbar while reading. A slim progress strip with one segment per H2 section: the sections above
+   the reader are filled, the current one is in the accent and filled as far as the reader has got
+   (--mdv-rail-progress, written on that segment on every frame of scrolling), and the ones ahead are an empty track.
+   The column's top padding shrinks to make room for it.
    With room each segment carries its label (data-label) over its bar; otherwise (.is-track, set by enhancements.js)
    the segments are bars only, and the rail names the current section (data-current) and where it is
-   (data-position). In a title's introduction no section is current, so the rail marks the title (.at-intro), as
-   the outline does. A segment's full name shows on hover and on keyboard focus. The scroll spy (navigation.js)
-   sets .active, .passed, .at-intro, data-current, data-position and the progress; nothing else writes them. */
+   (data-position). In a title's introduction no section is current, so the rail marks where the reader is
+   (.at-intro), as the outline marks the title: the track form shows the title after a "you are here" dot, and the
+   label form puts the dot at the start of the next section's bar. A segment's full name shows on hover and on
+   keyboard focus. The scroll spy (navigation.js) sets .active, .passed, .at-intro, data-current, data-position and
+   the progress; nothing else writes them. */
 .content-wrapper:has(.section-minimap) { padding-top: 14px; }
 .section-minimap {
   /* A segment's bar is --fill up to --p (0 to 1) and --rest after it; these are the three states' colours. Read,
@@ -1397,6 +1399,13 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
 .section-minimap:not(.is-track) .minimap-segment {
   background: linear-gradient(to right, var(--fill) calc(var(--p) * 100%), var(--rest) 0)
     center bottom 4px / calc(100% - 16px) 3px no-repeat;
+}
+/* In the title's introduction the label form has no room for the title, so the "you are here" dot sits where the
+   reader's next section starts: on the left end of its bar. */
+.section-minimap:not(.is-track).at-intro .minimap-segment:not(.passed):is(:first-child, .passed + *) {
+  background:
+    radial-gradient(circle, var(--accent) 3.5px, transparent 4px) left 4px bottom 1.5px / 8px 8px no-repeat,
+    linear-gradient(to right, var(--fill) calc(var(--p) * 100%), var(--rest) 0) center bottom 4px / calc(100% - 16px) 3px no-repeat;
 }
 .section-minimap:not(.is-track) .minimap-segment:hover::before { background: var(--bg-hover); color: var(--text-primary); }
 .section-minimap:not(.is-track) .minimap-segment.active::before { color: var(--accent-strong); }

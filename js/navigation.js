@@ -279,7 +279,8 @@ mdvNarrow.addEventListener('change', mdvSyncTocInert);
 // with the outline at the bottom of a page and past a closed <details>. Its fill (how far the reader is through the
 // current section) is measured in the same frame, so it never needs a listener of its own either.
 const mdvSpy = { headings: [], visible: null, links: new Map(), minimap: null, rail: [], railStart: '',
-                 railFrom: null, railCurrent: null, railEnd: null, railProgress: '', active: null, home: '', frame: 0 };
+                 railFrom: null, railCurrent: null, railEnd: null, railLanding: 0, railProgress: '', active: null,
+                 home: '', frame: 0 };
 
 function setupScrollSpy() {
   const body = document.getElementById('mdBody');
@@ -389,8 +390,16 @@ function mdvMarkRail(h, index) {
   nav.dataset.current = current ? current.seg.dataset.label : h1 ? mdvHeadingText(h1) : mdvSpy.railStart;
   nav.dataset.position = current ? `${at + 1} / ${rail.length}` : `${rail.length} sections`;
   nav.classList.toggle('at-intro', !current && !!h1);
-  // The current section ends where the next visible h1 or h2 starts (none: at the end of the document).
+  // The fill is written on the current segment only (mdvMarkRailProgress); a segment that stops being current drops it.
+  const prev = mdvSpy.railCurrent;
+  if (prev !== current) {
+    if (prev) prev.seg.style.removeProperty('--mdv-rail-progress');
+    mdvSpy.railProgress = '';
+  }
   mdvSpy.railCurrent = current;
+  // Where a jump lands a heading: the page's scroll-padding-top, under the toolbar and the rail.
+  mdvSpy.railLanding = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+  // The current section ends where the next visible h1 or h2 starts (none: at the end of the document).
   mdvSpy.railEnd = null;
   const visible = mdvSpy.visible || [];
   for (let i = current ? visible.indexOf(current.heading) + 1 : 0; i > 0 && i < visible.length; i++) {
@@ -399,27 +408,27 @@ function mdvMarkRail(h, index) {
   mdvKeepInView(current && current.seg, nav);
 }
 
-// How far the reader is through the current section, from 0 to 1: --mdv-rail-progress on the rail, which fills the
-// current segment that far (CSS). Measured in scroll positions, so it moves with every frame of scrolling: a section
-// starts when its heading reaches the reading line and ends when the next one does, or, for the sections that end
-// the page, when the page cannot scroll any further (at the bottom of the page the current section is read to its
-// end). Runs in the scroll spy's frame, after it has decided the current section.
+// How far the reader is through the current section, from 0 to 1, as --mdv-rail-progress on the current segment, which
+// CSS fills that far. Only that segment carries it: written on the rail, every segment and both pseudo-elements of each
+// would inherit it, and each frame of scrolling would restyle the whole rail (484 elements a frame with 120 sections).
+// Measured in scroll positions, so it moves with every frame of scrolling. A section starts where a jump to it lands
+// (its heading at the page's scroll-padding-top, or at the reading line if that is higher), so it is at 0 when a jump
+// arrives; counted from the reading line, a jump would arrive 15 to 27 % in. It ends where the next section becomes
+// current (the next h1 or h2 at the reading line), or, for the sections that end the page, where the page cannot
+// scroll any further, so at the bottom the current section is read to its end. Runs in the scroll spy's frame, after
+// it has decided the current section.
 function mdvMarkRailProgress(line) {
-  const nav = mdvSpy.minimap;
-  if (!nav) return;
   const current = mdvSpy.railCurrent;
-  let p = 0;
-  if (current) {
-    const y = window.scrollY;
-    const last = document.documentElement.scrollHeight - window.innerHeight;
-    const start = current.heading.getBoundingClientRect().top + y - line;
-    const end = Math.min(mdvSpy.railEnd ? mdvSpy.railEnd.getBoundingClientRect().top + y - line : Infinity, last);
-    p = end <= start ? 1 : Math.min(1, Math.max(0, (y - start) / (end - start)));
-  }
+  if (!current) return;
+  const y = window.scrollY;
+  const last = document.documentElement.scrollHeight - window.innerHeight;
+  const start = current.heading.getBoundingClientRect().top + y - Math.min(mdvSpy.railLanding, line);
+  const end = Math.min(mdvSpy.railEnd ? mdvSpy.railEnd.getBoundingClientRect().top + y - line : Infinity, last);
+  const p = end <= start ? 1 : Math.min(1, Math.max(0, (y - start) / (end - start)));
   const value = p.toFixed(3);
   if (value !== mdvSpy.railProgress) {
     mdvSpy.railProgress = value;
-    nav.style.setProperty('--mdv-rail-progress', value);
+    current.seg.style.setProperty('--mdv-rail-progress', value);
   }
 }
 
