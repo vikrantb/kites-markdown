@@ -60,16 +60,19 @@
   --focus-ring: #4553C9;
   --selection: rgba(69, 83, 201, 0.18);
 
-  /* Callouts: one accent each; the tint is mixed from it */
-  --callout-note: #1F64C8;
-  --callout-tip: #1A7A43;
-  --callout-important: #7444CF;
-  --callout-warning: #8F5A00;
-  --callout-caution: #BE2433;
-  --callout-tldr: #0B6E86;
-  --callout-decision: #6236C4;
-  --callout-cost: #B14A0E;
-  --callout-tint: 7%;
+  /* Callouts: one accent each, eight distinct hues. The tint is the accent mixed (in oklab) into a grey at the
+     page's lightness, not into the page itself: mixing a cool hue into the warm sepia page cancelled its colour
+     and left khaki-grey boxes. */
+  --callout-note: #086ABC;
+  --callout-tip: #06782F;
+  --callout-important: #763EBD;
+  --callout-warning: #816500;
+  --callout-caution: #C51B32;
+  --callout-tldr: #067080;
+  --callout-decision: #A62675;
+  --callout-cost: #803B29;
+  --callout-tint: 8%;
+  --callout-base: #FAFAFA;
 
   /* Status pills (frontmatter dashboard) */
   --status-shipped: #1A7A43;
@@ -101,11 +104,11 @@
   --diagram-text-muted: #545A68;
   --diagram-line: #858B9B;
   --diagram-node: #EEF0FA;
-  --diagram-node-border: #A2A9E4;
+  --diagram-node-border: #888EC7;
   --diagram-alt: #EBF3F2;
-  --diagram-alt-border: #8EBEB9;
+  --diagram-alt-border: #6C9B96;
   --diagram-third: #F6F1E9;
-  --diagram-third-border: #D0B185;
+  --diagram-third-border: #AB8D62;
   --diagram-cluster: #F8F7F3;
   --diagram-cluster-border: #E2DED6;
   --diagram-label-bg: #FFFFFF;
@@ -118,22 +121,22 @@
   --diagram-danger-soft: #FBE9EA;
   --diagram-shadow: rgba(29, 33, 41, 0.08);
   --diagram-series-text: #FFFFFF;
-  --diagram-series-1: #4B57C9;
-  --diagram-series-2: #1C7C72;
-  --diagram-series-3: #9C610A;
-  --diagram-series-4: #B6405A;
-  --diagram-series-5: #7350C0;
-  --diagram-series-6: #236FA6;
-  --diagram-series-7: #3B7A3F;
-  --diagram-series-8: #5C6576;
-  --diagram-series-soft-1: #EAECFA;
-  --diagram-series-soft-2: #E3F1EF;
-  --diagram-series-soft-3: #F6EDDF;
-  --diagram-series-soft-4: #F8E7EB;
-  --diagram-series-soft-5: #EFEAF8;
-  --diagram-series-soft-6: #E4EFF7;
-  --diagram-series-soft-7: #E6F0E6;
-  --diagram-series-soft-8: #ECEEF1;
+  --diagram-series-1: #4B66E2;
+  --diagram-series-2: #CB304F;
+  --diagram-series-3: #149B8F;
+  --diagram-series-4: #C7801C;
+  --diagram-series-5: #A941B0;
+  --diagram-series-6: #BB4E23;
+  --diagram-series-7: #057BB5;
+  --diagram-series-8: #11863F;
+  --diagram-series-soft-1: #E7EDFE;
+  --diagram-series-soft-2: #FDE8E9;
+  --diagram-series-soft-3: #E7F3F1;
+  --diagram-series-soft-4: #F9F0E6;
+  --diagram-series-soft-5: #F6E9F6;
+  --diagram-series-soft-6: #F9EAE5;
+  --diagram-series-soft-7: #E5EFF7;
+  --diagram-series-soft-8: #E5F0E7;
 
   /* Elevation */
   --shadow-xs: 0 1px 2px rgba(25, 28, 36, 0.05);
@@ -211,15 +214,16 @@
     --focus-ring: #9A4A1C;
     --selection: rgba(154, 74, 28, 0.18);
 
-    --callout-note: #28588F;
-    --callout-tip: #3A6B2C;
-    --callout-important: #6E4596;
-    --callout-warning: #7F5600;
-    --callout-caution: #A12C22;
-    --callout-tldr: #22656A;
-    --callout-decision: #5E3E8C;
-    --callout-cost: #9A4513;
-    --callout-tint: 8%;
+    --callout-note: #205F9F;
+    --callout-tip: #226929;
+    --callout-important: #6A439B;
+    --callout-warning: #715704;
+    --callout-caution: #A82D30;
+    --callout-tldr: #056774;
+    --callout-decision: #8B306A;
+    --callout-cost: #8F4101;
+    --callout-tint: 12%;
+    --callout-base: #ECECEC;
 
     --status-shipped: #3A6B2C;
     --status-progress: #7F5600;
@@ -255,11 +259,11 @@
   --diagram-text-muted: #5E4F3E;
   --diagram-line: #8C7A64;
   --diagram-node: #F0E4D3;
-  --diagram-node-border: #CA9F81;
+  --diagram-node-border: #AB8265;
   --diagram-alt: #E7E7DA;
-  --diagram-alt-border: #94AFA6;
+  --diagram-alt-border: #769088;
   --diagram-third: #EFE6D2;
-  --diagram-third-border: #C2AC7C;
+  --diagram-third-border: #9D8859;
   --diagram-cluster: #F3EBD9;
   --diagram-cluster-border: #DCCFB4;
   --diagram-label-bg: #F9F3E5;
@@ -272,22 +276,22 @@
   --diagram-danger-soft: #F2DCCF;
   --diagram-shadow: rgba(70, 50, 20, 0.10);
   --diagram-series-text: #FFFFFF;
-  --diagram-series-1: #8E4A1F;
-  --diagram-series-2: #2F6B66;
-  --diagram-series-3: #7F5C10;
-  --diagram-series-4: #9C3D4A;
-  --diagram-series-5: #66508C;
-  --diagram-series-6: #2F5F8A;
-  --diagram-series-7: #4F6B2F;
-  --diagram-series-8: #6B5D4D;
-  --diagram-series-soft-1: #F1E2D2;
-  --diagram-series-soft-2: #E2E6DA;
-  --diagram-series-soft-3: #F0E5CC;
-  --diagram-series-soft-4: #F1DFD6;
-  --diagram-series-soft-5: #E9E1DE;
-  --diagram-series-soft-6: #E1E4DF;
-  --diagram-series-soft-7: #E5E7D3;
-  --diagram-series-soft-8: #EBE3D3;
+  --diagram-series-1: #A24725;
+  --diagram-series-2: #2E69B2;
+  --diagram-series-3: #B58C26;
+  --diagram-series-4: #944C8F;
+  --diagram-series-5: #26A397;
+  --diagram-series-6: #5F60B5;
+  --diagram-series-7: #A4435F;
+  --diagram-series-8: #5B7809;
+  --diagram-series-soft-1: #EADBD5;
+  --diagram-series-soft-2: #D7DFEB;
+  --diagram-series-soft-3: #EAE5D9;
+  --diagram-series-soft-4: #E6DBE5;
+  --diagram-series-soft-5: #DAE8E6;
+  --diagram-series-soft-6: #DCDEEB;
+  --diagram-series-soft-7: #EADADD;
+  --diagram-series-soft-8: #DCE1D5;
 }
 
 /* ===== Tokens: dark ===== */
@@ -335,15 +339,16 @@
     --focus-ring: #94A2FF;
     --selection: rgba(148, 162, 255, 0.28);
 
-    --callout-note: #6FA8FF;
-    --callout-tip: #5BC88A;
-    --callout-important: #B99BFF;
-    --callout-warning: #E7B04A;
-    --callout-caution: #FF8087;
-    --callout-tldr: #4FC6DD;
-    --callout-decision: #A98BFF;
-    --callout-cost: #FF9E5E;
-    --callout-tint: 11%;
+    --callout-note: #6EB2FE;
+    --callout-tip: #61CB7C;
+    --callout-important: #BA93FB;
+    --callout-warning: #F3C443;
+    --callout-caution: #F8767A;
+    --callout-tldr: #4BC8D5;
+    --callout-decision: #F786BE;
+    --callout-cost: #F77036;
+    --callout-tint: 12%;
+    --callout-base: #161616;
 
     --status-shipped: #5BC88A;
     --status-progress: #E7B04A;
@@ -379,16 +384,16 @@
   --diagram-text-muted: #A7ADB9;
   --diagram-line: #7F8696;
   --diagram-node: #2F3449;
-  --diagram-node-border: #586193;
+  --diagram-node-border: #5F699B;
   --diagram-alt: #24393C;
-  --diagram-alt-border: #34716C;
+  --diagram-alt-border: #397570;
   --diagram-third: #3E372E;
   --diagram-third-border: #866B3E;
   --diagram-cluster: #20242C;
   --diagram-cluster-border: #343A45;
   --diagram-label-bg: #1C1F26;
-  --diagram-note: #3A3322;
-  --diagram-note-border: #8C7633;
+  --diagram-note: #422E18;
+  --diagram-note-border: #956B33;
   --diagram-note-text: #F2E6C0;
   --diagram-accent: #94A2FF;
   --diagram-on-accent: #11131A;
@@ -396,22 +401,22 @@
   --diagram-danger-soft: #3A2328;
   --diagram-shadow: rgba(0, 0, 0, 0.35);
   --diagram-series-text: #111318;
-  --diagram-series-1: #8C99FF;
-  --diagram-series-2: #4CC2B2;
-  --diagram-series-3: #F0B656;
-  --diagram-series-4: #FF8FA3;
-  --diagram-series-5: #B79CFF;
-  --diagram-series-6: #6CB7F0;
-  --diagram-series-7: #7CCB7F;
-  --diagram-series-8: #A7B0C0;
-  --diagram-series-soft-1: #2C3150;
-  --diagram-series-soft-2: #1F3A3A;
-  --diagram-series-soft-3: #3D3524;
-  --diagram-series-soft-4: #3F2830;
-  --diagram-series-soft-5: #33294A;
-  --diagram-series-soft-6: #1F3446;
-  --diagram-series-soft-7: #253A28;
-  --diagram-series-soft-8: #2D323B;
+  --diagram-series-1: #4C7DF7;
+  --diagram-series-2: #CA7906;
+  --diagram-series-3: #BC55C4;
+  --diagram-series-4: #E14754;
+  --diagram-series-5: #06A598;
+  --diagram-series-6: #D06037;
+  --diagram-series-7: #0A99DF;
+  --diagram-series-8: #1AA04D;
+  --diagram-series-soft-1: #2A354D;
+  --diagram-series-soft-2: #443424;
+  --diagram-series-soft-3: #412D43;
+  --diagram-series-soft-4: #4A2C2C;
+  --diagram-series-soft-5: #273C39;
+  --diagram-series-soft-6: #462F27;
+  --diagram-series-soft-7: #263A48;
+  --diagram-series-soft-8: #273B2B;
 }
 
 /* ===== Reset and base ===== */
@@ -1192,7 +1197,7 @@ input:focus-visible, textarea:focus-visible { outline-offset: 0; }
   border: 1px solid color-mix(in srgb, var(--c) 22%, transparent);
   border-left: 4px solid var(--c);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--c) var(--callout-tint), var(--bg-primary));
+  background: color-mix(in oklab, var(--c) var(--callout-tint), var(--callout-base));
   color: var(--text-primary);
   font-size: 0.96em;
 }

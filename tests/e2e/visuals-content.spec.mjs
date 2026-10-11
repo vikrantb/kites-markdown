@@ -27,3 +27,61 @@ test("a figure's caption is drawn, never added to the paragraph's text, so a com
   const source = await page.evaluate(() => rawMarkdown);
   expect(source.slice(0, source.indexOf('## System overview'))).not.toContain('MDV-ANCHOR');
 });
+
+const CALLOUTS = ['note', 'tip', 'important', 'warning', 'caution', 'tldr', 'decision', 'cost'];
+
+for (const theme of THEMES) {
+  test(`the eight callouts are told apart by colour, and each tint keeps its own hue, in the ${theme} theme`, async ({ page }) => {
+    await open(page, 'kitchen-sink.md', theme);
+    const r = await page.evaluate((types) => {
+      const C = window.mdvTestColor;
+      const els = types.map((t) => document.querySelector(`#mdBody .callout-${t}`));
+      const bars = els.map((el) => getComputedStyle(el).borderLeftColor);
+      const tints = els.map((el) => getComputedStyle(el).backgroundColor);
+      let bar = [Infinity, ''], tint = [Infinity, ''];
+      for (let i = 0; i < types.length; i++) {
+        for (let j = i + 1; j < types.length; j++) {
+          const pair = `${types[i]}/${types[j]}`;
+          const b = C.dE(bars[i], bars[j]), t = C.dE(tints[i], tints[j]);
+          if (b < bar[0]) bar = [b, pair];
+          if (t < tint[0]) tint = [t, pair];
+        }
+      }
+      // A tint mixed into a coloured page drifts towards the page's hue (cool callouts on sepia turned khaki).
+      const drift = types.map((t, i) => [t, Math.abs(((C.hue(tints[i]) - C.hue(bars[i]) + 540) % 360) - 180)])
+        .filter(([, d]) => d > 30).map(([t, d]) => `${t}: ${d.toFixed(0)} degrees`);
+      const titles = types.map((t, i) => [t, C.contrast(getComputedStyle(els[i].querySelector('.callout-title')).color, tints[i])])
+        .filter(([, c]) => c < 4.5).map(([t, c]) => `${t}: ${c.toFixed(2)}`);
+      return { bar, tint, drift, titles };
+    }, CALLOUTS);
+    expect(r.bar[0], `closest accents: ${r.bar[1]}`).toBeGreaterThanOrEqual(20); // CIELAB dE76
+    expect(r.tint[0], `closest tints: ${r.tint[1]}`).toBeGreaterThanOrEqual(2.5);
+    expect(r.drift).toEqual([]);
+    expect(r.titles).toEqual([]);
+  });
+
+  test(`pie slices stay apart for colour-blind readers, and each label is readable on its slice, in the ${theme} theme`, async ({ page }) => {
+    for (const sample of ['kitchen-sink.md', 'diagram-gallery.md']) {
+      await open(page, sample, theme);
+      const r = await page.evaluate(() => {
+        const C = window.mdvTestColor;
+        const svg = document.querySelector('#mdBody .mermaid svg[aria-roledescription="pie"]');
+        const slices = [...svg.querySelectorAll('path.pieCircle')].map((p) => C.rgb(getComputedStyle(p).fill));
+        const labels = [...svg.querySelectorAll('text.slice')].map((t, i) => C.contrast(getComputedStyle(t).fill, slices[i]));
+        let worst = [Infinity, ''];
+        for (let i = 0; i < slices.length; i++) {
+          for (let j = i + 1; j < slices.length; j++) {
+            for (const kind of ['deutan', 'protan']) {
+              const d = C.dE(C.cvd(slices[i], kind), C.cvd(slices[j], kind));
+              if (d < worst[0]) worst = [d, `slices ${i + 1} and ${j + 1}, ${kind}`];
+            }
+          }
+        }
+        return { count: slices.length, worst, labels };
+      });
+      expect(r.count).toBeGreaterThanOrEqual(4);
+      if (sample === 'kitchen-sink.md') expect(r.worst[0], r.worst[1]).toBeGreaterThanOrEqual(12); // every pair: a legend matches any two
+      for (const c of r.labels) expect(c).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+}

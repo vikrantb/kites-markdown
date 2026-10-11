@@ -533,13 +533,10 @@ for (const theme of THEMES) {
         const r = ratio(parse(cs.getPropertyValue(fg)), parse(cs.getPropertyValue(bg)));
         if (r < 4.5) out.push(`${fg} on ${bg}: ${r.toFixed(2)}`);
       }
-      // Callout titles on their own tint (the tint is mixed in sRGB, as color-mix does).
-      const tint = parseFloat(cs.getPropertyValue('--callout-tint')) / 100;
-      const page = parse(cs.getPropertyValue('--bg-primary'));
+      // Callout titles on their own tint, as drawn.
       for (const c of callouts) {
-        const fg = parse(cs.getPropertyValue(`--callout-${c}`));
-        const bg = fg.map((v, i) => v * tint + page[i] * (1 - tint));
-        const r = ratio(fg, bg);
+        const el = document.querySelector(`#mdBody .callout-${c}`);
+        const r = window.mdvTestColor.contrast(getComputedStyle(el.querySelector('.callout-title')).color, getComputedStyle(el).backgroundColor);
         if (r < 4.5) out.push(`--callout-${c} on its tint: ${r.toFixed(2)}`);
       }
       probe.remove();

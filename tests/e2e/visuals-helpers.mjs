@@ -53,7 +53,20 @@ function installColorTools() {
   };
   const dE = (a, b) => { const p = lab(a), q = lab(b); return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); };
   const chroma = (c) => { const l = lab(c); return Math.hypot(l[1], l[2]); };
-  window.mdvTestColor = { rgb, contrast, dE, chroma, lab };
+  const hue = (c) => { const l = lab(c); return (Math.atan2(l[2], l[1]) * 180 / Math.PI + 360) % 360; };
+  // Colour as seen with deuteranopia or protanopia (Machado, Oliveira and Fernandes 2009, severity 1), as sRGB.
+  const MACHADO = {
+    deutan: [[0.367322, 0.860646, -0.227968], [0.280085, 0.672501, 0.047413], [-0.011820, 0.042940, 0.968881]],
+    protan: [[0.152286, 1.052583, -0.204868], [0.114503, 0.786281, 0.099216], [-0.003882, -0.048116, 1.051998]],
+  };
+  const cvd = (c, kind) => {
+    const v = (Array.isArray(c) ? c : rgb(c)).map(lin);
+    return MACHADO[kind].map((row) => {
+      const x = Math.min(1, Math.max(0, row[0] * v[0] + row[1] * v[1] + row[2] * v[2]));
+      return 255 * (x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055);
+    });
+  };
+  window.mdvTestColor = { rgb, contrast, dE, chroma, hue, lab, cvd };
 }
 
 export async function open(page, sample, theme = 'light', { waitUntil = 'load' } = {}) {

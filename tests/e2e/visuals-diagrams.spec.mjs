@@ -1,7 +1,7 @@
 // Diagram finish: one shape language across Mermaid's types. Arrowheads in their line's colour and resolved
 // inside their own diagram, journey actors from the palette, outlines at 3:1, labels that do not collide.
 import { test, expect } from '@playwright/test';
-import { open } from './visuals-helpers.mjs';
+import { THEMES, open } from './visuals-helpers.mjs';
 
 const svgOf = (type) => `#mdBody .mermaid-wrapper[data-diagram-type="${type}"] .mermaid svg`;
 
@@ -57,6 +57,27 @@ for (const theme of ['light', 'dark']) {
     expect(result.duplicates).toEqual([]);
     expect(result.foreign).toEqual([]);
     expect(result.mismatched).toEqual([]);
+  });
+}
+
+for (const theme of THEMES) {
+  test(`diagram shapes are outlined at 3:1 or more against their card in the ${theme} theme`, async ({ page }) => {
+    await open(page, 'kitchen-sink.md', theme);
+    const result = await page.evaluate(() => {
+      const C = window.mdvTestColor;
+      const cs = getComputedStyle(document.documentElement);
+      const card = cs.getPropertyValue('--diagram-bg');
+      const low = [];
+      for (const t of ['--diagram-node-border', '--diagram-alt-border', '--diagram-third-border', '--diagram-line']) {
+        const r = C.contrast(cs.getPropertyValue(t), card);
+        if (r < 3) low.push(`${t}: ${r.toFixed(2)}`);
+      }
+      const rect = document.querySelector('#mdBody .mermaid svg[aria-roledescription^="flowchart"] .node rect');
+      const drawn = C.contrast(getComputedStyle(rect).stroke, getComputedStyle(rect.closest('.mermaid-wrapper')).backgroundColor);
+      return { low, drawn };
+    });
+    expect(result.low).toEqual([]);
+    expect(result.drawn).toBeGreaterThanOrEqual(3);
   });
 }
 
