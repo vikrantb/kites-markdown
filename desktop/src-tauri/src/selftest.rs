@@ -169,18 +169,21 @@ pub fn finish(app: &AppHandle, label: &str, viewer: Value) -> Result<(), String>
     .unwrap_or_default();
   let expected_title = path.as_deref().map(paths::display_name).unwrap_or_default();
   let scope = app.asset_protocol_scope();
-  let (folder_allowed, parent_allowed) = match path.as_deref().and_then(|p| p.parent()) {
+  // Images in the document's folder and below may load, those in dot-folders (.github/, .gitbook/) too;
+  // nothing in the folder above.
+  let (folder_allowed, dot_folder_allowed, parent_allowed) = match path.as_deref().and_then(|p| p.parent()) {
     Some(dir) => (
       scope.is_allowed(dir.join("kites-self-test-probe.png")),
+      scope.is_allowed(dir.join(".kites-self-test").join("probe.png")),
       dir
         .parent()
         .map(|up| scope.is_allowed(up.join("kites-self-test-outside.png")))
         .unwrap_or(false),
     ),
-    None => (false, false),
+    None => (false, false, false),
   };
   let viewer_ok = viewer.get("ok").and_then(Value::as_bool).unwrap_or(false);
-  let shell_ok = path.is_some() && title == expected_title && folder_allowed && !parent_allowed;
+  let shell_ok = path.is_some() && title == expected_title && folder_allowed && dot_folder_allowed && !parent_allowed;
   let ok = viewer_ok && shell_ok;
   let report = json!({
     "ok": ok,
@@ -190,7 +193,7 @@ pub fn finish(app: &AppHandle, label: &str, viewer: Value) -> Result<(), String>
       "path": path.as_deref().map(paths::display_path),
       "windowTitle": title,
       "expectedTitle": expected_title,
-      "assetScope": { "documentFolder": folder_allowed, "parentFolder": parent_allowed },
+      "assetScope": { "documentFolder": folder_allowed, "dotFolder": dot_folder_allowed, "parentFolder": parent_allowed },
     },
     "defaultHandler": crate::default_app::current_handler(),
     "elapsedMs": test.started.elapsed().as_millis() as u64,

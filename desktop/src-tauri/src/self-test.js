@@ -68,30 +68,44 @@
     return { count: found.length, examples: found.slice(0, 12) };
   }
 
-  // Requests the bridge must refuse. None has a side effect: each is refused before anything happens.
+  // Requests the bridge must refuse, each for one named reason: a refusal for any other reason would mean
+  // the probe hit a different check and proves nothing about this one. None has a side effect.
   async function probeBridge(host) {
     const windows = /^[a-zA-Z]:[\\/]/.test(host.currentPath || '');
     const existingNonMarkdown = windows ? 'C:\\Windows\\win.ini' : '/etc/hosts';
     const folder = (host.currentPath || '').replace(/[\\/][^\\/]*$/, '');
     const sep = windows ? '\\' : '/';
-    const refused = async (attempt) => {
+    const refused = async (expected, attempt) => {
       try {
         const result = await attempt();
-        if (result && result.ok === false) return { refused: true, code: result.reason || 'refused' };
-        return { refused: false, result: clip(JSON.stringify(result)) };
+        if (result && result.ok === false) return { refused: result.reason === expected, code: result.reason || 'refused', expected };
+        return { refused: false, result: clip(JSON.stringify(result)), expected };
       } catch (e) {
-        return { refused: true, code: (e && e.code) || clip(e) };
+        const code = (e && e.code) || clip(e);
+        return { refused: code === expected, code, expected };
       }
     };
     const out = {
-      readNonMarkdown: await refused(() => call('mdv_read_document', { path: existingNonMarkdown })),
-      openNonMarkdown: await refused(() => call('mdv_open_path', { path: existingNonMarkdown })),
-      openScriptLink: await refused(() => call('mdv_open_external', { url: 'javascript:alert(1)' })),
-      openFileLink: await refused(() => call('mdv_open_external', { url: windows ? 'file:///C:/Windows/win.ini' : 'file:///etc/hosts' })),
-      saveOtherFile: await refused(() => host.saveDocument(folder + sep + 'kites-self-test-other.md', 'x', 0)),
+      readNonMarkdown: await refused('not-markdown', () => call('mdv_read_document', { path: existingNonMarkdown })),
+      openNonMarkdown: await refused('not-markdown', () => call('mdv_open_path', { path: existingNonMarkdown })),
+      openScriptLink: await refused('not-allowed', () => call('mdv_open_external', { url: 'javascript:alert(1)' })),
+      openFileLink: await refused('not-allowed', () => call('mdv_open_external', { url: windows ? 'file:///C:/Windows/win.ini' : 'file:///etc/hosts' })),
+      saveOtherFile: await probeSaveIntoSibling(folder + sep + 'kites-self-test-sibling.md', refused),
     };
     out.allRefused = Object.values(out).every((v) => v.refused);
     return out;
+  }
+
+  // A save into another existing Markdown file in the same folder, naming that file's real version, so the
+  // window-owns-its-file rule is the only thing that can refuse it. The runner puts the sibling there.
+  async function probeSaveIntoSibling(sibling, refused) {
+    const before = await call('mdv_read_document', { path: sibling }).catch((e) => ({ missing: (e && e.message) || String(e) }));
+    if (before.missing) return { refused: false, expected: 'not-allowed', missing: `the probe needs ${sibling}: ${clip(before.missing)}` };
+    const attempt = await refused('not-allowed', () => call('mdv_save_document', { path: sibling, text: 'kites-self-test: written by the probe\n', version: before.version }));
+    const after = await call('mdv_read_document', { path: sibling }).catch(() => null);
+    attempt.siblingUnchanged = !!after && after.text === before.text;
+    attempt.refused = attempt.refused && attempt.siblingUnchanged;
+    return attempt;
   }
 
   function waitForChange(host, test, ms) {
@@ -118,6 +132,7 @@
     const liveReload = await arrived;
     await sleep(300);
     const reloadedIntoPage = rawMarkdown.includes('kites-self-test: edited elsewhere');
+    // The save seam names the version before the edit by its time; the bridge sends that version's token.
     const staleSave = await host.saveDocument(path, original, beforeEdit);
     const afterStale = await host.readDocument(path).catch(() => null);
     const restore = await host.saveDocument(path, original, host.currentMtimeMs);
@@ -215,7 +230,10 @@
       if (report.log.pageErrors.length) f.push(`${report.log.pageErrors.length} page errors`);
       if (report.log.cspViolations.length) f.push(`${report.log.cspViolations.length} CSP violations while rendering`);
     }
-    if (report.bridge && !report.bridge.allRefused) f.push('the bridge accepted a request it must refuse');
+    if (report.bridge && !report.bridge.allRefused) {
+      const wrong = Object.entries(report.bridge).filter(([k, v]) => k !== 'allRefused' && !v.refused);
+      f.push('the bridge did not refuse as it must: ' + wrong.map(([k, v]) => `${k} (${v.missing || `${v.code || 'accepted'}, expected ${v.expected}`})`).join(', '));
+    }
     if (report.save && !report.save.ok) f.push('saving or live reload failed: ' + Object.entries(report.save.checks).filter(([, v]) => !v).map(([k]) => k).join(', '));
     if (report.sanitization) {
       if (report.sanitization.executed) f.push('script in a document ran');

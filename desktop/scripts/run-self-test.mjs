@@ -19,11 +19,11 @@
 //                    app the automatic handler for a type nobody chose a default for, so a build folder
 //                    would otherwise start opening the person's .md files.
 //
-// Checks (--expect): render (no errors, every diagram drawn), kitchen-sink (the sample's features all
-// rendered), assets (relative images load, one outside the folder does not), save (the save probe
-// passed), no-inline-handlers (none left for the app's CSP to block).
+// Checks (--expect): render (no errors, every diagram drawn, the bridge refused what it must), kitchen-sink (the sample's features all rendered), assets (images in the
+// document's folder load, one in a dot-folder included; one outside the folder does not), save (the save
+// probe passed), no-inline-handlers (none left for the app's CSP to block).
 import { spawn, execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,6 +56,7 @@ function programOf(app) {
 }
 
 // Copies the document's folder to a scratch place; the linked fixture also needs its parent's outside.png.
+// A sibling Markdown file is added for the bridge probe, which must fail to save into it.
 function scratchCopy(doc) {
   const scratch = mkdtempSync(join(tmpdir(), 'kites-self-test-'));
   const folder = dirname(doc);
@@ -66,6 +67,7 @@ function scratchCopy(doc) {
   if (basename(folder) === 'samples') cpSync(doc, join(copyFolder, basename(doc)));
   else cpSync(folder, copyFolder, { recursive: true });
   if (existsSync(outside)) cpSync(outside, join(scratch, 'work', 'outside.png'));
+  writeFileSync(join(copyFolder, 'kites-self-test-sibling.md'), '# A sibling of the document\n\nThe self-test must not be able to save into this file.\n');
   return { scratch, doc: join(copyFolder, basename(doc)) };
 }
 
@@ -97,6 +99,8 @@ async function selfTest() {
   const { scratch, doc } = scratchCopy(resolve(docArg));
   const out = resolve(opt('--out') || join(tmpdir(), `kites-self-test-${Date.now()}.json`));
   mkdirSync(dirname(out), { recursive: true });
+  // A report left by an earlier run must never pass for this one.
+  rmSync(out, { force: true });
   const probe = flag('--save-probe');
   console.log(`app:      ${app}\ndocument: ${doc}\nlaunch:   ${launch}${probe ? ' (with the save probe)' : ''}`);
   let result;
@@ -152,9 +156,10 @@ function verify(report, exitCode) {
       want(v.kind === 'desktop', `mdvHost.kind was ${v.kind}`);
       want(c.mermaidSvgs === c.mermaidBlocks, `${c.mermaidSvgs} of ${c.mermaidBlocks} diagrams drawn`);
       want(v.sanitization && v.sanitization.executed === false && v.sanitization.rawErrorFired === true, 'the script probe did not prove that document script is blocked');
-      want(v.bridge && v.bridge.allRefused === true, 'the bridge accepted a request it must refuse');
+      want(v.bridge && v.bridge.allRefused === true, 'the bridge did not refuse a request as it must');
       want(report.document && report.document.windowTitle === report.document.expectedTitle, 'the window title is not the file name');
-      want(report.document && report.document.assetScope && report.document.assetScope.documentFolder === true && report.document.assetScope.parentFolder === false, 'the asset scope is not exactly the document folder');
+      const scope = (report.document && report.document.assetScope) || {};
+      want(scope.documentFolder === true && scope.dotFolder === true && scope.parentFolder === false, `the asset scope is not exactly the document folder and below: ${JSON.stringify(scope)}`);
     } else if (check === 'kitchen-sink') {
       const fences = mermaidFences(join(desktop, '..', 'samples', 'kitchen-sink.md'));
       want(c.mermaidBlocks === fences, `expected ${fences} diagrams, found ${c.mermaidBlocks}`);
@@ -162,8 +167,10 @@ function verify(report, exitCode) {
       want(c.katexErrors === 0, `${c.katexErrors} math errors`);
     } else if (check === 'assets') {
       const i = v.images || {};
-      want(i.total === 3 && i.viaAssetProtocol === 3, `expected 3 images through the asset protocol, found ${i.viaAssetProtocol} of ${i.total}`);
-      want(i.loaded === 2, `expected the 2 images inside the document's folder to load, ${i.loaded} did`);
+      want(i.total === 4, `expected the fixture's 4 images, found ${i.total}`);
+      want(i.viaAssetProtocol === 3, `expected the 3 images in the document's folder to go through the asset protocol, ${i.viaAssetProtocol} did`);
+      want(i.loaded === 3, `expected those 3 images to load, ${i.loaded} did`);
+      want((i.loadedSources || []).some((s) => s.startsWith('.gitbook/')), 'the image in a dot-folder (.gitbook/) did not load');
       want((i.broken || []).some((s) => s.includes('../outside.png')), 'the image outside the document folder loaded; the asset scope is too wide');
     } else if (check === 'save') {
       want(v.save && v.save.ok === true, `the save probe failed: ${JSON.stringify(v.save && v.save.checks)}`);
@@ -185,7 +192,7 @@ function summary(report) {
     `rendered: h1 ${c.h1}, h2 ${c.h2}, tables ${c.tables}, diagrams ${c.mermaidSvgs}/${c.mermaidBlocks}, math ${c.katex} (errors ${c.katexErrors}), callouts ${c.callouts}, code ${c.codeBlocks}, threads ${c.commentThreads}`,
     `images: ${v.images ? `${v.images.loaded}/${v.images.total} loaded, ${v.images.viaAssetProtocol} via the asset protocol` : '-'}`,
     `script probe: ran ${v.sanitization ? v.sanitization.viaRawHtml + v.sanitization.viaRender : '?'} times (raw ${v.sanitization && v.sanitization.viaRawHtml}, render ${v.sanitization && v.sanitization.viaRender}); CSP violations during probes ${(v.cspViolationsDuringProbes || []).length}`,
-    `bridge refusals: ${v.bridge ? Object.entries(v.bridge).filter(([k]) => k !== 'allRefused').map(([k, r]) => `${k}=${r.refused ? r.code : 'ACCEPTED'}`).join(', ') : '-'}`,
+    `bridge refusals: ${v.bridge ? Object.entries(v.bridge).filter(([k]) => k !== 'allRefused').map(([k, r]) => `${k}=${r.refused ? r.code : `WRONG (${r.missing || r.code || 'accepted'}, expected ${r.expected})`}`).join(', ') : '-'}`,
     `save probe: ${v.save ? JSON.stringify(v.save.checks) : 'not run'}`,
     `inline handlers left: ${v.inlineHandlers ? v.inlineHandlers.count : '?'}`,
     `console errors ${(v.log && v.log.consoleErrors.length) ?? '?'}, page errors ${(v.log && v.log.pageErrors.length) ?? '?'}, CSP violations while rendering ${(v.log && v.log.cspViolations.length) ?? '?'}`,

@@ -12,7 +12,7 @@
 //     keeping the reading position;
 //   - follows links: Markdown files open in their own window, web and mail links in the default app,
 //     and the page itself never navigates away;
-//   - shows images with relative paths, through the asset protocol;
+//   - shows images from the document's folder (and below), through the asset protocol;
 //   - routes the Open button to the native Open panel, and keeps every other way of loading a
 //     different document (paste, File System Access) from linking it to this window's file.
 //
@@ -30,6 +30,7 @@
       kind: 'browser',
       currentPath: null,
       currentMtimeMs: null,
+      currentVersion: null,
       initialDocument: none,
       readDocument: none,
       saveDocument: none,
@@ -156,23 +157,58 @@
   let savesInFlight = 0;
   let pendingChange = null;
   let documentName = '';
+  let holdsText = false;
+
+  // Versions. Each document the shell sends carries a token naming its exact bytes, and a save names the
+  // version its text was made from: the shell writes only while the file still holds those bytes, however
+  // coarse the file system's clock. The save seam names a version by its time, so the bridge keeps the
+  // token of every version of this window's file it was handed, newest last.
+  let current = { mtimeMs: null, version: null };
+  const versions = [];
+  function remember(mtimeMs, version) {
+    if (!version) return;
+    versions.push({ mtimeMs, version });
+    if (versions.length > 32) versions.shift();
+  }
+  function versionAt(mtimeMs) {
+    for (let i = versions.length - 1; i >= 0; i--) if (versions[i].mtimeMs === mtimeMs) return versions[i].version;
+    return null;
+  }
 
   const host = {
     kind: 'desktop',
     currentPath: null,
-    currentMtimeMs: null,
+    // The time of the version on screen. The save seam sets it after re-reading the file itself; the
+    // version is then the newest one handed out with that time.
+    get currentMtimeMs() { return current.mtimeMs; },
+    set currentMtimeMs(t) { current = { mtimeMs: t, version: versionAt(t) }; },
+    get currentVersion() { return current.version; },
 
     initialDocument: () => call('mdv_initial_document'),
 
     // Rejects with {code, message} for a missing or non-Markdown file.
-    readDocument: (path) => call('mdv_read_document', { path }),
+    readDocument: (path) => call('mdv_read_document', { path }).then((doc) => {
+      if (doc && samePath(doc.path, host.currentPath)) remember(doc.mtimeMs, doc.version);
+      return doc;
+    }),
 
-    // Never rejects: {ok:true, mtimeMs} or {ok:false, reason:'conflict'|'not-allowed'|'io', currentMtimeMs?, message}.
+    // Never rejects: {ok:true, mtimeMs, version} or
+    // {ok:false, reason:'conflict'|'not-allowed'|'io', currentMtimeMs?, currentVersion?, message}.
+    // `expectedMtimeMs` names the version the text was made from (the one on screen, or the one a
+    // conflict reported, to overwrite exactly that); a time the page was never handed names nothing,
+    // and the shell refuses the save.
     async saveDocument(path, text, expectedMtimeMs) {
+      const own = samePath(path, host.currentPath);
+      const version = !own ? null : expectedMtimeMs === current.mtimeMs ? current.version : versionAt(expectedMtimeMs);
       savesInFlight++;
       try {
-        const result = await call('mdv_save_document', { path, text, expectedMtimeMs });
-        if (result && result.ok && samePath(path, host.currentPath)) host.currentMtimeMs = result.mtimeMs;
+        const result = await call('mdv_save_document', { path, text, version });
+        if (result && result.ok) {
+          remember(result.mtimeMs, result.version);
+          if (own && samePath(path, host.currentPath)) current = { mtimeMs: result.mtimeMs, version: result.version };
+        } else if (result && result.currentVersion) {
+          remember(result.currentMtimeMs, result.currentVersion);
+        }
         return result;
       } catch (e) {
         return { ok: false, reason: 'io', message: errorText(e) };
@@ -235,8 +271,10 @@
   // ---------------------------------------------------------------
   function showDocument(doc, keepPosition) {
     const anchor = keepPosition ? captureReadingPosition() : null;
+    if (!samePath(doc.path, host.currentPath)) versions.length = 0;
     host.currentPath = doc.path;
-    host.currentMtimeMs = doc.mtimeMs;
+    current = { mtimeMs: doc.mtimeMs, version: doc.version || null };
+    remember(doc.mtimeMs, doc.version);
     documentName = doc.name;
     // The window's document is the file the shell read; no File System Access handle belongs to it.
     if (typeof mdvFileHandle !== 'undefined') mdvFileHandle = null;
@@ -248,8 +286,16 @@
     if (doc.readOnly && !keepPosition) notice(doc.readOnly);
   }
 
+  // Comment changes that are not in the file yet: a save in flight, or a change the save seam has not
+  // written (it keeps a refused save's edit in memory). The comment code's own answer wins when it has one.
   function hasUnsavedWork() {
-    return savesInFlight > 0 || (typeof mdvSaveTimer !== 'undefined' && !!mdvSaveTimer);
+    if (savesInFlight > 0) return true;
+    try {
+      if (typeof mdvHasUnsavedWork === 'function') return !!mdvHasUnsavedWork();
+      return typeof mdvDirty !== 'undefined' && !!mdvDirty;
+    } catch (_) {
+      return true;
+    }
   }
 
   function onDocumentChanged(doc) {
@@ -259,14 +305,19 @@
     }
     const asked = doc.reason === 'reload';
     if (!asked && doc.text === rawMarkdown) {
-      host.currentMtimeMs = doc.mtimeMs; // only the time moved (a touch, or a save of identical text)
+      // Only the time moved (a touch, or a save of identical text): the page already shows these bytes.
+      current = { mtimeMs: doc.mtimeMs, version: doc.version || null };
+      remember(doc.mtimeMs, doc.version);
       return;
     }
-    if (!asked && hasUnsavedWork()) {
-      // A comment is about to be saved. Its save will be refused as a conflict, never written over the
-      // other program's change; the person decides when to load the new version.
+    if (hasUnsavedWork()) {
+      // The person decides when to load the new version. Meanwhile a save names the version on screen,
+      // so the shell refuses it rather than write over the other program's change.
       pendingChange = doc;
-      notice(`${documentName} changed on disk.`, 'info', { label: 'Reload', run: () => applyChange(pendingChange) }, true);
+      const message = asked
+        ? `Reloading shows ${documentName} as it is on disk, without the comment changes not saved into it.`
+        : `${documentName} changed on disk.`;
+      notice(message, 'info', { label: 'Reload', run: () => applyChange(pendingChange) }, true);
       return;
     }
     applyChange(doc);
@@ -279,9 +330,11 @@
     showDocument(doc, true);
   }
 
+  // The shell gives an empty window its document: File → Open, a dropped file, or a later launch. The
+  // page may also have asked for it (initialDocument) in the meantime; it is shown once.
   function onDocumentOpened(doc) {
     if (!doc || (host.currentPath && !samePath(doc.path, host.currentPath))) return;
-    if (host.currentPath && doc.mtimeMs === host.currentMtimeMs) return; // already showing it
+    if (host.currentPath && doc.version === current.version) return; // already showing it
     showDocument(doc, false);
   }
 
@@ -340,6 +393,18 @@
   // ---------------------------------------------------------------
   // After every render: relative images load through the asset protocol
   // ---------------------------------------------------------------
+  // Only images in the document's folder or below are asked for. Others stay as written and do not load,
+  // so the shell never even looks at a path outside the folder (on Windows a network path would connect
+  // to its host).
+  function insideDocumentFolder(abs) {
+    const doc = host.currentPath;
+    if (!doc || !abs) return false;
+    const windows = isWindowsPath(doc);
+    const folder = doc.slice(0, doc.lastIndexOf(windows ? '\\' : '/') + 1);
+    const path = windows ? abs.replace(/\//g, '\\') : abs;
+    return caseInsensitive ? path.toLowerCase().startsWith(folder.toLowerCase()) : path.startsWith(folder);
+  }
+
   function rewriteImages() {
     const body = document.getElementById('mdBody');
     if (!body) return;
@@ -350,7 +415,7 @@
       if (target.kind === 'external' && src.startsWith('//')) { img.setAttribute('src', target.url); continue; }
       if (target.kind !== 'local' || !target.path) continue;
       const abs = resolvePath(target.path);
-      if (!abs) continue;
+      if (!insideDocumentFolder(abs)) continue;
       img.dataset.mdvSrc = src;
       img.setAttribute('src', host.resourceUrl(abs));
     }
@@ -373,6 +438,12 @@
     if (typeof inner !== 'function' || inner.mdvHostWrapped) return;
     const wrapped = function (source, title) {
       const result = inner.apply(this, arguments);
+      // Text shown with no file behind it (a paste into an empty window): a file opened later must not
+      // replace it, so the shell is told this window is taken.
+      if (!host.currentPath && !holdsText && String(source || '').trim()) {
+        holdsText = true;
+        call('mdv_window_holds_text').catch(() => { holdsText = false; });
+      }
       try { rewriteImages(); } catch (e) { console.warn('host: images', e); }
       try { labelFileLinkCards(); } catch (e) { console.warn('host: link cards', e); }
       return result;
@@ -583,7 +654,8 @@
       listen('tauri://drag-leave', () => showDragging(false)),
       listen('tauri://drag-drop', () => showDragging(false)),
     ]);
-    const doc = await host.initialDocument();
+    // A file the shell cannot read (too large, unreadable, deleted) says why, instead of a blank window.
+    const doc = await host.initialDocument().catch((e) => { notice(errorText(e), 'error', null, true); return null; });
     if (doc && !host.currentPath) showDocument(doc, false);
   }
 

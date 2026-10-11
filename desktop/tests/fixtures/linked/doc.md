@@ -6,6 +6,8 @@ A fixture for the desktop app: images with relative paths, links to other files,
 
 ![A figure next to the document](figure.svg)
 
+![A figure in a dot-folder, as GitBook and GitHub READMEs keep them](.gitbook/assets/figure.png)
+
 ![A figure outside the document's folder, which the app must not load](../outside.png)
 
 ## Links
