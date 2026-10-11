@@ -24,6 +24,9 @@ function mdvExcludedFromText(el) {
 
 // A heading's own words. Replaces textContent.replace(/#/g, ''), which also deleted every "#" the
 // author wrote ("C# tips" became "C tips") and kept a comment chip's "💬 2" in the breadcrumb.
+// The only reader of a heading's words: the outline, the breadcrumb, search, read-aloud, the section rail
+// (enhancements.js) and diagram-node links all use it, so they all name a heading alike. A formula is read
+// once, as its MathML (KaTeX's HTML copy is aria-hidden and its TeX annotation is left out).
 function mdvHeadingText(h) {
   let s = '';
   (function walk(node) {

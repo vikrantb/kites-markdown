@@ -129,15 +129,6 @@ function mdvPolishDashboard(body) {
   }
 }
 
-// A heading's own words: without the fold toggle, the "#" permalink markdown-it-anchor appends and a comment chip.
-// Named apart from navigation.js's text helpers: classic scripts share one scope, and a later declaration with the
-// same name would silently replace the earlier one for every caller.
-function mdvHeadingLabel(h) {
-  const copy = h.cloneNode(true);
-  copy.querySelectorAll('.header-anchor, .section-toggle, .mdv-chip').forEach((el) => el.remove());
-  return copy.textContent.replace(/\s+/g, ' ').trim();
-}
-
 // ============================================
 // Section Minimap
 // ============================================
@@ -165,7 +156,7 @@ function buildSectionMinimap() {
   nav.setAttribute('aria-label', 'Sections');
 
   h2s.forEach(h => {
-    const label = mdvHeadingLabel(h);
+    const label = mdvHeadingText(h); // the words the outline shows (navigation.js)
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'minimap-segment';
@@ -312,7 +303,7 @@ function mdvHeadingTargets() {
   const map = new Map();
   document.querySelectorAll('#mdBody h1, #mdBody h2, #mdBody h3, #mdBody h4, #mdBody h5, #mdBody h6').forEach((h) => {
     if (!h.id) return;
-    const slug = mdvSlug(mdvHeadingLabel(h));
+    const slug = mdvSlug(mdvHeadingText(h));
     if (slug && !map.has(slug)) map.set(slug, h);
   });
   return map;
@@ -327,7 +318,7 @@ function mdvLinkDiagramNodes(wrapper) {
       if (node.hasAttribute('data-mdv-section')) continue;
       const heading = targets.get(mdvSlug(node.textContent));
       if (!heading) continue;
-      const name = mdvHeadingLabel(heading);
+      const name = mdvHeadingText(heading);
       node.setAttribute('data-mdv-section', heading.id);
       node.classList.add('mdv-node-link');
       node.setAttribute('tabindex', '0');

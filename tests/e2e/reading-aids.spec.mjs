@@ -407,6 +407,21 @@ test('a "#" the author wrote stays in the outline, the breadcrumb, search and re
   await expect(page.locator('#searchResults .search-result-item').first()).toHaveText('## C# tips');
 });
 
+// The rail and diagram links once read a heading through a second helper, which kept the "#" but read a formula
+// three times (KaTeX's MathML, its TeX annotation and its aria-hidden HTML copy).
+test('a heading has the same words, "#" and formulas included, in the outline, the section rail and a diagram link', async ({ page }) => {
+  await openViewer(page);
+  await render(page, '# Notes\n\n## C# tips\n\nUse records.\n\n## The $O(n)$ merge\n\n```mermaid\ngraph LR\n  A["The O(n) merge"] --> B[Done]\n```\n\n## Plain\n\nText.\n');
+  await page.waitForFunction(() => document.querySelector('#mdBody .mermaid svg'), null, { timeout: 30_000 });
+  const words = ['C# tips', 'The O(n) merge', 'Plain'];
+  expect(await page.$$eval('#tocList .toc-link', (els) => els.map((a) => a.textContent))).toEqual(['Notes', ...words]);
+  expect(await page.$$eval('#mdBody .minimap-segment', (els) => els.map((s) => [s.dataset.label, s.getAttribute('aria-label')])))
+    .toEqual(words.map((w) => [w, w]));
+  const link = page.locator('#mdBody .mdv-node-link');
+  await expect(link).toHaveCount(1); // the node named like the heading links to it...
+  await expect(link).toHaveAttribute('aria-label', 'Go to section: The O(n) merge'); // ...under the same name
+});
+
 test('after a document without headings, the next document shows its outline again', async ({ page }) => {
   await openViewer(page);
   await render(page, 'Just a paragraph, no headings.\n');
