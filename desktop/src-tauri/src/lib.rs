@@ -1,9 +1,12 @@
 //! Kites Markdown, the desktop app: `markdown-viewer.html` in a native window per document.
 //!
 //! How documents arrive:
-//! - macOS: `RunEvent::Opened` (Finder double-click, "Open With", `open -a`), at launch and later.
+//! - macOS: `RunEvent::Opened` (Finder double-click, "Open With", `open -a`), at launch and later. Launch
+//!   Services keeps the app to one instance, so the app opens no channel of its own (the single-instance
+//!   plugin's macOS channel is a socket at a fixed path in the shared /tmp, which any local user could
+//!   take first).
 //! - Windows and Linux: the command line at first launch; later launches hand their command line to
-//!   the running app (single instance) and exit.
+//!   the running app (single instance, per user session) and exit.
 //! - Everywhere: File → Open…, a link in a document, or a file dropped on a window.
 
 mod default_app;
@@ -20,7 +23,9 @@ mod selftest;
 mod state;
 mod watch;
 
-use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "macos"))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use tauri::{AppHandle, DragDropEvent, Manager, RunEvent, WindowEvent};
@@ -48,16 +53,24 @@ pub fn run() {
   }
   let in_self_test = self_test.is_some();
 
+  #[allow(unused_mut)]
   let mut builder = tauri::Builder::default();
+  #[cfg(not(target_os = "macos"))]
   if !in_self_test {
     // Registered first, as the plugin requires. A self-test never hands itself to a running app.
     builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-      let docs = paths::documents_from_args(argv.get(1..).unwrap_or(&[]), Some(Path::new(&cwd)));
-      if docs.is_empty() {
-        doc_windows::show_any_or_welcome(app);
-      } else {
-        doc_windows::open_paths(app, docs, None);
-      }
+      // This runs while the plugin handles the second launch's message (on Windows, inside a window
+      // procedure answering another process). Tauri warns that creating a window there can deadlock, so
+      // the work moves to its own thread.
+      let app = app.clone();
+      std::thread::spawn(move || {
+        let docs = paths::documents_from_args(argv.get(1..).unwrap_or(&[]), Some(Path::new(&cwd)));
+        if docs.is_empty() {
+          doc_windows::show_any_or_welcome(&app);
+        } else {
+          doc_windows::open_paths(&app, docs, None);
+        }
+      });
     }));
   }
 
