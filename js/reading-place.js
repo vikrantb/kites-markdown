@@ -22,6 +22,7 @@
 // The blocks a place can be: what the reader reads, the smallest that holds the words (a list item, not its list).
 // A diagram's <pre> holds its source and then its drawing, so it is never a place.
 const MDV_PLACE_BLOCKS = 'p, li, tr, dt, dd, pre:not(.mermaid), h1, h2, h3, h4, h5, h6, summary, figcaption';
+const MDV_PLACE_TAGS = new Set(['P', 'LI', 'TR', 'DT', 'DD', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'SUMMARY', 'FIGCAPTION']);
 const MDV_PLACE_HEADINGS = 'h1, h2, h3, h4, h5, h6';
 
 // A block's own words: not the viewer's additions (fold chevrons, the "#" permalink, comment chips, a code block's
@@ -38,27 +39,30 @@ function mdvPlaceWords(el) {
 }
 
 function mdvNotPlaceText(el) {
-  if (typeof mdvExcludedFromText === 'function' && mdvExcludedFromText(el)) return true;
-  return el.localName === 'svg' || el.classList.contains('mermaid-wrapper') || el.matches(MDV_PLACE_BLOCKS);
+  if (MDV_PLACE_TAGS.has(el.tagName) || el.localName === 'svg' || el.classList.contains('mermaid-wrapper')) return true;
+  return typeof mdvExcludedFromText === 'function' && mdvExcludedFromText(el);
 }
 
 function mdvPlaceSelector(tag) { return tag === 'pre' ? 'pre:not(.mermaid)' : tag; }
 
-// The words of the heading that folds each section of the page (js/navigation.js wraps what follows a heading in a
-// .section-content), built once per page
-function mdvSectionOwners(body) {
-  const owners = new Map();
-  for (const btn of body.querySelectorAll('.section-toggle[aria-controls]')) {
-    const h = btn.closest(MDV_PLACE_HEADINGS);
-    if (h) owners.set(btn.getAttribute('aria-controls'), mdvPlaceWords(h));
+// The words of the heading that folds a section. js/navigation.js puts each .section-content right after its heading
+// (the first h1 has the section rail in between, so its toggle names it). `owners` remembers them for one place.
+function mdvSectionOwner(section, owners) {
+  if (owners.has(section)) return owners.get(section);
+  let h = section.previousElementSibling;
+  if (!h || !/^H[1-6]$/.test(h.tagName)) {
+    const btn = section.parentElement && section.parentElement.querySelector(`.section-toggle[aria-controls="${CSS.escape(section.id)}"]`);
+    h = btn && btn.closest(MDV_PLACE_HEADINGS);
   }
-  return owners;
+  const words = h ? mdvPlaceWords(h) : '';
+  owners.set(section, words);
+  return words;
 }
 
 // The sections around an element, outermost first, by their headings' words ("Log › 2026-10-08 › Notes")
 function mdvSectionPath(el, owners) {
   const names = [];
-  for (let c = mdvSectionAround(el); c; c = mdvSectionAround(c)) names.push(owners.get(c.id) || '');
+  for (let c = mdvSectionAround(el); c; c = mdvSectionAround(c)) names.push(mdvSectionOwner(c, owners));
   return names.reverse().join(' › ');
 }
 function mdvSectionAround(el) { return el.parentElement ? el.parentElement.closest('.section-content') : null; }
@@ -97,19 +101,26 @@ function mdvFindPlace(key, body, owners, visible) {
 function mdvCanSee(el) { return typeof mdvHeadingVisible === 'function' ? mdvHeadingVisible(el) : el.getClientRects().length > 0; }
 function mdvToolbarHeight() { return parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--toolbar-height')) || 48; }
 
-// The text block at the reading line (just under the toolbar), or the first one below it within a few lines
+// The text block at the reading line (just under the toolbar): the first block, in the page's order, that reaches
+// below the line, starting from the heading above it (so only that section's blocks are measured). No hit testing:
+// elementsFromPoint and elementFromPoint took 76 and 35 ms on a 3,000-section page. Folded sections and drawings are
+// stepped over; a block with no words of its own (a list item that only holds a paragraph) gives way to the next.
 function mdvBlockAtLine(body, line) {
   const box = body.getBoundingClientRect();
   if (box.width <= 0 || box.bottom <= line) return null;
-  const x = Math.round(Math.min(window.innerWidth - 2, Math.max(1, box.left + Math.min(48, box.width / 3))));
-  const end = Math.min(window.innerHeight - 1, box.bottom, line + 320);
-  for (let y = Math.max(line, Math.ceil(box.top)); y < end; y += 8) {
-    for (const hit of document.elementsFromPoint(x, y)) {
-      if (hit === body || !body.contains(hit)) continue; // the toolbar, a note, a tooltip above the page
-      const el = hit.closest(MDV_PLACE_BLOCKS);
-      if (el && body.contains(el) && mdvPlaceWords(el)) return el;
-      break; // no words at this height (a diagram, an image, the gap between blocks): look a little lower
-    }
+  const from = mdvHeadingAbove(body, line) || body;
+  const walker = document.createTreeWalker(body, NodeFilter.SHOW_ELEMENT, {
+    acceptNode: (el) => {
+      if (el.localName === 'svg' || el.classList.contains('mermaid-wrapper') || el.classList.contains('collapsed')) return NodeFilter.FILTER_REJECT;
+      return MDV_PLACE_TAGS.has(el.tagName) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    },
+  });
+  walker.currentNode = from;
+  for (let el = from === body ? walker.nextNode() : from, n = 0; el && n < 4000; el = walker.nextNode(), n++) {
+    const r = el.getBoundingClientRect();
+    if (!r.height || r.bottom <= line) continue;
+    if (r.top > line + 320) return null;
+    if (mdvPlaceWords(el)) return el;
   }
   return null;
 }
@@ -165,7 +176,7 @@ function mdvReadingPosition() {
   const position = { atTop: window.scrollY < 4, ratio: max > 0 ? Math.min(1, window.scrollY / max) : 0, block: null, heading: null, folds: null };
   const body = document.getElementById('mdBody');
   if (!body || !body.firstElementChild || body.style.display === 'none') return position;
-  const owners = mdvSectionOwners(body);
+  const owners = new Map();
   position.folds = mdvFoldState(body, owners);
   if (position.atTop) return position;
   const line = mdvToolbarHeight() + 8;
@@ -188,7 +199,7 @@ function mdvRestoreReadingPosition(position) {
   let target = null;
   if (position.el) target = { el: position.el, offset: position.offset };
   else if (body) {
-    const owners = mdvSectionOwners(body);
+    const owners = new Map();
     if (position.folds) mdvApplyFolds(position.folds, body, owners);
     if (!position.atTop) {
       for (const key of [position.block, position.heading]) {

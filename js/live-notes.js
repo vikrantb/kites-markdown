@@ -47,8 +47,9 @@ function mdvLiveAnnounce(before) {
   }
   const sections = [];
   const marks = changed.length <= MDV_LIVE_MARK_LIMIT ? changed : [];
+  const owners = new Map();
   for (const el of changed) {
-    const name = mdvLiveSectionName(el);
+    const name = mdvLiveSectionName(el, owners);
     if (!sections.includes(name)) sections.push(name);
   }
   for (const el of marks) {
@@ -65,12 +66,10 @@ function mdvLiveAnnounce(before) {
 }
 
 // The heading of the section a block is in (the block itself, for a heading), or '' above the first heading
-function mdvLiveSectionName(el) {
+function mdvLiveSectionName(el, owners) {
   if (/^h[1-6]$/.test(el.localName)) return mdvPlaceWords(el);
   const section = mdvSectionAround(el);
-  const btn = section && document.querySelector(`.section-toggle[aria-controls="${CSS.escape(section.id)}"]`);
-  const h = btn && btn.closest(MDV_PLACE_HEADINGS);
-  return h ? mdvPlaceWords(h) : '';
+  return section ? mdvSectionOwner(section, owners) : '';
 }
 
 // ------- The note, the question and the mark -------
