@@ -117,14 +117,19 @@ function toggleAllSections() {
   });
 }
 
-// Unfolds every folded section and closed <details> around an element, so a jump to it (outline,
-// search, read-aloud) lands on something visible.
-function mdvReveal(el) {
+// Unfolds every folded section around an element. Read-aloud unfolds each block it reads this way.
+function mdvUnfold(el) {
   for (let c = el.parentElement && el.parentElement.closest('.section-content.collapsed'); c;
        c = c.parentElement && c.parentElement.closest('.section-content.collapsed')) {
     const btn = document.querySelector(`.section-toggle[aria-controls="${c.id}"]`);
     if (btn) mdvSetCollapsed(btn, c, false); else c.classList.remove('collapsed');
   }
+}
+
+// Unfolds every folded section and opens every closed <details> around an element, so a jump to it
+// (outline, search) lands on something visible.
+function mdvReveal(el) {
+  mdvUnfold(el);
   for (let d = el.closest('details:not([open])'); d; d = d.parentElement && d.parentElement.closest('details:not([open])')) d.open = true;
 }
 

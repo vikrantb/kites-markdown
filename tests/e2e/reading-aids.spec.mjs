@@ -2,14 +2,15 @@
 // the dialogs (search, shortcuts sheet, image lightbox) and the read-aloud player.
 // Read-aloud runs against a fake speechSynthesis that behaves like Chrome's where it matters: cancel()
 // reports 'interrupted' for the utterance being spoken a moment later, and it does not clear the
-// paused flag. No audio is produced.
+// paused flag. No audio is produced. Setting window.__speechRefuse to an error name ('not-allowed') makes
+// it refuse every utterance with that error, as a browser does before the first user gesture.
 import { test, expect } from '@playwright/test';
 import { largeDocument } from '../../scripts/large-document.mjs';
 
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 function installSpeechStub() {
-  const log = { started: [], ended: [], interrupted: [] };
+  const log = { started: [], ended: [], interrupted: [], refused: [] };
   window.__speech = log;
   let queue = [], current = null, paused = false, timer = null;
   const duration = () => window.__speechDuration || 60; // ms per utterance
@@ -30,7 +31,14 @@ function installSpeechStub() {
     get speaking() { return !!current; },
     get paused() { return paused; },
     get pending() { return queue.length > 0; },
-    speak(u) { queue.push(u); pump(); },
+    speak(u) {
+      if (window.__speechRefuse) {
+        log.refused.push(u.text);
+        setTimeout(() => u.onerror && u.onerror({ error: window.__speechRefuse }), 0);
+        return;
+      }
+      queue.push(u); pump();
+    },
     cancel() {
       const dropped = queue; queue = [];
       dropped.forEach(u => setTimeout(() => u.onerror && u.onerror({ error: 'canceled' }), 0));
@@ -564,6 +572,85 @@ test('Pause, then Next, then Play speaks the next section', async ({ page }) => 
     return next;
   });
   await page.waitForFunction((t) => window.__speech.started.includes(t), first, { timeout: 5000 });
+});
+
+test('Pause, then a click on the progress bar, reads the chosen section at once', async ({ page }) => {
+  await openViewer(page);
+  await render(page, SPOKEN);
+  await page.evaluate(() => { window.__speechDuration = 5000; ttsToggle(); ttsPlay(); });
+  await page.waitForFunction(() => window.__speech.started.length >= 1);
+  const play = page.locator('#ttsPlayBtn');
+  await play.click();
+  await expect(play).toHaveAttribute('aria-label', 'Play');
+  expect(await page.evaluate(() => speechSynthesis.paused)).toBe(true);
+  await page.evaluate(() => { window.__speechDuration = 60; });
+  // 85% along the bar: the fourth of four sections.
+  const bar = page.locator('#ttsProgressBar');
+  const box = await bar.boundingBox();
+  await bar.click({ position: { x: box.width * 0.85, y: box.height / 2 } });
+  await expect(page.locator('#ttsSectionLabel')).toHaveText('4/4: Fourth');
+  // Speech starts, so the button's "Pause" is true: before, the browser's paused flag held the new utterance.
+  await page.waitForFunction(() => window.__speech.started.includes('Fourth.\nFourth words.'), null, { timeout: 5000 });
+  expect(await page.evaluate(() => speechSynthesis.paused)).toBe(false);
+});
+
+test('opening another document stops reading, even when it shares the section\'s name', async ({ page }) => {
+  await openViewer(page);
+  const startedSince = (n) => page.evaluate((i) => window.__speech.started.slice(i), n);
+  // A shared "Installation".
+  const alpha = `# Alpha guide\n\n## Installation\n\n${'Alpha installs with the alpha tool. '.repeat(12)}\n\n## Usage\n\nAlpha usage.\n`;
+  await render(page, alpha, 'alpha.md');
+  await page.evaluate(() => { window.__speechDuration = 150; ttsToggle(); ttsGoTo(1); ttsPlay(); });
+  await page.waitForFunction(() => window.__speech.started.some(t => t.startsWith('Installation.')));
+  let mark = await page.evaluate(() => window.__speech.started.length);
+  await render(page, '# Beta guide\n\n## Installation\n\nBeta installs differently.\n\n## Usage\n\nBeta usage.\n', 'beta.md');
+  await page.waitForTimeout(600); // four utterances' worth
+  expect(await page.evaluate(() => ttsIsPlaying)).toBe(false);
+  expect((await startedSince(mark)).filter(t => /alpha/i.test(t))).toEqual([]);
+  // A shared "Introduction": any two documents with text before their first heading have one.
+  await render(page, `${'Alpha sentence. '.repeat(40)}\n\n# Alpha\n\nBody.\n`, 'a.md');
+  await page.evaluate(() => { ttsGoTo(0); ttsPlay(); });
+  await page.waitForFunction(() => window.__speech.started.some(t => t.startsWith('Alpha sentence.')));
+  mark = await page.evaluate(() => window.__speech.started.length);
+  await render(page, 'Beta words.\n\n# Beta\n\nBeta body.\n', 'b.md');
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => ttsIsPlaying)).toBe(false);
+  expect((await startedSince(mark)).filter(t => /alpha/i.test(t))).toEqual([]);
+});
+
+test('re-rendering the same document keeps reading, after a change elsewhere and next to a link card', async ({ page }) => {
+  await openViewer(page);
+  // A standalone link becomes a link card after the render's later passes; the section must still match.
+  const doc = (usage) => `# Guide\n\n## Installation\n\n${'Install it with the tool. '.repeat(12)}\n\nhttps://github.com/example/tool\n\n## Usage\n\n${usage}\n`;
+  await render(page, doc('Usage words.'), 'guide.md');
+  await page.evaluate(() => { window.__speechDuration = 5000; ttsToggle(); ttsGoTo(1); ttsPlay(); });
+  await page.waitForFunction(() => window.__speech.started.some(t => t.startsWith('Installation.')));
+  await render(page, doc('Usage words, edited.'), 'guide.md');
+  expect(await page.evaluate(() => [ttsIsPlaying, ttsSections[ttsCurrentIdx].heading])).toEqual([true, 'Installation']);
+  // The highlight is on the page's own elements, the link card included.
+  expect(await page.evaluate(() => [...document.querySelectorAll('.tts-active')].every(el => el.isConnected && document.getElementById('mdBody').contains(el)))).toBe(true);
+  expect(await page.locator('#mdBody .link-chip.tts-active').count()).toBe(1);
+});
+
+test('the block being read is unfolded, not only its heading', async ({ page }) => {
+  await openViewer(page);
+  await render(page, SPOKEN);
+  await page.evaluate(() => { window.__speechDuration = 5000; toggleAllSections(); ttsToggle(); ttsPlay(); ttsGoTo(1); });
+  const read = page.locator('#mdBody p.tts-active');
+  await expect(read).toHaveCount(1);
+  await expect(read).toBeVisible();
+});
+
+test('speech the browser refuses stops at once and says so, instead of racing through the document', async ({ page }) => {
+  await openViewer(page);
+  await render(page, SPOKEN);
+  await page.evaluate(() => { window.__speechRefuse = 'not-allowed'; ttsToggle(); ttsPlay(); });
+  await expect(page.locator('#ttsSectionLabel')).toHaveText('The browser blocked speech. Press Play to try again.');
+  expect(await page.evaluate(() => [window.__speech.refused.length, ttsIsPlaying])).toEqual([1, false]);
+  // Any other error stops after three in a row.
+  await page.evaluate(() => { window.__speechRefuse = 'synthesis-failed'; ttsPlay(); });
+  await expect(page.locator('#ttsSectionLabel')).toHaveText('Speech failed. Press Play to try again.');
+  expect(await page.evaluate(() => [window.__speech.refused.length, ttsIsPlaying])).toEqual([4, false]);
 });
 
 test('re-rendering the same document keeps the reading position; opening another one stops reading', async ({ page }) => {

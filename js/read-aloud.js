@@ -113,14 +113,24 @@ function ttsDashboardText(el) {
   return phrases.length ? phrases.join('.\n') + '.' : '';
 }
 
-// renderMarkdown calls this on every render. The sections are built now only while the player is in
-// use (open, reading or paused), so a re-render keeps the listener's place; otherwise they are built
-// when the player opens. Most renders are never read aloud, and building them for a large document
-// takes tens of milliseconds.
+// renderMarkdown calls this on every render. While the player is in use (open, reading or paused) the
+// sections are rebuilt as soon as the render has finished, so a re-render keeps the listener's place;
+// otherwise they are built when the player opens. Most renders are never read aloud, and building them
+// for a large document takes tens of milliseconds. "Finished" matters: renderMarkdown calls this before
+// its later passes, and the link pass replaces each standalone link's paragraph with a link card. Built
+// then, a section's words and elements differed from the ones the player had built from the finished
+// page, and the highlight went to a paragraph that was about to leave the page.
 let ttsStale = true;
+let ttsRebuildQueued = false;
 function buildTtsSections() {
   const inUse = document.getElementById('ttsPlayer').classList.contains('show') || ttsIsPlaying || ttsPausedGen === ttsGen;
-  if (inUse) { ttsBuildSections(); return; }
+  if (inUse) {
+    if (!ttsRebuildQueued) {
+      ttsRebuildQueued = true;
+      queueMicrotask(() => { ttsRebuildQueued = false; ttsBuildSections(); });
+    }
+    return;
+  }
   ttsSections = [];
   ttsCurrentIdx = 0;
   ttsStale = true;
@@ -181,13 +191,17 @@ function ttsBuildSections() {
 // After a re-render (a comment added, another document opened), keep the listener's place when the
 // section still exists, and stop when it does not. Before, reading carried on at the old index in
 // whatever the new section list was.
+// The same section means the same heading and the same words. The heading alone matched across
+// documents: every document with text before its first heading has an "Introduction", and two documents
+// can share an "Installation", so reading carried on with the closed document's words.
 function ttsReconcile(before) {
   const active = ttsIsPlaying || ttsPausedGen === ttsGen;
   ttsChunksFor = -1;
   let idx = -1;
   if (before) {
-    idx = ttsSections[ttsCurrentIdx] && ttsSections[ttsCurrentIdx].heading === before.heading
-      ? ttsCurrentIdx : ttsSections.findIndex(s => s.heading === before.heading);
+    const words = before.items.join('\n');
+    const same = (s) => !!s && s.heading === before.heading && s.items.join('\n') === words;
+    idx = same(ttsSections[ttsCurrentIdx]) ? ttsCurrentIdx : ttsSections.findIndex(same);
   }
   if (idx < 0) {
     if (active) ttsHalt();
@@ -261,10 +275,8 @@ function ttsPlay() {
     return;
   }
   ttsPausedGen = -1;
-  // Starting afresh: drop anything queued, and clear a paused flag the browser can keep after a
-  // cancel, or nothing would ever play (pause, then Next, then Play used to stay silent).
+  // Starting afresh: drop anything queued (speakNextChunk clears a paused flag the browser kept).
   ttsCancel();
-  if (speechSynthesis.paused) speechSynthesis.resume();
   if (ttsFinished) { ttsFinished = false; ttsCurrentIdx = 0; ttsChunksFor = -1; }
   if (ttsChunksFor === ttsCurrentIdx && ttsChunkIdx < ttsChunks.length) speakNextChunk(); // continue the section
   else speakSection(ttsCurrentIdx);
@@ -285,11 +297,10 @@ function speakSection(idx) {
   clearTtsHighlights();
   section.elements.forEach(el => el?.classList.add('tts-active'));
 
-  // Scroll to first element, unfolding its section first
-  if (section.elements[0]) {
-    mdvReveal(section.elements[0]);
-    section.elements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
+  // Unfold the section being read: every block of it, not only its heading (after Fold all, the heading's
+  // own section stayed folded and the highlighted words could not be seen). Then scroll to its start.
+  section.elements.forEach(el => el && mdvUnfold(el));
+  if (section.elements[0]) section.elements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
 
   // Chunk text into sentences for Chrome workaround
   const fullText = section.items.join('\n');
@@ -358,6 +369,10 @@ function speakNextChunk() {
   }
 
   ttsCancel(); // Clear any pending
+  // The browser can keep its paused flag after a cancel, and then holds every new utterance in the queue:
+  // pause, then Next, a seek or Play left the player showing Pause while nothing played. Speaking here
+  // means the reader asked for speech, so clear it.
+  if (speechSynthesis.paused) speechSynthesis.resume();
   const gen = ttsGen;
   ttsUtterance = new SpeechSynthesisUtterance(ttsChunks[ttsChunkIdx]);
   ttsUtterance.rate = ttsRate;
