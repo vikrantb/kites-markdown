@@ -197,19 +197,25 @@ function mdvRenderErrorHtml(err, source) {
 // ============================================
 // DOMPurify (vendor/purify.min.js) removes scripts, every on* attribute, javascript: and vbscript:
 // URLs, frames, plugins and forms. Kept on purpose:
-// - HTML comments: comment anchors (MDV-ANCHOR) and narration (narrate:) are read from them;
+// - HTML comments at the top level of the document: comment anchors (MDV-ANCHOR) and narration
+//   (narrate:) are read from them (see the comment hook below);
 // - KaTeX output, including its MathML (<semantics>, <annotation>) and style attributes;
 // - the viewer's own markup: classes, ids, data-* (data-action on code-block buttons), aria-*;
 // - inline SVG, minus its scripts and handlers.
 // Also removed: <style>, which would restyle the whole viewer, and any id or name that would take
 // over one of the viewer's own elements (a document's <div id="ttsPlayer"> would otherwise
 // capture the player's updates).
+// SAFE_FOR_XML stays at its default (on): DOMPurify's documentation says to turn it off only for
+// content with no SVG or MathML, and documents have both.
 const MDV_SANITIZE_CONFIG = {
   ADD_TAGS: ['#comment', 'semantics', 'annotation'],
   ADD_ATTR: ['target'],
   FORBID_TAGS: ['style', 'form', 'script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'base', 'meta', 'link'],
   FORCE_BODY: true,            // parse as <body> content, so a comment that starts the file is kept
-  RETURN_DOM_FRAGMENT: true,   // insert the sanitized nodes themselves: no second HTML parse
+  // renderMarkdown inserts the sanitized nodes themselves rather than an HTML string. (A later pass
+  // that rewrites innerHTML, such as transformCalloutBlocks, re-parses markup DOMPurify has already
+  // made safe to re-parse: that is its string mode's contract.)
+  RETURN_DOM_FRAGMENT: true,
 };
 
 // Without DOMPurify the viewer shows raw HTML as text (markdown-it's html: false) instead of
@@ -218,7 +224,26 @@ const mdvPurifier = (window.DOMPurify && typeof window.DOMPurify === 'function' 
   ? window.DOMPurify(window) : null;
 let mdvSanitizeChromeIds = null;
 
+// "<" followed by a letter, a digit or "/": what DOMPurify's SAFE_FOR_XML checks treat as markup.
+const MDV_MARKUP_START = /<(?=[/\w])/g;
+
 if (mdvPurifier) {
+  // Comments. SAFE_FOR_XML removes a comment whose text holds "<" plus a letter, digit or "/", and
+  // removes an element whose only children are text and comments when that text holds one. Both
+  // would delete document content without a trace: a narration that mentions "latency<200ms", or a
+  // paragraph "if a<b then swap them <!-- note -->". So, before DOMPurify checks a node:
+  // - an element loses its comment children. They are invisible, and the comments the viewer reads
+  //   (anchors, narration) are block-level, so they are direct children of the body;
+  // - a top-level comment gets a space after each such "<", which nothing can parse as a tag and
+  //   which reads aloud the same.
+  mdvPurifier.addHook('beforeSanitizeElements', (node) => {
+    if (node.nodeType === 8) {
+      const data = node.data.replace(MDV_MARKUP_START, '< ');
+      if (data !== node.data) node.data = data;
+    } else if (node.nodeType === 1 && node !== node.ownerDocument.body) {
+      for (const child of [...node.childNodes]) if (child.nodeType === 8) child.remove();
+    }
+  });
   mdvPurifier.addHook('uponSanitizeAttribute', (node, data) => {
     if (data.attrName !== 'id' && data.attrName !== 'name') return;
     if (mdvSanitizeChromeIds && mdvSanitizeChromeIds.has(data.attrValue)) {

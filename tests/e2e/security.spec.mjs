@@ -164,6 +164,36 @@ test('a comment card that breaks out of its attribute still cannot run script', 
   }
 });
 
+test('comments next to markup characters survive the sanitizer, and so does the text around them', async ({ page }) => {
+  // DOMPurify (SAFE_FOR_XML) removes a comment holding "<" plus a letter, digit or "/", and an element
+  // whose only children are text and comments when that text holds one: "if a<b <!-- note -->".
+  const problems = collectProblems(page);
+  await openDocument(page, 'tests/fixtures/comments-with-markup.md');
+  const r = await page.evaluate(() => {
+    const body = document.getElementById('mdBody');
+    const texts = (sel) => [...body.querySelectorAll(sel)].map((el) => el.textContent.replace(/\s+/g, ' ').trim());
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_COMMENT);
+    const comments = [];
+    while (walker.nextNode()) comments.push(walker.currentNode.nodeValue.trim());
+    return {
+      comments,
+      spoken: ttsSections.flatMap((s) => s.items).find((t) => t.startsWith('Two boxes')) || null,
+      paragraphs: texts('p'),
+      items: texts('li'),
+      rows: [...body.querySelectorAll('tbody tr')].map((tr) => [...tr.cells].map((c) => c.textContent.trim())),
+    };
+  });
+  // The narration is kept and read aloud; a space follows each "<" that could start a tag.
+  expect(r.comments).toEqual(['narrate: Two boxes joined by an arrow; requests with latency< 200ms return a List< String>.']);
+  expect(r.spoken).toBe('Two boxes joined by an arrow; requests with latency< 200ms return a List< String>.');
+  // The comments inside a paragraph, a list item and a table cell go; their text stays.
+  expect(r.paragraphs).toContain('If a<b then swap them.');
+  expect(r.items).toEqual(['L1 if a<b then swap them', 'L2 a plain item']);
+  expect(r.rows).toEqual([['T1', 'x<y']]);
+  expect(r.paragraphs).toContain('Control: if a<b then swap them, with no comment.');
+  expect(problems, problems.join('\n')).toEqual([]);
+});
+
 test('Mermaid runs at securityLevel strict, whatever a caller asks for', async ({ page }) => {
   await openDocument(page, 'samples/kitchen-sink.md');
   const level = await page.evaluate(() => {
