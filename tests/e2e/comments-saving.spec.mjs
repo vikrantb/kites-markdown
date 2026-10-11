@@ -452,6 +452,12 @@ test('desktop: a document pasted into the window is never written over the windo
   await page.evaluate((plan) => window.__t.open(plan, 'plan.md', null), PLAN);
   await paste(page, '# Pasted\n\nA pasted paragraph that is not the file.\n');
   await expect(page.locator('#mdBody')).toContainText('A pasted paragraph');
+  // Cmd/Ctrl+S with no comment at all, then a comment
+  await page.locator('#mdBody h1').click();
+  await page.keyboard.press('ControlOrMeta+s');
+  await page.evaluate(() => mdvFlushWrites());
+  const afterSave = await page.evaluate(() => ({ disk: window.mdvHost.disk.text, sent: window.mdvHost.calls.length }));
+  expect(afterSave.disk, 'Cmd/Ctrl+S leaves the window\'s file unchanged').toBe(PLAN);
   await page.evaluate(async () => { await mdvAddComment(window.__t.para('A pasted paragraph'), null, 'on pasted text'); await mdvFlushWrites(); });
   const r = await page.evaluate(() => ({ disk: window.mdvHost.disk.text, sent: window.mdvHost.calls.length }));
   expect(r.disk, 'the window\'s file is unchanged').toBe(PLAN);
