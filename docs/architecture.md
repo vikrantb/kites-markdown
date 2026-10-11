@@ -28,7 +28,7 @@ Related documents:
 > [!NOTE]
 > Since the split into files, the styles live in `css/viewer.css` and the script in the `js/*.js` files, concatenated in load order. Line numbers in this document refer to the pre-split single file and are kept for orientation: find a function by name. The script order is listed in `../CLAUDE.md`.
 >
-> `js/folder-paths.js`, `js/folder.js` and the five scripts after them (`folder-tree`, `recents`, `quick-open`, `folder-search`, `link-preview`) are a folder of documents: `window.mdvFolder`, the folder sidebar, recent documents, quick open, search in files and link previews ([features.md](features.md#a-folder-of-documents)). They load after `host.js` and before `app.js`, add their keyboard rows to `MDV_SHORTCUTS` once every script has loaded, follow every render with one `MutationObserver` on `#mdBody` (`mdvFolderNoteShown`), and show documents only through `mdvOpenDocument`.
+> `js/folder-paths.js`, `js/folder.js`, `js/folder-open.js` and the five scripts after them (`folder-tree`, `recents`, `quick-open`, `folder-search`, `link-preview`) are a folder of documents: `window.mdvFolder`, the folder sidebar, recent documents, quick open, search in files and link previews ([features.md](features.md#a-folder-of-documents)). They load after `host.js` and before `app.js`, add their keyboard rows to `MDV_SHORTCUTS` once every script has loaded, follow every render with one `MutationObserver` on `#mdBody` (`mdvFolderNoteShown`), and show documents only through `mdvOpenDocument`.
 >
 > The script before them, `js/host.js`, is the desktop bridge: `window.mdvHost`. In a browser it is a no-op. In the desktop app it renders the window's document, wraps `renderMarkdown` to load relative images through the asset protocol, handles link clicks and live reload, and routes saves to the shell. See [desktop.md](desktop.md).
 
@@ -520,7 +520,8 @@ stays text.
 | Mod+B | Not while typing | Toggle TOC (slide-in panel at widths of 900px or less) | `app.js`: `toggleToc` |
 | Mod+`\` | Same | Toggle full page width | `app.js`: `toggleWidth` |
 | Mod+`.` | Same | Toggle focus mode | `app.js`: `toggleFocus` |
-| Mod+Shift+F | Same | Search in files while the folder sidebar is shown; otherwise fold or unfold all sections | `folder-search.js` (its row comes before `app.js`'s): `mdvXsOpen` / `toggleAllSections` |
+| Mod+Shift+F | Same; inside search in files it closes it | Search in files whenever a folder is open (its sidebar shown or not); with no folder open, fold or unfold all sections | `folder-search.js` (its row comes before `app.js`'s, whose label it extends with "(no folder open)"): `mdvXsOpen` / `toggleAllSections` |
+| Mod+Shift+E | Same | Go to the folder's files: show the sidebar if hidden and focus the tree | `folder-tree.js`: `mdvTreeGoTo` |
 | Mod+P | Same; inside quick open it closes it | Go to a file (quick open) | `quick-open.js`: `mdvQoToggle` |
 | Mod+Shift+R | Same | Show or close the read-aloud player | `app.js`: `ttsToggle` |
 | Mod+O | Same | Open the file picker (`#fileInput`) | `app.js` |

@@ -12,16 +12,23 @@
 //   rootName  the folder's name
 //   list()    [{path, name, depth, rel}]: every Markdown file found, in the sidebar's order (folders
 //             first, then files, each by name). depth counts the folders between the root and the file.
-//   read(path)           Promise<{name, text, path, handle, mtimeMs}>; rejects with {code, message}
+//   read(path)           Promise<{name, text, path, handle, mtimeMs}>; rejects with {code, message}, where
+//             message is a clause without a closing full stop ('notes/a.md is not in notes')
 //   resolve(fromPath, href)  the path a link in the document at fromPath leads to, when it is a Markdown
 //             file inside the folder; otherwise null. Lexical: read() finds out whether it exists.
+//             fromPath null means the document on screen: a relative link then resolves from its place in the
+//             folder, and to null when it is not in the folder (or nothing is on screen). A web address, a
+//             protocol-relative '//host/…' link and a path that leaves the folder are null. A leading '/' is the
+//             folder's top, as a repository's links mean it; in the desktop app an absolute path that lies inside
+//             the folder is taken as that path.
 // Paths are folder-relative in a browser ('handoffs/2026-10-01.md') and absolute in the desktop app.
 //
 // The listing never enters .git, node_modules or any folder whose name starts with a dot, and stops at
 // 5,000 files, 8 folders deep, or 100,000 folder entries looked at: the shell's walk
 // (desktop/src-tauri/src/folders.rs) keeps the same rules, so both builds list the same files.
 //
-// A document is shown only through mdvOpenDocument (js/files.js); this file never renders one itself.
+// A document is shown only through mdvOpenDocument (js/files.js), by js/folder-open.js (the last request wins, and
+// the reader's place is kept); this file never renders one itself.
 
 const MDV_FOLDER_LIMITS = { entries: 5000, depth: 8, visited: 100000 };
 // A folder that changes while the reader works (agents add files) is listed again when the window comes back
@@ -42,14 +49,17 @@ const mdvFolderState = {
   error: null,         // why the last listing failed
   waiting: null,       // browser: a remembered folder that needs the reader's permission again
   generation: 0,       // each listing; a slower, older one never overwrites a newer one
+  openId: 0,           // each folder opened: what belongs to one folder (the search index, the tree's open
+                       // folders) is keyed by it, never by the folder's name, which two folders can share
   current: null,       // the folder path of the document on screen, when it is in the folder
   shown: null,         // what is on screen: {kind: 'path'|'handle', path, handle, name, folderPath}
   pendingOpen: null,   // a document this file asked mdvOpenDocument to show, until it is on screen
   shownLoad: null,     // {seq, identity}: the document load that showed it (comment re-renders keep it)
 };
 
-// ------- Events: 'change' (the folder or its listing), 'current' (the document on screen in it), 'shown' -------
-const mdvFolderListeners = { change: new Set(), current: new Set(), shown: new Set() };
+// ------- Events: 'change' (the folder or its listing), 'current' (the document on screen in it), 'shown',
+// 'times' (the files' sizes and times, which a browser listing learns later: mdvFolderLearnTimes) -------
+const mdvFolderListeners = { change: new Set(), current: new Set(), shown: new Set(), times: new Set() };
 function mdvFolderOn(type, fn) {
   mdvFolderListeners[type].add(fn);
   return () => mdvFolderListeners[type].delete(fn);
@@ -148,14 +158,60 @@ async function mdvFolderRefresh() {
   s.truncated = listing.truncated;
   s.unreadable = listing.unreadable;
   s.listedAt = Date.now();
+  // A browser walk does not ask each file its size and time; what an earlier look found (search in files, quick
+  // open's newest-first order) stays with the file until a later look finds it changed.
+  if (s.kind === 'browser') {
+    for (const e of listing.entries) {
+      const before = s.byPath.get(e.path);
+      if (before && before.mtimeMs != null) { e.size = before.size; e.mtimeMs = before.mtimeMs; e.statAt = before.statAt; }
+    }
+  }
   mdvFolderAccept(listing.entries);
   await mdvFolderNoteShown();
   mdvFolderEmit('change');
   return true;
 }
 
+// The size and time of each file the browser walk listed (the desktop listing carries them): one look at each
+// handle not looked at in the last few seconds, 16 at a time, with the page free between slices of about 12 ms.
+// Quick open lists the most recently changed files first with them. Emits 'times' when it learned anything.
+let mdvFolderTimesRun = null;
+function mdvFolderLearnTimes() {
+  const s = mdvFolderState;
+  if (s.kind !== 'browser' || s.loading) return Promise.resolve(false);
+  if (mdvFolderTimesRun) return mdvFolderTimesRun;
+  const openId = s.openId;
+  const since = Date.now() - MDV_FOLDER_STALE_MS;
+  const todo = s.entries.filter((e) => e.handle && !(e.statAt > since));
+  if (!todo.length) return Promise.resolve(false);
+  mdvFolderTimesRun = (async () => {
+    let learned = 0;
+    let sliceStart = performance.now();
+    for (let i = 0; i < todo.length; i += 16) {
+      if (s.openId !== openId) return false; // another folder was opened meanwhile
+      await Promise.all(todo.slice(i, i + 16).map(async (e) => {
+        try {
+          const file = await e.handle.getFile();
+          if (e.size !== file.size || e.mtimeMs !== file.lastModified) learned++;
+          e.size = file.size;
+          e.mtimeMs = file.lastModified;
+          e.statAt = Date.now();
+        } catch (err) { /* gone: the next listing leaves it out */ }
+      }));
+      if (performance.now() - sliceStart > 12) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        sliceStart = performance.now();
+      }
+    }
+    if (learned && s.openId === openId) mdvFolderEmit('times');
+    return learned > 0;
+  })().finally(() => { mdvFolderTimesRun = null; });
+  return mdvFolderTimesRun;
+}
+
 async function mdvFolderUse(kind, root, { remember = true } = {}) {
   const s = mdvFolderState;
+  s.openId++;
   s.kind = kind;
   s.root = root;
   s.rootName = kind === 'desktop' ? mdvFolderBaseName(root) || root : root.name;
@@ -282,18 +338,23 @@ function mdvFolderFirstShown(ms) {
 }
 
 // ------- Reading and resolving (the contract) -------
+// message: a clause with no closing full stop, so a caller can build a sentence around it (stream L's link toast
+// says "<name> could not be opened: <message>."); this file's own toasts end it (mdvFolderSentence).
 function mdvFolderError(code, message) { return { code, message }; }
+function mdvFolderSentence(message) { return /[.!?…]$/.test(message) ? message : message + '.'; }
 
 async function mdvFolderRead(path) {
   const s = mdvFolderState;
   if (s.kind === 'desktop' || (!s.kind && mdvFolderIsDesktop())) {
     const doc = await window.mdvHost.readDocument(path);
-    if (!doc) throw mdvFolderError('not-found', mdvFolderBaseName(path) + ' could not be read.');
+    if (!doc) throw mdvFolderError('not-found', mdvFolderBaseName(path) + ' could not be read');
     return Object.assign({}, doc, { handle: null });
   }
-  if (s.kind !== 'browser') throw mdvFolderError('no-folder', 'No folder is open.');
+  if (s.kind !== 'browser') throw mdvFolderError('no-folder', 'no folder is open');
   const rel = mdvFolderNormalizeRelative(String(path || ''));
-  if (!rel || !MDV_FOLDER_MARKDOWN.test(rel)) throw mdvFolderError('not-markdown', rel + ' is not a Markdown file.');
+  if (!rel || !MDV_FOLDER_MARKDOWN.test(rel)) throw mdvFolderError('not-markdown', (rel || String(path)) + ' is not a Markdown file');
+  // "Any more" only for a file the folder held when it was last listed.
+  const missing = () => rel + ' is not in ' + s.rootName + (s.byPath.has(rel) ? ' any more' : '');
   let handle = s.byPath.has(rel) ? s.byPath.get(rel).handle : null;
   if (!handle) {
     try {
@@ -302,7 +363,7 @@ async function mdvFolderRead(path) {
       for (const part of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(part);
       handle = await dir.getFileHandle(parts[parts.length - 1]);
     } catch (e) {
-      throw mdvFolderError('not-found', rel + ' is not in ' + s.rootName + ' any more.');
+      throw mdvFolderError('not-found', missing());
     }
   }
   let disk;
@@ -310,9 +371,9 @@ async function mdvFolderRead(path) {
     disk = await mdvReadHandle(handle);
   } catch (e) {
     const gone = e && e.name === 'NotFoundError';
-    throw mdvFolderError(gone ? 'not-found' : 'io', gone ? rel + ' is not in ' + s.rootName + ' any more.' : rel + ': ' + (e && e.message || e));
+    throw mdvFolderError(gone ? 'not-found' : 'io', gone ? missing() : rel + ': ' + (e && e.message || e));
   }
-  if (disk.changing) throw mdvFolderError('changing', rel + ' kept changing while it was read. Try again in a moment.');
+  if (disk.changing) throw mdvFolderError('changing', rel + ' kept changing while it was read; try again in a moment');
   return { name: disk.file.name, text: disk.text, path: rel, handle, mtimeMs: disk.file.lastModified, utf8: disk.utf8 };
 }
 
@@ -320,11 +381,14 @@ function mdvFolderResolve(fromPath, href) {
   const s = mdvFolderState;
   if (!s.kind || typeof href !== 'string') return null;
   let target = href.trim();
-  if (!target || target.startsWith('#')) return null;
+  // An in-document link, and a protocol-relative address ('//host/a.md' is a web address, as the browser reads it).
+  if (!target || target.startsWith('#') || (/^[\\/]{2}/.test(target) && !mdvFolderIsWindowsPath(target))) return null;
   const desktop = s.kind === 'desktop';
   let absolute = null;
-  if (mdvFolderIsWindowsPath(target)) absolute = target;
-  else {
+  if (mdvFolderIsWindowsPath(target)) {
+    if (!desktop) return null; // a path on a disk the browser's folder cannot name
+    absolute = target;
+  } else {
     const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(target);
     if (scheme) {
       if (!desktop || scheme[1].toLowerCase() !== 'file') return null;
@@ -337,10 +401,18 @@ function mdvFolderResolve(fromPath, href) {
     try { target = decodeURIComponent(target); } catch (e) { /* as written */ }
   }
   if (!MDV_FOLDER_MARKDOWN.test((absolute || target).replace(/[?#].*$/, ''))) return null;
+  // The document the link is in: fromPath, or (null) the document on screen when it is in the folder.
+  const from = fromPath || s.current;
+  const rooted = !absolute && target.startsWith('/');
+  if (!absolute && !rooted && !from) return null; // a relative link with nothing to be relative to
   if (desktop) {
-    let abs = absolute || (target.startsWith('/') ? target : null);
-    if (!abs) {
-      const base = fromPath ? mdvFolderDirName(fromPath) : s.root;
+    let abs = absolute;
+    if (rooted) {
+      // A path on disk when it lies inside the folder; otherwise from the folder's top, as in a repository.
+      const asIs = mdvFolderNormalizeAbsolute(target);
+      abs = asIs && mdvFolderInside(asIs, s.root) ? asIs : s.root.replace(/[\\/]+$/, '') + (mdvFolderIsWindowsPath(s.root) ? target.replace(/\//g, '\\') : target);
+    } else if (!abs) {
+      const base = mdvFolderDirName(from);
       if (!base) return null;
       abs = base + (mdvFolderIsWindowsPath(base) ? '\\' : '/') + target;
     }
@@ -348,7 +420,7 @@ function mdvFolderResolve(fromPath, href) {
     return abs && mdvFolderInside(abs, s.root) ? abs : null;
   }
   // Browser: a leading '/' is the folder's top, as a repository's links mean it.
-  const dir = target.startsWith('/') || !fromPath ? '' : fromPath.split('/').slice(0, -1).join('/');
+  const dir = rooted ? '' : from.split('/').slice(0, -1).join('/');
   const rel = mdvFolderNormalizeRelative(dir ? dir + '/' + target : target);
   return rel || null;
 }
@@ -430,59 +502,6 @@ async function mdvFolderNoteShown(announce) {
 
 new MutationObserver(() => { mdvFolderNoteShown(true); }).observe(document.getElementById('mdBody'), { childList: true });
 
-// ------- Opening one of the folder's documents -------
-// Through mdvOpenDocument (js/files.js) only. opts.newWindow (Cmd/Ctrl-click, desktop): its own window, as a link
-// does. opts.then(): runs once the document is on screen (search across files scrolls to the match there).
-async function mdvFolderOpenFile(path, opts = {}) {
-  const s = mdvFolderState;
-  if (mdvFolderIsDesktop() && opts.newWindow) {
-    await window.mdvHost.openPath(path);
-    return true;
-  }
-  const entry = s.byPath.get(path);
-  const label = (entry && entry.rel) || mdvFolderBaseName(path);
-  let doc;
-  try {
-    doc = await mdvFolderRead(path);
-  } catch (e) {
-    mdvFolderToast((e && e.message) || (label + ' could not be read.'), 'error');
-    if (e && e.code === 'not-found') mdvFolderRefresh();
-    return false;
-  }
-  // Already on screen, exactly: nothing to load, only the place to show.
-  if (s.current && mdvFolderSamePath(s.current, doc.path) && rawMarkdown === doc.text) {
-    if (opts.then) opts.then();
-    return true;
-  }
-  if (typeof window.mdvOpenDocument !== 'function') {
-    console.error('folder: mdvOpenDocument (js/files.js) is missing, so the folder cannot show a document.');
-    mdvFolderToast('This build cannot show documents from a folder: mdvOpenDocument is missing.', 'error');
-    return false;
-  }
-  const identity = { kind: doc.handle ? 'handle' : 'path', path: doc.path, name: doc.name, handle: doc.handle || null };
-  s.pendingOpen = { text: doc.text, identity };
-  const shown = mdvFolderWhenShowing(doc.path, 5000);
-  try {
-    await window.mdvOpenDocument(doc, { push: true });
-  } catch (e) {
-    console.error('folder: mdvOpenDocument failed:', e);
-    mdvFolderToast(label + ' could not be shown: ' + ((e && e.message) || e), 'error');
-    return false;
-  }
-  const ok = await shown;
-  if (ok && opts.then) opts.then();
-  return ok;
-}
-
-function mdvFolderWhenShowing(path, ms) {
-  return new Promise((resolve) => {
-    const stop = mdvFolderOn('shown', (identity) => {
-      if (identity && mdvFolderSamePath(identity.path, path)) { stop(); clearTimeout(timer); resolve(true); }
-    });
-    const timer = setTimeout(() => { stop(); resolve(false); }, ms);
-  });
-}
-
 function mdvFolderToast(message, kind) {
   if (typeof mdvShowToast === 'function') mdvShowToast(message, kind);
   else console.warn(message);
@@ -499,6 +518,13 @@ function mdvFolderAddShortcut(row, before) {
     const help = MDV_SHORTCUTS.findIndex((r) => r.key === '?');
     MDV_SHORTCUTS.splice(help >= 0 ? help : MDV_SHORTCUTS.length, 0, row);
   }
+}
+
+// What an existing row says in the ? sheet, for a row whose keys a folder feature now shares with it.
+function mdvFolderRelabelShortcut(match, label) {
+  if (typeof MDV_SHORTCUTS === 'undefined' || !Array.isArray(MDV_SHORTCUTS)) return;
+  const row = MDV_SHORTCUTS.find(match);
+  if (row) row.label = label;
 }
 
 // ------- The contract -------

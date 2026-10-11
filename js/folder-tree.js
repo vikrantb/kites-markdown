@@ -9,8 +9,10 @@
 // The tree follows the WAI-ARIA tree pattern as a flat list: each row is a treeitem with aria-level,
 // aria-setsize and aria-posinset, folders carry aria-expanded, and one row at a time is in the Tab order.
 // Keys: Up and Down move, Right opens a folder (or moves into it), Left closes it (or moves to its parent),
-// Home and End, Enter or Space opens, and typing a name's first letters moves to it. From the filter box,
-// Down moves into the tree and Enter opens the first match.
+// Home and End, typing a name's first letters moves to it. Enter opens a file and moves the keyboard focus into
+// the document (Space and the arrows then scroll it); Space opens it and stays in the tree, to look through files.
+// From the filter box, Down moves into the tree and Enter opens the first match. Cmd/Ctrl+Shift+E comes back to the
+// tree from anywhere (showing the sidebar when it is hidden).
 //
 // Names come from the file system and are only ever set as text, never parsed as HTML.
 
@@ -163,6 +165,20 @@ function mdvTreeFocus() {
   const row = mdvTree.tree.querySelector('[role="treeitem"][tabindex="0"]');
   if (row) row.focus({ preventScroll: false });
   else if (mdvFolderState.kind) mdvTree.filter.focus();
+  else {
+    // No folder yet: its first offer (Open a folder…, Reconnect).
+    const offer = mdvTree.empty.querySelector('button');
+    if (offer) offer.focus();
+  }
+}
+
+// Cmd/Ctrl+Shift+E: back to the tree from anywhere, the sidebar shown first when it is hidden. Where no folder can
+// be opened (Firefox, Safari), the key stays the browser's.
+function mdvTreeGoTo() {
+  if (!mdvFolderState.kind && !mdvFolderState.waiting && !(mdvFolderIsDesktop() || 'showDirectoryPicker' in window)) return false;
+  if (!mdvTreeShown()) mdvTreeShow(true);
+  mdvTreeFocus();
+  return true;
 }
 
 // ------- The model: folders and files as nodes -------
@@ -257,7 +273,8 @@ function mdvTreeRender() {
     return;
   }
   // A new folder starts with its own expansion: the current document's folders, or everything when it is small.
-  const rootKey = s.kind + ':' + (s.kind === 'desktop' ? s.root : s.rootName);
+  // (Keyed by the folder as opened, not by its name: two folders can share a name.)
+  const rootKey = s.kind + ':' + s.openId;
   if (mdvTree.seenRoot !== rootKey) {
     mdvTree.seenRoot = rootKey;
     mdvTree.expanded = new Set();
@@ -435,10 +452,11 @@ function mdvTreeToggleDir(rel, open) {
   return true;
 }
 
-function mdvTreeOpenFileRow(node, event) {
+// focus: the keyboard focus moves into the document once it is shown (Enter), rather than staying here (Space, a click).
+function mdvTreeOpenFileRow(node, event, { focus = false } = {}) {
   const newWindow = !!(event && (event.metaKey || event.ctrlKey));
   if (mdvTreeNarrow.matches && !newWindow) mdvTreeShow(false, { persist: false });
-  mdvFolderOpenFile(node.path, { newWindow });
+  mdvFolderOpenFile(node.path, { newWindow, focus: focus && !newWindow });
 }
 
 function mdvTreeClick(e) {
@@ -480,7 +498,7 @@ function mdvTreeKeydown(e) {
     case ' ':
       handled();
       if (node.type === 'dir') { mdvTreeToggleDir(node.rel); mdvTreeSetFocusRel(node.rel, true); }
-      else mdvTreeOpenFileRow(node, e);
+      else mdvTreeOpenFileRow(node, e, { focus: e.key === 'Enter' });
       return;
     case 'Escape':
       if (mdvTree.filter.value) { handled(); mdvTree.filter.value = ''; mdvTreeRender(); mdvTreeSetFocusRel(mdvTree.focusRel, true); }
@@ -514,7 +532,7 @@ function mdvTreeFilterKeys(e) {
     clearTimeout(mdvTree.filterTimer);
     mdvTreeRender();
     const first = mdvTree.rows.find((r) => r.node.type === 'file');
-    if (first) mdvTreeOpenFileRow(first.node, e);
+    if (first) mdvTreeOpenFileRow(first.node, e, { focus: true });
   } else if (e.key === 'Escape' && mdvTree.filter.value) {
     e.preventDefault();
     e.stopPropagation();
@@ -554,6 +572,9 @@ function mdvTreeMarkCurrent() {
 
 mdvFolderOn('change', mdvTreeRender);
 mdvFolderOn('current', mdvTreeMarkCurrent);
+document.addEventListener('DOMContentLoaded', () => {
+  mdvFolderAddShortcut({ mod: true, shift: true, key: 'e', label: 'Go to the folder’s files', run: () => mdvTreeGoTo() });
+});
 mdvTreeNarrow.addEventListener('change', () => { if (mdvTreeShown() && mdvTreeNarrow.matches) mdvTreeShow(false, { persist: false }); });
 // The panel comes back as the reader left it.
 if (mdvFolderStorage('mdv-folder-panel') === 'open' && !mdvTreeNarrow.matches) mdvTreeShow(true);
