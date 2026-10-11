@@ -54,7 +54,7 @@ function pageHelpers({ desktop, noFsAccess, openPicker, savePicker }) {
       let lastModified = 1700000000000;
       let active = 0;
       const h = {
-        kind: 'file', name, writes: [], maxActive: 0, perm: 'granted', onClose: null,
+        kind: 'file', name, writes: [], maxActive: 0, perm: 'granted', onWrite: null, onClose: null,
         get text() { return text; },
         // Another program edits the file (its time stamp moves)
         external(next) { text = next; lastModified += 7000; },
@@ -69,7 +69,11 @@ function pageHelpers({ desktop, noFsAccess, openPicker, savePicker }) {
           h.maxActive = Math.max(h.maxActive, active);
           let buf = '';
           return {
-            async write(d) { await new Promise((r) => setTimeout(r, 5)); buf += typeof d === 'string' ? d : await new Blob([d]).text(); },
+            async write(d) {
+              await new Promise((r) => setTimeout(r, 5));
+              buf += typeof d === 'string' ? d : await new Blob([d]).text();
+              if (h.onWrite) { const f = h.onWrite; h.onWrite = null; f(); }
+            },
             async close() {
               await new Promise((r) => setTimeout(r, 5));
               text = buf; lastModified += 1000; h.writes.push(buf); active--;

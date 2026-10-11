@@ -954,7 +954,7 @@ function mdvNoticeElement(n) {
     else actions.appendChild(mdvNoticeButton('Dismiss', () => mdvRemoveNotices((x) => x.id === n.id)));
   } else if (n.kind === 'unsaved') {
     title.textContent = 'Comment changes not saved';
-    text.textContent = name + ' was closed with comment changes that were never saved into a file.';
+    text.textContent = name + ' was closed or read again before its comment changes were saved into a file.';
     actions.appendChild(mdvNoticeButton('Download ' + (n.name || 'it'), () => mdvDownloadText(n.text, n.name), true));
     actions.appendChild(mdvNoticeButton('Dismiss', () => mdvRemoveNotices((x) => x.id === n.id)));
   } else {
@@ -1266,7 +1266,9 @@ async function mdvOpenOrSetSaveLocation() {
     const h = await mdvEnsureWritableHandle();
     if (h) {
       mdvShowToast('Linked to ' + (h.name || 'the file') + ': comments save into it.');
-      if (mdvDirty) await mdvSaveFile({ allowPrompt: false });
+      // A file picked in the Open dialog already holds the document; a new one from the Save dialog is empty
+      const base = mdvBases.get(h);
+      if (mdvDirty || (base && base.overwrite)) await mdvSaveFile({ allowPrompt: false });
     }
     return;
   }

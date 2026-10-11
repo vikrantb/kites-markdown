@@ -180,6 +180,17 @@ test('control: a pasted document still gets a new file from the Save dialog', as
   expect(await page.evaluate(() => window.__t.pickerCalls.save)).toBe(1);
 });
 
+test('the save-location button writes a pasted document into the new file picked for it', async ({ page }) => {
+  await openViewer(page, { savePicker: { name: 'from-paste.md', truncate: true } });
+  await page.evaluate((t) => window.__t.opfsWrite('from-paste.md', t), '# An older file that the reader chose to replace\n');
+  await page.locator('#mdBody').waitFor({ state: 'attached' });
+  await paste(page, '# Pasted notes\n\nA pasted paragraph, not commented yet.\n');
+  await expect(page.locator('#mdBody')).toContainText('A pasted paragraph');
+  await page.locator('#mdvOpenBtn').click();
+  await expect.poll(() => page.evaluate(() => window.__t.opfsText('from-paste.md')), { timeout: 5000 })
+    .toBe('# Pasted notes\n\nA pasted paragraph, not commented yet.\n');
+});
+
 test('the add-comment popup never links a file for a document that is no longer on screen', async ({ page }) => {
   await openViewer(page, { savePicker: { name: 'a.md' }, openPicker: { name: 'a.md' } });
   const A = '# A\n\nA paragraph of document A.\n';
@@ -370,6 +381,22 @@ test('an edit made right after the viewer\'s own save is never absorbed and over
   const r = await page.evaluate(() => ({ text: window.h.text, writes: window.h.writes.length }));
   expect(r.text).toContain('An edit that landed right after the viewer saved.');
   expect(r.writes).toBe(1);
+  await expect(page.locator('#mdvNotices .mdv-notice-conflict')).toBeVisible();
+});
+
+test('a file changed while the viewer is writing it keeps the other program\'s change', async ({ page }) => {
+  await openViewer(page);
+  await page.evaluate(async (plan) => {
+    window.h = window.__t.fakeHandle('plan.md', plan);
+    await mdvOpenWithHandle(window.h, { prompt: false });
+    // Another program saves the file after the viewer checked it, while the viewer's write is still open
+    window.h.onWrite = () => window.h.external(window.h.text + '\nWritten by another program during the save.\n');
+    await mdvAddComment(window.__t.para('The first paragraph'), null, 'Mine');
+    await mdvFlushWrites();
+  }, PLAN);
+  const r = await page.evaluate(() => ({ text: window.h.text, writes: window.h.writes.length }));
+  expect(r.text).toContain('Written by another program during the save.');
+  expect(r.writes).toBe(0);
   await expect(page.locator('#mdvNotices .mdv-notice-conflict')).toBeVisible();
 });
 
