@@ -42,6 +42,8 @@ function transformCalloutBlocks() {
   });
   try { mdvCaptionImages(body); } catch (e) { console.warn('figures:', e); }
   try { mdvAlignNumericColumns(body); } catch (e) { console.warn('tables:', e); }
+  try { mdvTableScrollCues(body); } catch (e) { console.warn('table scroll:', e); }
+  try { mdvPolishDashboard(body); } catch (e) { console.warn('dashboard:', e); }
 }
 
 // An image alone in its paragraph becomes a figure: centred, rounded and shadowed, with its title (or, without one,
@@ -89,33 +91,71 @@ function mdvAlignNumericColumns(body) {
   }
 }
 
-// A heading's own words: without the fold toggle and the "#" permalink markdown-it-anchor appends.
-function mdvHeadingText(h) {
+// A table wider than the column scrolls sideways inside its own box; mdv-more-left / mdv-more-right mark the sides it
+// continues to, and CSS fades them, as code blocks shade theirs.
+let mdvTableResize = null;
+function mdvTableScrollCues(body) {
+  if (mdvTableResize) { mdvTableResize.disconnect(); mdvTableResize = null; }
+  const update = (t) => {
+    const max = t.scrollWidth - t.clientWidth;
+    t.classList.toggle('mdv-more-right', max > 1 && t.scrollLeft < max - 1);
+    t.classList.toggle('mdv-more-left', max > 1 && t.scrollLeft > 1);
+  };
+  if (typeof ResizeObserver === 'function') mdvTableResize = new ResizeObserver((entries) => entries.forEach((e) => update(e.target)));
+  for (const t of body.querySelectorAll('table')) {
+    t.addEventListener('scroll', () => update(t), { passive: true });
+    if (mdvTableResize) mdvTableResize.observe(t);
+    update(t);
+  }
+}
+
+// The frontmatter dashboard (render.js): a status written as a slug ("in-progress") reads as words, and a repository
+// link drops the star glyph, which read as "favourite"; CSS draws a link icon instead.
+function mdvPolishDashboard(body) {
+  const badge = body.querySelector(':scope > .fm-dashboard .fm-status-badge');
+  if (badge) {
+    for (const n of badge.childNodes) if (n.nodeType === Node.TEXT_NODE) n.textContent = n.textContent.replace(/(\w)[-_]+(?=\w)/g, '$1 ');
+  }
+  for (const a of body.querySelectorAll(':scope > .fm-dashboard a.fm-repo-badge')) {
+    const t = a.firstChild;
+    if (t && t.nodeType === Node.TEXT_NODE) t.textContent = t.textContent.replace(/^\s*\u2605\s*/, '');
+  }
+}
+
+// A heading's own words: without the fold toggle, the "#" permalink markdown-it-anchor appends and a comment chip.
+// Named apart from navigation.js's text helpers: classic scripts share one scope, and a later declaration with the
+// same name would silently replace the earlier one for every caller.
+function mdvHeadingLabel(h) {
   const copy = h.cloneNode(true);
-  copy.querySelectorAll('.header-anchor, .section-toggle').forEach((el) => el.remove());
+  copy.querySelectorAll('.header-anchor, .section-toggle, .mdv-chip').forEach((el) => el.remove());
   return copy.textContent.replace(/\s+/g, ' ').trim();
 }
 
 // ============================================
 // Section Minimap
 // ============================================
-// One segment per H2 (with three or more). Each label is drawn by CSS from data-label, truncated with an ellipsis
-// inside its segment, and shown in full in a tooltip on hover or keyboard focus (known issue 11). Because the label
-// is not DOM text, search, read-aloud and copy never pick it up.
-let mdvMinimapObserver = null;
+// A rail of the document's H2 sections (when there are three or more). It is the first thing in the document, sits in
+// the space above it, and stays under the toolbar while reading, so its state is always in view: sections read,
+// the current one, the ones ahead. With room, every segment carries its label; without room (many sections) the
+// segments become a track, and the rail names the current section and its position instead. Labels are drawn by
+// CSS from data attributes (known issue 11), so search, read-aloud and copy never pick them up, and the rail sits
+// outside every section, so the blocks inside them keep their place among their siblings (comments.js records it).
+const MDV_MINIMAP_MIN_LABEL = 72; // px: a segment narrower than this shows a track instead of a label
+let mdvMinimap = null; // { nav, segments, headings, title, resize }
 
 function buildSectionMinimap() {
-  if (mdvMinimapObserver) { mdvMinimapObserver.disconnect(); mdvMinimapObserver = null; }
+  if (mdvMinimap && mdvMinimap.resize) mdvMinimap.resize.disconnect();
+  mdvMinimap = null;
   const body = document.getElementById('mdBody');
   const h2s = [...body.querySelectorAll('h2')];
   if (h2s.length < 3) return; // Only show for docs with 3+ sections
 
-  const minimap = document.createElement('nav');
-  minimap.className = 'section-minimap';
-  minimap.setAttribute('aria-label', 'Sections');
+  const nav = document.createElement('nav');
+  nav.className = 'section-minimap';
+  nav.setAttribute('aria-label', 'Sections');
 
   h2s.forEach(h => {
-    const label = mdvHeadingText(h);
+    const label = mdvHeadingLabel(h);
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'minimap-segment';
@@ -123,40 +163,57 @@ function buildSectionMinimap() {
     btn.dataset.label = label;
     btn.setAttribute('aria-label', label);
     btn.addEventListener('click', () => h.scrollIntoView({ behavior: 'smooth', block: 'start' }));
-    minimap.appendChild(btn);
+    nav.appendChild(btn);
   });
+  body.prepend(nav);
 
-  // Below the dashboard; otherwise directly under the title, inside its section, so the title's fold toggle still
-  // finds its section as the next element; otherwise at the top.
-  const dashboard = body.querySelector(':scope > .fm-dashboard');
   const h1 = body.querySelector('h1');
-  if (dashboard) {
-    dashboard.after(minimap);
-  } else if (h1) {
-    const section = h1.nextElementSibling;
-    if (section && section.classList.contains('section-content')) section.prepend(minimap);
-    else h1.after(minimap);
-  } else {
-    body.prepend(minimap);
+  mdvMinimap = { nav, segments: [...nav.children], headings: h2s, title: h1 ? mdvHeadingLabel(h1) : 'Start' };
+  if (typeof ResizeObserver === 'function') {
+    mdvMinimap.resize = new ResizeObserver(() => mdvFitMinimap());
+    mdvMinimap.resize.observe(nav);
   }
-
-  // Highlight the section being read, and mark the ones before it as read.
-  const segments = [...minimap.children];
-  mdvMinimapObserver = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (!entry.isIntersecting) return;
-      const current = segments.findIndex((seg) => seg.dataset.targetId === entry.target.id);
-      segments.forEach((seg, i) => {
-        seg.classList.toggle('active', i === current);
-        seg.classList.toggle('passed', i < current);
-        if (i === current) seg.setAttribute('aria-current', 'location');
-        else seg.removeAttribute('aria-current');
-      });
-    });
-  }, { rootMargin: '-80px 0px -70% 0px', threshold: 0 });
-
-  h2s.forEach(h => mdvMinimapObserver.observe(h));
+  mdvFitMinimap();
+  mdvUpdateMinimap();
 }
+
+// Labels when every segment has room for one, a track otherwise.
+function mdvFitMinimap() {
+  const m = mdvMinimap;
+  if (!m || !m.nav.isConnected) return;
+  const width = m.nav.clientWidth;
+  if (!width) return; // not laid out (a hidden document)
+  m.nav.classList.toggle('is-track', width / m.segments.length < MDV_MINIMAP_MIN_LABEL);
+}
+
+// The current section is the last H2 above the reading line (the same line the outline uses), so the rail is right
+// scrolling up as well as down. Folded headings are skipped.
+function mdvUpdateMinimap() {
+  const m = mdvMinimap;
+  if (!m || !m.nav.isConnected) return;
+  const line = Math.max(80, window.innerHeight * 0.3);
+  let current = -1;
+  m.headings.forEach((h, i) => {
+    const r = h.getClientRects();
+    if (r.length && r[0].top <= line) current = i;
+  });
+  m.segments.forEach((seg, i) => {
+    seg.classList.toggle('active', i === current);
+    seg.classList.toggle('passed', i < current);
+    if (i === current) seg.setAttribute('aria-current', 'location');
+    else seg.removeAttribute('aria-current');
+  });
+  m.nav.dataset.current = current >= 0 ? m.segments[current].dataset.label : m.title;
+  m.nav.dataset.position = current >= 0 ? `${current + 1} / ${m.segments.length}` : `${m.segments.length} sections`;
+}
+
+let mdvMinimapFrame = 0;
+function mdvScheduleMinimap() {
+  if (!mdvMinimapFrame) mdvMinimapFrame = requestAnimationFrame(() => { mdvMinimapFrame = 0; mdvUpdateMinimap(); });
+}
+// One listener for the page's lifetime; each render only swaps what it reads.
+window.addEventListener('scroll', mdvScheduleMinimap, { passive: true });
+window.addEventListener('resize', mdvScheduleMinimap, { passive: true });
 
 // ============================================
 // Abbreviation Tooltips from frontmatter
@@ -276,7 +333,7 @@ function mdvHeadingTargets() {
   const map = new Map();
   document.querySelectorAll('#mdBody h1, #mdBody h2, #mdBody h3, #mdBody h4, #mdBody h5, #mdBody h6').forEach((h) => {
     if (!h.id) return;
-    const slug = mdvSlug(mdvHeadingText(h));
+    const slug = mdvSlug(mdvHeadingLabel(h));
     if (slug && !map.has(slug)) map.set(slug, h);
   });
   return map;
@@ -291,7 +348,7 @@ function mdvLinkDiagramNodes(wrapper) {
       if (node.hasAttribute('data-mdv-section')) continue;
       const heading = targets.get(mdvSlug(node.textContent));
       if (!heading) continue;
-      const name = mdvHeadingText(heading);
+      const name = mdvHeadingLabel(heading);
       node.setAttribute('data-mdv-section', heading.id);
       node.classList.add('mdv-node-link');
       node.setAttribute('tabindex', '0');

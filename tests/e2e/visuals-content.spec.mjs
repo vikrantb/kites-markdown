@@ -160,3 +160,32 @@ test('diff rows run the full width of the code block', async ({ page }) => {
     expect(Math.abs(r.right)).toBeLessThanOrEqual(1);
   }
 });
+
+for (const width of [1366, 390]) {
+  test(`the dashboard's metrics fill their rows, and the status reads as words, at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await open(page, 'kitchen-sink.md');
+    const d = await page.evaluate(() => {
+      const box = document.querySelector('#mdBody .fm-metrics');
+      const inner = box.getBoundingClientRect();
+      const rows = new Map();
+      for (const m of box.children) {
+        const r = m.getBoundingClientRect();
+        const key = Math.round(r.top);
+        rows.set(key, [...(rows.get(key) || []), r]);
+      }
+      // Empty space at the end of each row (gaps between metrics are the layout's, not holes).
+      const holes = [...rows.values()].map((rs) => inner.right - Math.max(...rs.map((r) => r.right)));
+      return {
+        rows: rows.size, holes,
+        status: document.querySelector('#mdBody .fm-status-badge').innerText,
+        repo: document.querySelector('#mdBody a.fm-repo-badge').textContent,
+      };
+    });
+    if (width === 1366) expect(d.rows).toBe(1);
+    for (const h of d.holes) expect(h).toBeLessThanOrEqual(1);
+    expect(d.status).not.toMatch(/[-_]/);
+    expect(d.status.toLowerCase()).toContain('in progress');
+    expect(d.repo).not.toContain('★');
+  });
+}

@@ -231,15 +231,6 @@ test('a minimap with room shows each label, truncated with an ellipsis when long
   expect(await labelOverflow(page)).toEqual([]); // ...and still stays inside it
 });
 
-test('the title keeps its fold toggle when the minimap sits under it', async ({ page }) => {
-  await open(page, 'kitchen-sink.md');
-  await renderSource(page, '# Title\n\nIntro.\n\n## One\n\nA.\n\n## Two\n\nB.\n\n## Three\n\nC.\n');
-  const h1 = page.locator('#mdBody h1');
-  await h1.hover();
-  await h1.locator('.section-toggle').click();
-  await expect(page.locator('#mdBody h1 + .section-content')).toHaveClass(/collapsed/);
-});
-
 // ---------------------------------------------------------------------------------------------
 // Issue 13: copy copies only the code
 // ---------------------------------------------------------------------------------------------
