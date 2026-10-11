@@ -87,12 +87,14 @@ Opera). Other browsers save comments by downloading a copy when you press Cmd/Ct
 Everything runs locally. The only network request the viewer makes itself is for the web fonts
 (Google Fonts). All libraries are vendored in `vendor/`. See [docs/dependencies.md](docs/dependencies.md).
 
-> [!CAUTION]
-> **Open only markdown files you trust.** Raw HTML in a document is rendered without
-> sanitization, so a malicious file can run script in the viewer, which includes using any
-> file-access permission you have granted it. A document can also load remote images, which tells
-> their server the file was opened. Sanitizing output is on the [roadmap](docs/roadmap.md#known-issues);
-> the details are in [docs/rendering.md](docs/rendering.md#security-posture).
+> [!NOTE]
+> **A document is treated as untrusted.** Everything rendered from it is sanitized with DOMPurify
+> (scripts, event handlers, `javascript:` links, frames and forms are removed), Mermaid diagrams run
+> at `securityLevel: 'strict'`, and a Content Security Policy refuses inline script as a second line
+> of defence. Nothing in a document can press the viewer's buttons, such as the ones that ask for
+> file access. A document can still load remote images, which tells their server the file was
+> opened. The details, and how each point is tested, are in
+> [docs/rendering.md](docs/rendering.md#security-posture).
 
 ## Also in this repository
 

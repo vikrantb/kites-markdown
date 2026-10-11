@@ -47,7 +47,7 @@ Read from the `markdown-it setup` section of the inline script.
 | Setting | Value | Effect |
 |---|---|---|
 | Parser | markdown-it 14.1.0 (`vendor/markdown-it.min.js`) | CommonMark parser with GFM tables and strikethrough built in |
-| `html` | `true` | Raw HTML in the source is passed through to the page, unsanitized |
+| `html` | `true` | Raw HTML in the source is rendered, then sanitized with DOMPurify before it reaches the page (see [rendering.md](rendering.md#security-posture)) |
 | `linkify` | `true` | Bare URLs, `www.` hosts, e-mail addresses and bare domain-like words become links (see [Autolinks](#autolinks-and-linkify)) |
 | `typographer` | `true` | Smart quotes and text replacements such as `--` to an en dash and `(c)` to a copyright sign |
 | `breaks` | not set, so `false` | A single newline inside a paragraph is a soft break, not `<br>` |
@@ -232,7 +232,7 @@ Read from the fence override and `renderMermaidDiagrams`; the fence detection wa
 
 - The fence override tests `token.info.trim() === 'mermaid'`. The match is exact and case-sensitive. ` ```Mermaid ` and ` ```mermaid title="Flow" ` are **not** diagrams here; they fall through to the normal code block (verified). Other renderers differ on whether extra words are allowed.
 - A matching fence becomes `<div class="mermaid-wrapper"><pre class="mermaid" id="mermaid-N">` with the escaped source. `renderMermaidDiagrams` later calls `mermaid.render` for each element not yet marked `rendered`.
-- `mermaid.initialize` is called with `securityLevel: 'loose'`, which allows HTML labels and click callbacks inside diagrams. Combined with `html: true`, a diagram from an untrusted file can run script (inferred).
+- `mermaid.initialize` is called with `securityLevel: 'loose'`, but `js/render.js` pins the level to `'strict'` on every call, and a `%%{init}%%` directive cannot change it: `click` callbacks are ignored, `javascript:` links are refused, and HTML in labels is sanitized by Mermaid (verified by `tests/e2e/security.spec.mjs`).
 - The theme is `dark` or `default` depending on the viewer theme at the moment of rendering. `setTheme` schedules `renderMermaidDiagrams`, but that function only selects `.mermaid:not(.rendered)`, and a drawn diagram has the `rendered` class and its source replaced by SVG. Diagrams already drawn therefore keep their old theme until the document is rendered again (read; not run in a browser).
 - A syntax error replaces the diagram with a red `Mermaid error: ...` message instead of breaking the page.
 - Tildes work as fence characters too (` ~~~mermaid `), because the check uses the token's info string, not the fence characters (verified).

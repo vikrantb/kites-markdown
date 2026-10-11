@@ -132,7 +132,7 @@ async function loadFromUrl() {
           ? 'Cannot auto-load from <code>file://</code>. Drag the file here, browse to it, or serve via a local server.'
           : 'File not found on server. Drag the file here or browse to it.'}
       </div>
-      <button class="drop-btn" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">
+      <button class="drop-btn" data-action="browse-file">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
         Browse to ${escapeHtml(fileName)}
       </button>

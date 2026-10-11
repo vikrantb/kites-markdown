@@ -14,8 +14,8 @@ keep it that way: no product names, private paths or project-specific examples.
 |---|---|
 | `markdown-viewer.html` | The app's markup. It loads `css/viewer.css` and the classic scripts in `js/` in a fixed order. No build step. |
 | `css/viewer.css` | All of the viewer's own styles. |
-| `js/*.js` | The app, as 12 classic scripts sharing one global scope, loaded in the order `markdown-viewer.html` lists them: `core`, `display`, `files`, `render`, `mermaid`, `navigation`, `diagram-overlay`, `links`, `enhancements`, `read-aloud`, `app`, `comments`. Classic scripts (not ES modules) still load from `file://`. |
-| `tests/` | Browser tests (`pnpm test`): every sample in both themes, plus file:// loading. `tests/serve.mjs` is their static server. |
+| `js/*.js` | The app, as 14 classic scripts sharing one global scope, loaded in the order `markdown-viewer.html` lists them: `core`, `actions`, `math`, `display`, `files`, `render`, `mermaid`, `navigation`, `diagram-overlay`, `links`, `enhancements`, `read-aloud`, `comments`, `app`. `app` starts the viewer, so it loads last. Classic scripts (not ES modules) still load from `file://`. |
+| `tests/` | Browser tests (`pnpm test`): every sample in both themes, file:// loading, security (`security.spec.mjs`), every control (`controls.spec.mjs`) and render correctness (`render-correctness.spec.mjs`). `tests/fixtures/` holds their documents; `tests/serve.mjs` is their static server. |
 | `vendor/` | Third-party libraries, vendored unmodified and loaded by relative tags. No CDN. Licenses are in `THIRD_PARTY_NOTICES.md`. |
 | `extensions/github-html-viewer/` | Chrome extension that renders `.html` blobs on GitHub. Read its security model before changing the iframe sandbox. |
 | `legacy/` | The superseded first viewer. Reference only; do not develop it. |
@@ -45,7 +45,7 @@ keep it that way: no product names, private paths or project-specific examples.
 1. `pnpm test` must pass: every sample renders in both themes with no page or console errors, every Mermaid
    block becomes an SVG, math has no errors, and the viewer works from `file://`. Screenshots land in `test-results/`.
 2. Open `samples/kitchen-sink.md` and `samples/commented.md` in Chrome, in **both themes**:
-   - the console must be clean (a `favicon.ico` 404 is known);
+   - the console must be clean;
    - diagrams, math, task-list checkboxes and code highlighting must render;
    - comment threads must appear in the sidebar.
 3. Saving to a real file on disk needs a real user click, so confirm it by hand. The browser tests cover the
@@ -62,16 +62,32 @@ that is suddenly "missing" after a reload is usually that, not the code.
 - **The on-disk comment format is a public contract.** It is `<!-- MDV-ANCHOR id="…" -->` plus a
   trailing `<!-- MDV-COMMENTS:v1 … MDV-COMMENTS:end -->`. Change it only with a version bump and a
   reader for the old version.
-- **Optional libraries are guarded with `if (window.X)`.** A misspelled global silently disables the
-  feature; task lists were off for that reason until 2026-10-04. When adding a library, confirm in
-  the browser that its global name matches.
+- **Optional libraries are guarded with `if (window.X)`.** A misspelled global used to disable the
+  feature silently (task lists were off for that reason until 2026-10-04). Now `MDV_LIBRARIES` in
+  `js/render.js` lists every vendored global: a missing one gets one console warning and a dismissible
+  notice naming the feature. When adding a library, add it there and confirm in the browser that its
+  global name matches.
 - **Runtime network use is limited to Google Fonts** (see `docs/dependencies.md`). New libraries are
   vendored, never loaded from a CDN.
 - **Markdown stays portable.** Every viewer-only feature must be invisible elsewhere (GitHub,
   VS Code, Obsidian): use standard syntax or HTML comments.
 - **Narration comments (`<!-- narrate: … -->`) are opt-in** (see `docs/authoring-guide.md`).
-- **Treat every document as untrusted input.** Raw HTML is rendered unsanitized today (roadmap
-  issue 7), so do not make that worse: no new `innerHTML` from document content without escaping.
+- **Treat every document as untrusted input.** Everything rendered from a document goes through
+  `mdvSanitize` (DOMPurify, configured in `js/render.js`). Anywhere else, never put document text into
+  `innerHTML` unescaped: use `textContent`, or `escapeHtml` for text and `mdvEscapeAttr` for a quoted
+  attribute value. Mermaid stays at `securityLevel: 'strict'`; `render.js` pins it at load. DOMPurify's
+  `SAFE_FOR_XML` stays on (documents carry SVG and MathML); a hook keeps it from deleting text, so
+  only top-level HTML comments survive, and those get a space after any `<` that could start a tag.
+- **No inline handlers.** No `on*=` attribute in markup or in generated HTML, and no `javascript:`
+  URL: the page's Content Security Policy (`script-src 'self' file:`) refuses them. A control says
+  what it does with `data-action="<name>"` (plus an optional `data-arg`), and `js/actions.js` runs
+  it: one capture-phase listener per event type and a registry. Another script adds its own with
+  `mdvRegisterActions({ name: { click: (el, arg, event) => … } })`. An element that holds
+  document-derived markup carries `data-mdv-document` (`#mdBody`, the diagram overlay's
+  `#diagramZoomContainer`, the comment sidebar's `#mdvThreadList`); a new place that shows document
+  data goes inside one. An action there runs only on an element the viewer marked with
+  `mdvMarkOwnControl(el)` (render.js marks each code block's Copy button), and the sanitizer drops
+  `data-action`/`data-arg` from document HTML, so a document cannot press the viewer's buttons.
 - **A document is only linked to a file handle it was read from.** Any path that replaces the
   document must set `mdvFileHandle` to the matching handle or to `null`; paste and URL loading had
   this wrong until the initial import.
