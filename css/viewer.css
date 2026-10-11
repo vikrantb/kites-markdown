@@ -1480,11 +1480,11 @@ html:has(.section-minimap) { scroll-padding-top: calc(var(--toolbar-height) + 64
 }
 /* A drawing keeps a legible size. mermaid.js gives each card the least its drawing may shrink to (--mdv-diagram-min:
    70 % of its natural width; a Gantt chart's own width) and, for a drawing wider than 768 px, that natural width
-   (--mdv-wide-w, on a card marked .mdv-wide). Such a card grows into the page's margins when the window has room, up to its natural width and
-   centred on the column, so the drawing is not shrunk; where even the page is too narrow (a phone), the drawing stops
-   shrinking at its floor and the card scrolls sideways, shaded on the side it continues to. Only cards at the
-   column's own level grow: one inside a list, a quote or a callout keeps its box. The expanded view's copy is not in a
-   card, so neither rule reaches it. */
+   (--mdv-wide-w, on a card marked .mdv-wide). Such a card grows into the page's margins when the window has room, up
+   to its drawing's natural width and centred on the column, so the drawing is not shrunk. Where even the page is too
+   narrow (a phone), the drawing stops shrinking at its floor and scrolls sideways inside its card (below). Only cards
+   at the column's own level grow: one inside a list, a quote or a callout keeps its box. The expanded view's copy is
+   not in a card, so neither rule reaches it. */
 .content-wrapper { container-type: inline-size; }
 :is(.md-body, .section-content) > .mermaid-wrapper.mdv-wide {
   --mdv-card-w: max(100%, min(calc(var(--mdv-wide-w) + 2 * var(--mdv-card-pad) + 2px), 100cqw));
@@ -2200,7 +2200,7 @@ body.mdv-sidebar-open .content-wrapper { padding-right: 380px; }
   .md-body pre, .mermaid-wrapper, .callout, .mdv-figure { break-inside: avoid; }
   /* Paper cannot scroll sideways: a drawing shrinks to the page however small, and its card keeps the column. */
   .mermaid-wrapper .mermaid.rendered > svg { min-width: 0; }
-  :is(.md-body, .section-content) > .mermaid-wrapper { width: auto; margin-left: 0; }
+  :is(.md-body, .section-content) > .mermaid-wrapper.mdv-wide { width: auto; margin-left: 0; }
   .md-body h1, .md-body h2, .md-body h3 { break-after: avoid; }
   .md-body a[data-link-type]::after { content: none !important; }
 }

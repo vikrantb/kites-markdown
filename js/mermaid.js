@@ -142,15 +142,14 @@ function mdvMakeDiagramExpandable(wrapper) {
 
 // ---------- Size on the page ----------
 // A diagram is drawn at its natural size when the page has room for it, and shrinks to fit when it has not, but never
-// below MDV_DIAGRAM_MIN_SCALE of that size: shrunk further, its labels fall under about 10 px (at phone width a
-// sequence diagram was drawn at 49 %, its labels at 5 to 8 px; a 1,100 px flowchart at 30 %, at 4 px). Below that
-// floor its card scrolls sideways instead, shaded on the side it continues to (--mdv-diagram-min).
-// A wide drawing may also use the page's margins: its card grows past the text column, up to the drawing's natural
-// width (--mdv-wide-w, on a card marked .mdv-wide), when the window has room. Only a drawing wider than MDV_DIAGRAM_WIDE
-// does: the column's card
-// is 654 px wide inside, so anything narrower is drawn at 85 % or more in it, and a card that overhung the column by
-// a few pixels would only look misaligned. css/viewer.css reads both properties. A Gantt chart is laid out for the
-// width it was given (mdvMermaidConfig), so that width is its floor.
+// below MDV_DIAGRAM_MIN_SCALE of that size (--mdv-diagram-min): shrunk further, its labels fall under about 10 px (at
+// phone width a sequence diagram was drawn at 49 %, its labels at 5 to 8 px; a 1,100 px flowchart at 30 %, at 4 px).
+// Below that floor the drawing scrolls sideways inside its card instead, fading out at the side it continues to.
+// A wide drawing may also use the page's margins: its card (marked .mdv-wide) grows past the text column, up to the
+// drawing's natural width (--mdv-wide-w), when the window has room. Only a drawing wider than MDV_DIAGRAM_WIDE does:
+// the column's card is 654 px wide inside, so anything narrower is drawn at 85 % or more in it, and a card that
+// overhung the column by a few pixels would only look misaligned. css/viewer.css reads all three. A Gantt chart is laid
+// out for the width it was given (mdvMermaidConfig), so that width is its floor.
 const MDV_DIAGRAM_MIN_SCALE = 0.7;
 const MDV_DIAGRAM_WIDE = 768;
 function mdvSizeDiagram(wrapper, svg, type) {
