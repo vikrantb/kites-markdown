@@ -2198,9 +2198,9 @@ body.mdv-sidebar-open .content-wrapper { padding-right: 380px; }
   .md-body tr { break-inside: avoid; }
   .mermaid-wrapper { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .md-body pre, .mermaid-wrapper, .callout, .mdv-figure { break-inside: avoid; }
-  /* Paper cannot scroll sideways: a drawing shrinks to the page however small, and its card keeps the column. */
+  /* Paper cannot scroll sideways: a drawing shrinks to the page however small. (A wide card needs no reset: on paper
+     the column is the whole content area, so it cannot grow past it.) */
   .mermaid-wrapper .mermaid.rendered > svg { min-width: 0; }
-  :is(.md-body, .section-content) > .mermaid-wrapper.mdv-wide { width: auto; margin-left: 0; }
   .md-body h1, .md-body h2, .md-body h3 { break-after: avoid; }
   .md-body a[data-link-type]::after { content: none !important; }
 }

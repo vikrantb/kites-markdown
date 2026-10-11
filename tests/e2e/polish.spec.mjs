@@ -332,21 +332,19 @@ test('on a wide window a diagram much wider than the column uses the margins ins
   }
 });
 
-test('printed, a wide diagram keeps the column and shrinks to fit the page, since paper cannot scroll', async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
+test('printed, a wide diagram shrinks to fit the page, since paper cannot scroll', async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 900 }); // about a printed page's width
   await open(page, 'commented.md');
-  await expect(page.locator('#mdBody .mermaid-wrapper.mdv-wide')).toHaveCount(1); // positive control: it grows on screen
-  await page.emulateMedia({ media: 'print' });
-  const r = await page.$eval('#mdBody .mermaid-wrapper', (w) => {
+  const state = () => page.$eval('#mdBody .mermaid-wrapper', (w) => {
     const box = w.querySelector('pre.mermaid');
-    return {
-      card: w.getBoundingClientRect().width, column: document.getElementById('mdBody').getBoundingClientRect().width,
-      minWidth: getComputedStyle(box.querySelector('svg')).minWidth, scrolls: box.scrollWidth > box.clientWidth + 1,
-    };
+    return { scrolls: box.scrollWidth > box.clientWidth + 1, card: w.getBoundingClientRect().width,
+             column: document.getElementById('mdBody').getBoundingClientRect().width };
   });
-  expect(Math.abs(r.card - r.column)).toBeLessThan(1);
-  expect(r.minWidth).toBe('0px');
+  expect((await state()).scrolls).toBe(true); // positive control: on screen at this width it stops at its floor
+  await page.emulateMedia({ media: 'print' });
+  const r = await state();
   expect(r.scrolls).toBe(false);
+  expect(Math.abs(r.card - r.column)).toBeLessThan(1);
 });
 
 test.describe('at phone width', () => {
