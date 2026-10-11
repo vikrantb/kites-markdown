@@ -162,22 +162,42 @@ test('a rail with room for labels fills the same way: read, current and ahead un
   expect(l.label).toBe('"Plan"');
 });
 
+// The colours the rail draws, read from its bars as CSS paints them: in the label form from a segment's own
+// background, in the track form from its ::before. A bar is one gradient, the fill up to --p and the rest after it,
+// so a read segment shows only its first colour, one ahead only its second, and the current one both.
+const railDrawn = (page) => page.evaluate(() => {
+  const C = window.mdvTestColor;
+  const nav = document.querySelector('#mdBody .section-minimap');
+  const under = getComputedStyle(nav).backgroundColor;
+  const track = nav.classList.contains('is-track');
+  const bar = (seg) => {
+    const image = getComputedStyle(seg, track ? '::before' : null).backgroundImage;
+    const gradient = (image.match(/linear-gradient\(.*\)/) || [''])[0]; // the bar, after the label form's dot if any
+    const stops = [...gradient.matchAll(/((?:rgba?|color|oklch|oklab|lab|lch|hsla?)\([^()]*\))\s*(-?[\d.]+(?:%|px))?/g)]
+      .map((m) => ({ colour: C.rgb(m[1], under), at: parseFloat(m[2] || '0') }));
+    const shows = stops.length !== 2 ? 'no bar' : stops[0].at >= 99.5 ? 'fill' : stops[0].at <= 0.5 ? 'rest' : 'both';
+    return { fill: stops[0] && stops[0].colour, rest: stops[1] && stops[1].colour, shows };
+  };
+  const read = bar(nav.querySelector('.minimap-segment.passed'));
+  const now = bar(nav.querySelector('.minimap-segment.active'));
+  const ahead = bar(nav.querySelector('.minimap-segment.active ~ .minimap-segment:not(.passed)'));
+  return {
+    form: track ? 'track' : 'label', shows: [read.shows, now.shows, ahead.shows],
+    readVsAhead: C.contrast(read.fill, ahead.rest), nowVsAhead: C.contrast(now.fill, ahead.rest), nowVsItsRest: C.contrast(now.fill, now.rest),
+  };
+});
+
 for (const theme of THEMES) {
-  test(`the rail's read, current and ahead states are told apart at 3:1 or more in the ${theme} theme`, async ({ page }) => {
-    await open(page, 'kitchen-sink.md', theme);
-    const pairs = await page.evaluate(() => {
-      const C = window.mdvTestColor;
-      const nav = document.querySelector('#mdBody .section-minimap');
-      // Each state's colour as the rail resolves it, read through a probe inside the rail.
-      const probe = document.createElement('span');
-      nav.appendChild(probe);
-      const bg = getComputedStyle(nav).backgroundColor;
-      const colour = (name) => { probe.style.color = `var(${name})`; return C.rgb(getComputedStyle(probe).color, bg); };
-      const read = colour('--rail-read'), ahead = colour('--rail-ahead'), now = colour('--rail-now'), rest = colour('--rail-now-rest');
-      probe.remove();
-      return { readVsAhead: C.contrast(read, ahead), nowVsAhead: C.contrast(now, ahead), nowVsItsRest: C.contrast(now, rest) };
-    });
-    for (const [pair, ratio] of Object.entries(pairs)) expect(ratio, pair).toBeGreaterThanOrEqual(3);
+  test(`the rail draws its read, current and ahead states at 3:1 or more from each other, in both forms, in the ${theme} theme`, async ({ page }) => {
+    for (const [sample, section, form] of [['kitchen-sink.md', 'architecture', 'track'], ['commented.md', 'plan', 'label']]) {
+      await open(page, sample, theme);
+      await readAt(page, section, 0.5);
+      const r = await railDrawn(page);
+      expect(r.form).toBe(form);
+      // What each segment draws: a read one its fill alone, the current one both colours, one ahead its rest alone.
+      expect(r.shows, `${form} form`).toEqual(['fill', 'both', 'rest']);
+      for (const pair of ['readVsAhead', 'nowVsAhead', 'nowVsItsRest']) expect(r[pair], `${form} form: ${pair}`).toBeGreaterThanOrEqual(3);
+    }
   });
 }
 
@@ -198,20 +218,35 @@ test('a rail segment shows its full name on keyboard focus as well as on hover',
   await expect.poll(() => tip(6)).toBe(JSON.stringify(await segs.nth(6).getAttribute('data-label')));
 });
 
-test('the rail adds no scroll listener of its own: rendering documents with rails leaves the page\'s scroll listeners as they were', async ({ page }) => {
-  await open(page, 'kitchen-sink.md');
+// Every scroll listener on the window and the document, named by the script and the source line of its handler, so a
+// listener the page adds once for its whole lifetime is caught as surely as one added per render.
+async function scrollListeners(page) {
   const client = await page.context().newCDPSession(page);
-  const scrollListeners = async () => {
-    const out = [];
-    for (const target of ['window', 'document']) {
-      const { result } = await client.send('Runtime.evaluate', { expression: target });
-      const { listeners } = await client.send('DOMDebugger.getEventListeners', { objectId: result.objectId });
-      for (const l of listeners) if (l.type === 'scroll') out.push(`${target} ${l.scriptId}:${l.lineNumber}:${l.columnNumber}`);
+  const scripts = new Map();
+  client.on('Debugger.scriptParsed', (e) => scripts.set(e.scriptId, e.url));
+  await client.send('Debugger.enable'); // reports every script already parsed
+  const out = [];
+  for (const target of ['window', 'document']) {
+    const { result } = await client.send('Runtime.evaluate', { expression: target });
+    const { listeners } = await client.send('DOMDebugger.getEventListeners', { objectId: result.objectId });
+    for (const l of listeners.filter((x) => x.type === 'scroll')) {
+      const { scriptSource } = await client.send('Debugger.getScriptSource', { scriptId: l.scriptId });
+      out.push(`${target} ${(scripts.get(l.scriptId) || '?').split('/').pop()}: ${scriptSource.split('\n')[l.lineNumber].trim()}`);
     }
-    return out.sort();
-  };
-  const before = await scrollListeners();
-  expect(before.length).toBeGreaterThan(0); // positive control: the probe sees the scroll spy's own listener
+  }
+  await client.detach();
+  return out.sort();
+}
+
+test('the rail adds no scroll listener of its own: the page keeps the scroll spy\'s and the progress bar\'s, and no other', async ({ page }) => {
+  await open(page, 'kitchen-sink.md');
+  // The two the page has always had. A new one fails here by its file and line; a reading aid that needs scrolling
+  // belongs in the scroll spy's frame (navigation.js), as the rail's fill does.
+  const known = [
+    "window app.js: window.addEventListener('scroll', () => {",
+    'window navigation.js: function mdvScrollSpySchedule() {',
+  ];
+  expect(await scrollListeners(page)).toEqual(known);
   const filler = 'Line of text that fills the section. '.repeat(30);
   for (let i = 0; i < 3; i++) {
     await renderSource(page, `# Report ${i}\n\nIntro.\n\n` + Array.from({ length: 12 }, (_, k) => `## Part ${k}\n\n${filler}\n`).join('\n'));
@@ -219,7 +254,7 @@ test('the rail adds no scroll listener of its own: rendering documents with rail
     await readAt(page, 'part-5', 0.5);
     expect((await railState(page)).progress).toBeGreaterThan(0.4); // the fill still follows the reader
   }
-  expect(await scrollListeners()).toEqual(before);
+  expect(await scrollListeners(page)).toEqual(known);
 });
 
 // ---------------------------------------------------------------------------------------------
