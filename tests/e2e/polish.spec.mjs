@@ -419,20 +419,60 @@ test("a linked class name keeps its underline, and a mind map's SVG label takes 
   expect(r.mindFill).toBeLessThan(2);
 });
 
-// The inline link marks became drawn icons in an earlier change; the link card kept its glyph (a star for GitHub,
-// colour emoji for docs and files), the one instance of that defect left.
-test("a link card's mark is a drawn icon, not a glyph", async ({ page }) => {
+// The inline link marks became drawn icons in an earlier change. The link card, the link tooltip and the links panel
+// kept their glyphs (a star for GitHub, colour emoji for docs and files).
+test("a link's mark is drawn, not a glyph: on a link card, in the link tooltip and in the links panel", async ({ page }) => {
   await open(page, 'kitchen-sink.md');
-  const card = await page.$eval('#mdBody a.link-chip .link-chip-icon', (icon) => {
-    const before = getComputedStyle(icon, '::before');
-    return { glyphSize: getComputedStyle(icon).fontSize, glyph: icon.textContent.trim(), content: before.content,
-             mask: before.maskImage || before.webkitMaskImage, width: parseFloat(before.width) };
-  });
+  // A mark is drawn when making its colour transparent changes the pixels of its tile (it is painted in currentColor).
+  const drawnMark = async (icon) => {
+    await page.mouse.move(2, 2);
+    const shown = await icon.screenshot();
+    await icon.evaluate((el) => { el.style.color = 'transparent'; });
+    const hidden = await icon.screenshot();
+    await icon.evaluate((el) => { el.style.color = ''; });
+    return icon.evaluate((el, changed) => {
+      const before = getComputedStyle(el, '::before');
+      return { changed, glyph: el.textContent.trim(), glyphSize: getComputedStyle(el).fontSize,
+               mask: before.maskImage || before.webkitMaskImage, inColour: window.mdvTestColor.dE(before.backgroundColor, getComputedStyle(el).color) < 1 };
+    }, !shown.equals(hidden));
+  };
+  const cardIcon = page.locator('#mdBody a.link-chip .link-chip-icon').first();
+  await cardIcon.scrollIntoViewIfNeeded();
+  const card = await drawnMark(cardIcon);
   expect(card.glyph).toBe('\u2605'); // positive control: the star is still there for anything that reads the text
   expect(card.glyphSize).toBe('0px');
-  expect(card.content).toBe('""');
   expect(card.mask).toContain('url(');
-  expect(card.width).toBeGreaterThan(10);
+  expect(card.inColour).toBe(true);
+  expect(card.changed).toBe(true);
+
+  const link = page.locator('#mdBody li a[data-link-type="file"]').first();
+  await link.scrollIntoViewIfNeeded();
+  await link.hover();
+  await expect(page.locator('#linkTooltip')).toHaveClass(/visible/);
+  const tipIcon = page.locator('#linkTooltipIcon');
+  const tip = await tipIcon.evaluate((el) => {
+    const before = getComputedStyle(el, '::before');
+    return { glyph: el.textContent.trim(), glyphSize: getComputedStyle(el).fontSize, mask: before.maskImage || before.webkitMaskImage };
+  });
+  expect(tip.glyph).toBe('\u{1F4C4}'); // positive control: the tooltip shows a file link's (a page emoji)
+  expect(tip.glyphSize).toBe('0px');
+  expect(tip.mask).toBe(card.mask); // one drawn mark
+  const shown = await tipIcon.screenshot();
+  await tipIcon.evaluate((el) => { el.style.color = 'transparent'; });
+  expect(shown.equals(await tipIcon.screenshot())).toBe(false);
+  await tipIcon.evaluate((el) => { el.style.color = ''; });
+  // The repository badge in the dashboard draws the same mark.
+  expect(await page.$eval('#mdBody a.fm-repo-badge', (a) => { const b = getComputedStyle(a, '::before'); return b.maskImage || b.webkitMaskImage; })).toBe(card.mask);
+
+  await page.mouse.move(2, 2);
+  await page.locator('#linksPanelBtn').click();
+  const titles = await page.$$eval('#linksPanelContent .links-panel-group-title', (ts) => ts.map((t) => t.firstChild.textContent.trim()));
+  expect(titles.length).toBeGreaterThan(4); // positive control: the panel lists the sample's kinds of link
+  for (const t of titles) expect(t).toMatch(/^[A-Za-z]+$/); // "GitHub", not "\u2605 GitHub"
+  // The dashboard's repository badge is listed by its name: its star is not drawn on the page, so not in the panel.
+  const items = await page.$$eval('#linksPanelContent .links-panel-item > span:first-child', (s) => s.map((x) => x.textContent));
+  expect(items).toContain('sync-engine'); // positive control: the badge's link is listed (it was "\u2605 sync-engine")
+  expect(items.filter((t) => t.includes('\u2605'))).toEqual([]);
 });
 
 // ---------------------------------------------------------------------------------------------
