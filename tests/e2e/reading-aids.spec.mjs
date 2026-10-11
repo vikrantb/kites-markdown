@@ -326,7 +326,7 @@ const railState = (page) => page.evaluate(() => {
   };
 });
 
-test('the section rail marks the section the outline marks, at the bottom of the page and past a closed <details>', async ({ page }) => {
+test('the section rail marks the section the outline marks: at the bottom of the page, past a closed <details>, and when one opens', async ({ page }) => {
   await openViewer(page);
   const parts = Array.from({ length: 6 }, (_, i) => `## Part ${i + 1}\n\n${'Line of text that fills the section. '.repeat(60)}\n`).join('\n');
   await render(page, `# Long\n\n${parts}\n## Tail A\n\nShort.\n\n## Tail B\n\nShort.\n\n## Tail C\n\nShort.\n`);
@@ -345,6 +345,19 @@ test('the section rail marks the section the outline marks, at the bottom of the
   expect(await page.evaluate(() => document.querySelector('#mdBody details').open)).toBe(false);
   expect(await activeEntry(page)).toBe('Before');
   expect(await railState(page)).toEqual({ active: ['Before'], current: 'Before', position: '1 / 4' });
+
+  // Opening a <details> above the current heading puts that heading under another h2 while it stays current:
+  // the rail follows at once, not only at the next change of heading. (A tall window puts the reading line at
+  // 480 px, so the opened content cannot push the current heading below it.)
+  await page.setViewportSize({ width: 1366, height: 1600 });
+  await render(page, `# Doc\n\n## Alpha\n\n${lines}\n\n<details><summary>More</summary>\n\n## Hidden\n\nHidden text.\n\n</details>\n\n### Gamma\n\n${lines}\n\n## Delta\n\n${lines}\n`);
+  await page.evaluate(() => window.scrollTo({ top: document.getElementById('gamma').getBoundingClientRect().top + scrollY - 100, behavior: 'instant' }));
+  await frames(page);
+  expect(await activeEntry(page)).toBe('Gamma');
+  expect((await railState(page)).active).toEqual(['Alpha']);
+  await page.evaluate(() => { document.querySelector('#mdBody details').open = true; });
+  await expect.poll(async () => (await railState(page)).active).toEqual(['Hidden']);
+  expect(await activeEntry(page)).toBe('Gamma');
 });
 
 test('a hidden outline is out of the Tab order, wide and narrow', async ({ page }) => {
