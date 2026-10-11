@@ -6,14 +6,17 @@ All of the comment code is in `js/comments.js`. Every function in it is prefixed
 
 > [!NOTE]
 > **Data safety.** Since 2026-10-10 the comment code keeps these rules, each covered by a browser test in
-> `tests/e2e/comments.spec.mjs` (see [Data-safety tests](#data-safety-tests)):
+> `tests/e2e/comments*.spec.mjs` (see [Data-safety tests](#data-safety-tests)):
 > - a new thread is saved, on the block it was started on, and a deleted thread stays deleted;
-> - only a comment block that **ends** the file is read, so a document that mentions the comment tokens, even in
->   code, never loses text;
+> - the comment block is found as markdown-it reads the document, so a document that mentions the comment tokens (in
+>   code, a list or prose) never loses text, and text typed below the block in another editor is kept;
 > - an unreadable comment block, or one from a newer format version, is never rewritten or dropped: comments become
->   read-only for that file;
-> - a file changed by another program after the viewer read it is **never overwritten**: the save stops, the reader
->   is told, and the comment stays in the window until the reader chooses to reload, download or overwrite;
+>   read-only for that file. So do files that are not UTF-8 text, which are never rewritten;
+> - a save writes only into the version of the file its text was made from. A file changed by another program after
+>   the viewer read it is **never overwritten**: the save stops, the reader is told, and the comment stays in the
+>   window until the reader chooses to reload, download or overwrite (which replaces only the version shown);
+> - a document opened without a file handle is linked only to its own file, picked in an Open dialog and checked
+>   before the first write;
 > - every write goes through one function, `mdvWriteDocument`, in the browser and in the desktop app.
 
 Contents:
@@ -45,9 +48,9 @@ Contents:
 4. To start a thread, either:
    - right-click a paragraph, list item, heading, quote, code block, table cell or definition, then choose **Add comment** (or **Add comment on selection** if text is selected), or
    - select at least 3 characters inside the document and click the floating **Comment** button that appears above the selection.
-5. Type in the popup and click **Save** or press Cmd/Ctrl+Enter. If the document has no save location yet (Chromium), a Save dialog opens first. The thread appears in the sidebar and a chip appears on the block; the page does not move.
+5. Type in the popup and click **Save** or press Cmd/Ctrl+Enter. If the document has no save location yet (Chromium), a dialog opens first: an **Open** dialog to pick the file the document was opened from (the first save checks it still holds that version), or a **Save** dialog for pasted text, which has no file of its own. The thread appears in the sidebar and a chip appears on the block; the page does not move.
 6. In the sidebar, each open thread has a reply box and **Reply**, **Resolve** and **Delete** buttons. Resolved threads show only **Reopen**. Every change is saved at once. Click a thread's quote to scroll to its block.
-7. Cmd/Ctrl+S saves immediately, and opens a Save dialog if no save location is known (or downloads a copy in browsers without the File System Access API).
+7. Cmd/Ctrl+S saves immediately, and opens the same dialog if no save location is known (or downloads a copy in browsers without the File System Access API).
 
 ![A new thread on a paragraph inside a section: its chip at the end of the paragraph, its card in the comments sidebar, and "Saved" in the toolbar](images/comments-thread-light.png)
 
@@ -133,7 +136,7 @@ If `exact` is not found in the block's text (for example, the selection crossed 
 A commented file has two kinds of HTML comment, both in the reserved `MDV-` namespace.
 
 > [!NOTE]
-> Only a comment block that ends the file is read, so a literal example inside this page would no longer be mistaken for real comment data. The examples below still use placeholders such as `c_…` and `v<N>`, for readers using older versions. For a byte-exact example, open [../samples/commented.md](../samples/commented.md) in a text editor.
+> Only a top-level HTML block is read as the comment block, so the examples below, inside code blocks, are never mistaken for real comment data. They still use placeholders such as `c_…` and `v<N>`, for readers using older versions. For a byte-exact example, open [../samples/commented.md](../samples/commented.md) in a text editor.
 
 ### Anchor markers
 
@@ -145,7 +148,7 @@ Paragraph text that the thread is attached to.
 - One marker per thread root, on a line of its own, **immediately before the first source line of the top-level block** that holds the commented element. For a paragraph or heading that is the block itself; for a list item, table cell, quoted paragraph or definition, it is the whole list, table, quote or definition list. A marker there never splits a list or a table (the old placement before an item's line did, *verified by a test*).
 - The id must match `[a-zA-Z0-9_-]+`.
 - Because the viewer configures markdown-it with `html: true`, the marker becomes a DOM comment node before the block's element, and the viewer's renderer also writes the id onto the element itself (see [Resolving an anchor](#resolving-an-anchor)).
-- Markers stay in the file after the thread is resolved. Deleting a thread removes its marker, and nothing else (`mdvRemoveMarkers`).
+- Markers stay in the file after the thread is resolved. Deleting a thread removes its marker, and nothing else (`mdvRemoveMarkers`). Only a line markdown-it reads as an HTML block is a marker: the same text in code, inline code or front matter is left alone.
 
 ### The comments block
 
@@ -159,7 +162,7 @@ Exactly as `mdvSerialize` writes it:
 
 | Part | Content |
 |---|---|
-| Position | **The end of the file.** Only whitespace may follow the closing line. A block anywhere else is ordinary document text. |
+| Position | Written at **the end of the file**. It is read where markdown-it finds it: the last top-level HTML block that opens with the token. Text typed after it in another editor is kept, and the next save moves the block below that text. The same token inside code, inline code, a list item, a quote or a paragraph is document text. |
 | Separator | All trailing line breaks of the document body are removed, then exactly one blank line precedes the block. |
 | Opening line | `<!-- MDV-COMMENTS:v` followed by `MDV_VERSION`, which is `1`, at the start of a line. |
 | Payload | One line of compact JSON: `{"version":1,"generator":"mdv-viewer","comments":[...]}`, keys in that order, followed by any other top-level keys the file already had. |
@@ -167,7 +170,7 @@ Exactly as `mdvSerialize` writes it:
 | Line endings | Those of the document: a file that uses CRLF gets CRLF in the block and the markers. |
 | Escaping | Every `--` in the JSON becomes `-\u002d` and every `<` becomes `\u003c`, so the payload can never close the HTML comment early. Both are ordinary JSON string escapes, which `JSON.parse` decodes. `>` is not escaped (not needed once `--` cannot occur). Non-ASCII characters are written as UTF-8, not escaped. |
 
-When the last comment is removed from `mdvComments`, `mdvSerialize` writes no block at all: the body is written with exactly one trailing line break. A document that never had a block and has no comments is returned unchanged.
+When the last comment is removed from `mdvComments`, `mdvSerialize` writes no block at all (the body is written with exactly one trailing line break), unless the block holds top-level fields this viewer does not know: those stay, in a block with an empty `comments` list. A document that never had a block and has no comments is returned unchanged.
 
 ### Key order of a serialized comment
 
@@ -179,9 +182,11 @@ Key order follows object creation order, so a root written by the viewer looks l
 
 ### Finding the block: `mdvLocateBlock(src)`
 
-1. The closing token must end the file: `/MDV-COMMENTS:end\s*-->\s*$/`. No match: there is no comment block.
-2. The block starts at the **last** opening token that begins a line (up to three spaces of indentation) before that closing token: `/(^|\n)( {0,3})<!--\s*MDV-COMMENTS:v(\d+)/g`. Searching from the last token, not the first, is what keeps a document that mentions the tokens intact: a mention inside a code span or a code block never starts a block that the next save would remove.
-3. It returns the block's start offset, its version number and its payload text.
+1. A quick test: no opening token at the start of a line (`<!-- MDV-COMMENTS:v<N>`, up to three spaces of indentation) means no block.
+2. The source after the front matter is parsed with the viewer's markdown-it instance (`mdvParseMarkdown`, which keeps its last result). The block is the **last** top-level `html_block` token whose text opens with the token. markdown-it decides what is a top-level HTML block, so a mention in a code block, an inline code span, a list item, a quote or a paragraph is never the block, and neither is an example inside a list item.
+3. The closing token `MDV-COMMENTS:end -->` must be inside that HTML block. When it is not (a hand edit or a merge put `-->` inside the comment, which ends it early), the block is reported as unreadable, so comments turn read-only and nothing is rewritten.
+4. It returns the block's start and end offsets, its version number and its payload text.
+5. Without markdown-it, only a block that ends the file counts (`mdvLocateBlockAtEnd`).
 
 ### `mdvParseFile(src)`
 
@@ -194,9 +199,10 @@ Key order follows object creation order, so a root written by the viewer looks l
 ### `mdvSerialize(src, comments)`
 
 1. Locate the existing block. If it cannot be read (see above), **throw** and change nothing. An unreadable block is never dropped.
-2. Keep the text before the block byte for byte, remove its trailing line breaks.
-3. If `comments` is empty, return the body plus one line break (or the source unchanged when it had no block).
+2. Keep the text before the block and any text after it, byte for byte, joined by one blank line; remove the body's trailing line breaks.
+3. If `comments` is empty and the block has no other top-level keys, return the body plus one line break (or the source unchanged when it had no block).
 4. Otherwise append the block described in [The comments block](#the-comments-block), keeping the payload's other top-level keys.
+5. Locate the block again in the result. If it is not read back as this block (a document that ends inside an unclosed code fence would turn it into code), **throw** and change nothing.
 
 ### Round-trip rules
 
@@ -204,11 +210,12 @@ Key order follows object creation order, so a root written by the viewer looks l
 |---|---|
 | Document text and markers | Preserved byte for byte, except the trailing-line-break normalization before the block. Verified: `samples/commented.md` round-trips byte for byte. |
 | Comment objects, including unknown fields | Preserved; written back as parsed. |
-| Unknown top-level payload keys | Preserved, after `version`, `generator` and `comments`. |
+| Unknown top-level payload keys | Preserved, after `version`, `generator` and `comments`, also when the last thread is deleted. |
 | Version | A `v1` block is rewritten as `v1`. A block with any other version is read-only and never rewritten. |
 | Block position and whitespace | Normalized: one blank line before it, single-line JSON, fixed opening and closing lines. |
 | Line endings | A CRLF file stays CRLF. |
-| A block that is not at the end of the file | Ordinary text; left in place. |
+| Text after the block | Kept; the block moves below it. |
+| The block's tokens anywhere else (code, inline code, a list item, a quote, prose) | Ordinary text; left in place. |
 | A block that failed to parse | Kept exactly as it is; comments are read-only until it is fixed. |
 | Blank lines elsewhere | Untouched. Deleting a thread removes only its marker line. |
 
@@ -233,9 +240,9 @@ When a thread is saved, `mdvAddComment(elem, selectionText, body)`:
 
 ### Resolving an anchor
 
-A markdown-it core rule, `mdvAnnotateBlocks` (registered by `comments.js` on the shared `md` instance), runs on every render. It numbers each top-level block (`data-mdv-block`) and gives the block that follows one or more anchor markers their ids (`data-mdv-anchor="c_… c_…"`). A custom fence renderer that drops token attributes (Mermaid) gets them on its first element instead.
+A markdown-it core rule, `mdvAnnotateBlocks` (registered by `comments.js` on the shared `md` instance), runs on every render. It numbers each top-level block (`data-mdv-block`) and gives the block that follows one or more anchor markers their ids (`data-mdv-anchor="c_… c_…"`). HTML that a renderer builds itself drops token attributes, so a raw HTML block (a `<table>`, `<details>` or `<p align=center>`) and a fence drawn by a custom renderer (Mermaid) get them on their first element instead (`mdvWithBlockAttrs`).
 
-`mdvBuildAnchorMap(container)` maps every id in a `data-mdv-anchor` attribute to its element. An attribute travels with its element, so the section wrappers that `addSectionToggles` builds after rendering no longer separate a thread from its block. Markers the render could not attach (inside a list or quote, or before a raw HTML block) fall back to the old rule: the marker comment's next element sibling.
+`mdvBuildAnchorMap(container)` maps every id in a `data-mdv-anchor` attribute to its element (in a map with no prototype, so an id such as `constructor` finds nothing). An attribute travels with its element, so the section wrappers that `addSectionToggles` builds after rendering no longer separate a thread from its block. Markers the render could not attach (inside a list or quote, or before raw HTML that starts with text) fall back to the old rule: the marker comment's next element sibling.
 
 `mdvChipHost(element, anchor)` decides where a thread's chip goes. For a list, table, quote or definition list, it finds the item inside it whose text hashes to the anchor's `blockHash` (or contains its quote), and falls back to the first item.
 
@@ -278,7 +285,7 @@ Two related cases are not flagged:
 | Entry point | Function | Save target afterwards |
 |---|---|---|
 | Toolbar "Open .md / set save location" with no document loaded, or with a document that already has a handle | `mdvOpenOrSetSaveLocation` then `mdvPickFile`, which calls `showOpenFilePicker` (types `.md`, `.markdown`, `.txt`; single file) and `mdvOpenWithHandle`. Without the File System Access API it opens the file input (`#fileInput`) instead | The file's handle, if read-write permission is granted |
-| Same button with a document loaded but no handle | `mdvOpenOrSetSaveLocation` then `mdvEnsureWritableHandle`, which calls `showSaveFilePicker` (suggested name: the document's name), then saves immediately. Without the API: downloads a copy | The chosen file |
+| Same button with a document loaded but no handle | `mdvOpenOrSetSaveLocation` then `mdvEnsureWritableHandle`. A document read from a file: `mdvLinkOpenedFile` opens an **Open** dialog for that file; its first save checks that the file still holds the version that was opened. Pasted text or the demo: `mdvSaveAsNewFile` opens a **Save** dialog (suggested name: the document's name). Saves at once into a new file from the Save dialog, or when there are unsaved comment changes. A document whose comments are read-only, and a browser without the API, get the file chooser instead | The chosen file |
 | Drag-and-drop, the drop-zone browse button, or Cmd/Ctrl+O | `readFile` (in `files.js`), which calls `mdvTryWorkspaceMatch(file.name)` | The workspace file of the same name **only when its contents are identical**; otherwise none |
 | Paste of more than 10 characters outside a text field | document `paste` listener | None (`mdvFileHandle = null`) |
 | `?file=` URL over http(s) | `loadFromUrl` | None |
@@ -287,11 +294,15 @@ Two related cases are not flagged:
 
 **A document is only linked to the file it was read from.** Every render passes through `mdvBeginDocument`. If a file handle is still linked but the version the viewer read from it is not the text being rendered, the link is dropped and the status says so, so a loader that forgot to unlink the previous file cannot make a comment save write this document over it. A handle linked without a recorded version is checked against the file's contents before its first write.
 
+**Linking never uses a Save dialog for a document that came from a file.** Chromium empties a file picked in a Save dialog before the page can read it (File System Access, `showSaveFilePicker`), so an edit made by another program since the document was opened would be lost. The Open dialog leaves the file as it is, and the first save compares it with the version that was opened: a file changed since, or a different file, gets the conflict notice. The Save dialog is used only for a document with no file of its own (pasted text, the demo), where creating or replacing a file is what the reader asked for.
+
+**A file that is not UTF-8 text is never rewritten.** Files are decoded with a strict UTF-8 decoder (`mdvDecode`). A file that fails it is still shown (invalid bytes become U+FFFD), but its comments are read-only, it is never linked by the workspace match, and a save into it is refused. A UTF-8 byte order mark is kept when the file is saved.
+
 ### Permissions
 
 - `mdvOpenWithHandle` checks `queryPermission({ mode: 'readwrite' })` and, from a user gesture, calls `requestPermission`. If that is refused it shows "Opened read-only: comments will not save into this file." and still opens the file. Without a gesture (the startup restore) it never prompts; the status says that Cmd/Ctrl+S allows saving.
 - `mdvSaveFile` re-checks permission before every write. Without a user gesture (`allowPrompt: false`, as after a comment change) it does not ask; it sets the status "Not saved: click 📄 or press Cmd/Ctrl+S to allow saving". With `allowPrompt: true` (Cmd/Ctrl+S) it requests permission.
-- `mdvEnsureWritableHandle` requests permission on an existing handle, or opens a Save dialog when there is none. The add-comment popup calls it inside the click handler so the dialog is allowed to open.
+- `mdvEnsureWritableHandle` requests permission on an existing handle, or links the document when there is none (an Open dialog for its own file, or a Save dialog for pasted text). The add-comment popup calls it inside the click handler so the dialog is allowed to open, and only while the document it was opened on is still on screen.
 
 ### Handle persistence in IndexedDB
 
@@ -335,19 +346,20 @@ sequenceDiagram
   participant W as mdvWriteDocument
   participant D as File
   U->>C: new list + serialized source, together
-  C->>Q: job: text, target file, document version
-  Q->>Q: one write at a time; skip a job a newer one for the same file replaces
+  C->>Q: job: text, target file, document load and version, file generation
+  Q->>Q: one write at a time; skip a job a newer change of the same load replaces
   Q->>W: write the job's text to the job's file
-  W->>D: desktop: mdvHost.saveDocument(path, text, mtime)
-  W->>D: browser: still the version read? then createWritable, write, close
+  W->>W: file read again since the job was made? refuse (stale)
+  W->>D: desktop: version unchecked? readDocument and compare; then saveDocument(path, text, mtime)
+  W->>D: browser: read the file; still the version this text was made from? then write, re-check, close
   W-->>U: Saved ✓, or a notice: conflict, error
 ```
 
 | Step | Detail |
 |---|---|
-| Commit | Every change (add, reply, resolve, reopen, delete) writes the new list into the source at once (`mdvCommit`). `rawMarkdown` always holds the comments, so a re-render can never lose them. |
+| Commit | Every change (add, reply, resolve, reopen, delete) writes the new list into the source at once (`mdvCommit`). `rawMarkdown` always holds the comments, so a re-render can never lose them. A change starts from the document on screen (`mdvDocText`) and is refused while a loader is replacing it (`mdvDocumentChanging`), so two documents are never mixed. |
 | When | At once, after every change. There is no debounce. |
-| Queue | `mdvEnqueueWrite`: writes run one after another, each bound to the file it was made for. Switching documents while a write runs cannot send one document's text to another's file. A queued write that a newer version of the same file supersedes is skipped. |
+| Queue | `mdvEnqueueWrite`: writes run one after another, each bound to the file it was made for and to the generation of that file its text was made from (`mdvGen`). Switching documents while a write runs cannot send one document's text to another's file, and a write queued before the file was read again (a reload, or the same file opened again) is refused instead of overwriting the newer version; its text is kept in a notice unless the reader discarded it. A queued write that a newer change of the same document load supersedes is skipped. |
 | The writer | `mdvWriteDocument(text)` is **the only function that writes a document**. See [Conflict detection](#conflict-detection). |
 | No save location | Chromium: the status says "Not saved: click 📄 or press Cmd/Ctrl+S to choose where to save". Other browsers: "Not saved: press Cmd/Ctrl+S to download a copy with your comments". The change stays in memory. |
 | Dirty state | `mdvDirty` is true from a change until its version is written. |
@@ -358,20 +370,19 @@ sequenceDiagram
 
 ### Conflict detection
 
-Before a browser write, `mdvWriteDocument` compares the file with the version the viewer read or last wrote (`mdvBases`, one record per handle):
-
-1. If the file's `lastModified` and `size` are unchanged, it writes.
-2. Otherwise it reads the file. If the contents are still the same (another program saved without changing anything), it writes. If they differ, it **does not write**.
+Before a browser write, `mdvWriteDocument` reads the file and compares its text with the version the viewer read or last wrote (`mdvBases`, one record per handle). The text is always compared: a time stamp can stay the same through an edit (file systems that keep whole seconds), and an edit can land right after the viewer's own write. If the text differs, it **does not write**. If the file is not UTF-8 text, it does not write either. Just before the write lands it checks the file's time stamp and size once more, and that the file was not read again meanwhile; otherwise the write is abandoned.
 
 On a conflict the status says "Not saved: the file changed on disk", the sidebar opens with a notice, and the comment stays in the window. The notice offers:
 
-- **Reload from disk**: show the other program's version (after a confirmation; the unsaved comment changes are discarded);
+- **Reload from disk**: show the other program's version (after a confirmation; the unsaved comment changes are discarded, and saves of them still queued end quietly). If the file cannot be read again, or its version cannot be shown, nothing is discarded: the notice comes back, the document stays marked unsaved, and leaving the page still asks first;
 - **Download my version**: a copy of the file with the comments, nothing overwritten;
-- **Overwrite the file**: the reader's explicit choice, after a confirmation.
+- **Overwrite the file**: the reader's explicit choice, after a confirmation. It replaces only the version the notice showed: if the file changed again since, a new notice shows that version instead.
+
+A notice keeps its comment changes until a write that holds them succeeds (the same file, the same document load and a version at least as new), or until the reader acts on it. A save of a later load of the same file, such as after a live reload, never settles it. A notice about a document that is no longer on screen offers **Download my version** and **Dismiss**.
 
 ![The conflict notice in the dark theme: "Not saved: the file changed on disk", with Reload from disk, Download my version and Overwrite the file](images/comments-conflict-dark.png)
 
-A file picked in the Save dialog is written without a check the first time: the reader chose it (and confirmed replacing it) in that dialog.
+A new file picked in the Save dialog (only for pasted text and the demo) is written without a check the first time: the reader chose it, and confirmed replacing it, in that dialog.
 
 ### Download fallback
 
@@ -383,8 +394,10 @@ A file picked in the Save dialog is written without a check the first time: the 
 
 The desktop app hosts the same viewer and provides a bridge, `window.mdvHost`, defined in `js/host.js` (see `docs/desktop.md`). The comment code uses it only through `mdvWriteDocument`:
 
-- **Save:** `mdvHost.saveDocument(mdvHost.currentPath, text, mdvHost.currentMtimeMs)`. The app writes only when the file's modification time still equals the one given. On success the viewer stores the returned `mtimeMs` in `mdvHost.currentMtimeMs`.
-- **Conflict:** the app answers `{ ok: false, reason: 'conflict', currentMtimeMs }`; the viewer shows the same notice as in the browser. **Overwrite** passes that `currentMtimeMs`; **Reload from disk** calls `mdvHost.readDocument(currentPath)`.
+- **Save:** `mdvHost.saveDocument(mdvHost.currentPath, text, mtime)`, where `mtime` is that of the version the viewer read or last wrote. The app writes only when the file's modification time still equals the one given. On success the viewer stores the returned `mtimeMs` in `mdvHost.currentMtimeMs`.
+- **The first save of each document** (and any save after the app reported a different `currentMtimeMs`, such as after a touch) first reads the file with `mdvHost.readDocument(currentPath)` and compares it with the text the document was made from. A document that is not the window's file (pasted, or opened some other way) therefore gets a conflict notice instead of being written over it, and a save is never sent without a known `mtime` (`unverified`).
+- **Conflict:** the app answers `{ ok: false, reason: 'conflict', currentMtimeMs? }`; the viewer reads the file to show the reader that version, and shows the same notice as in the browser. **Overwrite** reads the file again and writes with its mtime, so it works without `currentMtimeMs`, and never over a newer edit. **Reload from disk** calls `mdvHost.readDocument(currentPath)`; a rejection, or a version that cannot be shown, keeps the notice.
+- A save queued before the window's document was read again (a reload, or the app's live reload) is refused, like in the browser.
 - The browser's Save dialog, workspace folder and startup restore are never used in the desktop app. The file-plus button calls `mdvHost.openDialog()`.
 
 ---
@@ -416,7 +429,12 @@ Every call to `renderMarkdown` goes through a hook installed at the end of `comm
 
 ## Data-safety tests
 
-`tests/e2e/comments.spec.mjs` runs in Chrome with `pnpm test`. Saves go to a fake `FileSystemFileHandle`, to the browser's private file system (OPFS) or to a fake desktop bridge; no real file is touched. Of its 28 tests, 24 fail when run against the code before 2026-10-10 (commit 568069f), each on the bug it names, and 4 are controls that pass on both (the sample's byte-for-byte round trip, a file only touched by another program, writes that never overlap, and the startup restore with no link). The main ones, and what they caught:
+Three spec files run in Chrome with `pnpm test`; their shared helpers are in `tests/e2e/comment-helpers.mjs`. Saves go to a fake `FileSystemFileHandle`, to the browser's private file system (OPFS) or to a fake desktop bridge, and the file dialogs are stubbed; no real file is touched.
+
+- `tests/e2e/comments.spec.mjs` (29 tests): the bugs fixed on 2026-10-10. Run against the code before that fix (commit 568069f), 26 fail, each on the bug it names, and 3 are controls that pass on both (the sample's byte-for-byte round trip, a file only touched by another program, and the startup restore with no link).
+- `tests/e2e/comments-format.spec.mjs` (9 tests) and `tests/e2e/comments-saving.spec.mjs` (31 tests): the holes a review of that fix found. Run against the fix as reviewed (commit 0200794), 33 fail, each on its hole, and 7 pass: 5 controls, the test that a file stays linked only to the document read from it (it guards code that was already there), and the test that a pasted document is written into the new file picked for it (it guards a regression this pass made and fixed). Each of those two fails when its code is removed.
+
+The main ones, and what they caught:
 
 | Test | Was |
 |---|---|
@@ -428,29 +446,53 @@ Every call to `renderMarkdown` goes through a hook installed at the end of `comm
 | a list item or table cell keeps the list and table intact | the marker split the table, or the thread was orphaned |
 | a file changed by another program is never overwritten | the other program's edit was lost |
 | a dropped file links to the workspace file only when the contents match | a same-named file was overwritten |
-| the startup restore never overrides an explicit `?file=` link | the remembered file replaced the linked one |
+| the startup restore never overrides an explicit `?file=` link | the remembered file replaced the linked one (the page's load event is held until the link is shown, so this fails every time on the old code) |
 | the desktop app never restores the last browser file | it did |
 | the file-plus button opens the file chooser without the File System Access API | it threw a `TypeError` |
 | thread cards keep their reply box and buttons visible when the sidebar is full | the cards shrank and cut off their replies and buttons |
 | a comment change never downloads by itself | every change downloaded a copy |
+| a comment block followed by text typed later in another editor is still read | its comments disappeared and the next save wrote a second block |
+| deleting the last thread keeps the comment block's other fields | they were dropped |
+| deleting a thread leaves an inline-code mention of its marker alone | the code span was emptied |
+| a thread on a cell of a raw HTML table stays on that cell | its chip went to the next heading, or the thread was orphaned |
+| a thread whose anchor id names a built-in object property cannot break the sidebar | the sidebar showed no thread at all |
+| a file that is not UTF-8 is never rewritten / a byte order mark is kept | its non-UTF-8 bytes became U+FFFD; the mark was dropped |
+| the save-location button leaves a file whose comments are read-only holding every character | the Save dialog emptied the file |
+| a dropped file changed in another editor is never overwritten by the first comment | the other editor's edit was lost, with "Saved ✓" |
+| the add-comment popup never links a file for a document that is no longer on screen | the next document was written over the file picked for the first |
+| a save queued before "Reload from disk" never writes over the reloaded file (browser and desktop) | it did, with "Saved ✓" |
+| a reload whose new version fails to render keeps the comment; reading the same file again during a conflict, then another comment | the next successful save deleted the notice holding the comment |
+| "Overwrite the file" replaces only the version the reader was shown | an edit made after the notice appeared was overwritten |
+| an edit of the same size, with the same time stamp / made right after the viewer's own save, is never overwritten | it was overwritten |
+| a comment change made while another document is being opened is refused | it was serialized into the other document |
+| desktop: a pasted document, or a different file, is never written over the window's file | it was |
+| desktop: a failed "Reload from disk" keeps the comment changes protected | no notice, not dirty, no question before leaving |
+| desktop: after a live reload, a save never settles a notice holding other comments | the notice and its comment were lost |
+| desktop: "Overwrite the file" writes even when the app's conflict answer has no mtime | it never wrote |
+| a file changed while the viewer is writing it keeps the other program's change | the write landed over it |
+| two saves through the seam at the same moment never overlap | (fails when the write lock is removed) |
 
-Further tests cover the desktop bridge (every save through `mdvHost.saveDocument` with the mtime that was read; a desktop conflict), a file only touched by another program (no false conflict), writes that never overlap, a save still running when another document opens, unsaved changes kept when another document opens, the `beforeunload` question, CRLF files, a typed comment kept in its box when adding fails, reply drafts, and escaping of every value the sidebar shows.
+Further tests cover the desktop bridge (every save through `mdvHost.saveDocument` with the mtime that was read; a desktop conflict), a file only touched by another program (no false conflict), changes made while a save is running, a save still running when another document opens, unsaved changes kept when another document opens, the `beforeunload` question, CRLF files, a typed comment kept in its box when adding fails, reply drafts, escaping of every value the sidebar shows, a pasted document getting a new file from the Save dialog, and a failed read during "Reload from disk".
 
 ---
 
 ## Known limitations
 
-1. **The version check and the write are not atomic in the browser.** The File System Access API has no compare-and-swap, so another program writing in the few milliseconds between the check and the write is not detected. The desktop app checks and writes in one step.
-2. **A well-formed comment block at the very end of the file is always read as the comment block,** even inside an unclosed code fence. A block anywhere else, including in a closed code block, is text.
-3. **Anchors fall back to a text search** when the element has no block number (content added by a later pass, such as a standalone link turned into a card) or when display math spans blank lines. The fallback finds blocks whose first line of text appears in the source; otherwise the thread is saved unattached.
-4. **Overwriting after a desktop conflict needs the bridge to report `currentMtimeMs`.** Without it the overwrite conflicts again; the reader can still download their version.
-5. **Comment shortcuts are missing from the `?` overlay,** and Cmd/Ctrl+Shift+C also fires while typing in text fields.
-6. **Comments cannot be edited,** and there is no per-reply delete; delete works on whole threads.
-7. **Bodies are plain text** even though the field is called `body_md`.
-8. **The author name has no settings control** (see [Author identity](#author-identity)).
-9. **A remembered file is usually restored read-only.** Browsers keep file permissions for a session unless the reader allows them on every visit, so after a reload the file opens read-only until Cmd/Ctrl+S asks for permission *(inferred from the File System Access permission model)*.
+1. **The version check and the write are not atomic in the browser.** The File System Access API has no compare-and-swap. The viewer reads the file before writing and checks its time stamp and size again just before the write lands, so only a change in the last few milliseconds before the write commits goes unnoticed. The desktop app checks and writes in one step.
+2. **Linking a file that was dropped or opened without a handle takes an Open dialog.** The reader picks the same file again; a Save dialog cannot be used for it, because the browser empties the file picked there before the viewer could check it.
+3. **A file that is not UTF-8 text cannot take comments** (they are read-only for it), so it is never rewritten. Convert it to UTF-8 to comment on it.
+4. **A document that ends inside an unclosed code fence cannot take comments:** a comment block written there would be code, so the save is refused instead.
+5. **Anchors fall back to a text search** when the element has no block number (content added by a later pass, such as a standalone link turned into a card, or raw HTML that starts with text) or when display math spans blank lines. The fallback finds blocks whose first line of text appears in the source; otherwise the thread is saved unattached.
+6. **The first save of each document in the desktop app reads the file once** through `mdvHost.readDocument`, to check it is the version shown.
+7. **Comment shortcuts are missing from the `?` overlay,** and Cmd/Ctrl+Shift+C also fires while typing in text fields.
+8. **Comments cannot be edited,** and there is no per-reply delete; delete works on whole threads.
+9. **Bodies are plain text** even though the field is called `body_md`.
+10. **The author name has no settings control** (see [Author identity](#author-identity)).
+11. **A remembered file is usually restored read-only.** Browsers keep file permissions for a session unless the reader allows them on every visit, so after a reload the file opens read-only until Cmd/Ctrl+S asks for permission *(inferred from the File System Access permission model)*.
 
 Fixed on 2026-10-10, with a test for each (see [Data-safety tests](#data-safety-tests)): new threads were lost; deleted threads came back; threads inside sections attached to the next heading; anchors failed on any block with inline markup, line breaks or a chip; markers split lists and tables; the comment block regex matched mentions anywhere, including code; literal escape text and unparsable blocks deleted every comment; there was no conflict detection; workspace matching was by name; the file-plus button threw outside Chromium; the startup restore could replace a `?file=` document; pending saves were dropped or misdirected when switching files; non-Chromium browsers downloaded on every change; there was no unsaved-changes warning; opening a file failed without IndexedDB; the three-level resolver was dead code; the add-comment popup opened near the top of a long, scrolled page and scrolled the reader away; thread cards were cut off once several threads filled the sidebar; and values from the file could inject attributes into the sidebar.
+
+Fixed the same day after review of that change, also with a test for each: text typed below the comment block hid every comment; a list-item example of the block was read as the block; deleting the last thread dropped unknown fields; deleting a thread emptied an inline-code mention of its marker; raw HTML blocks lost their threads; an id such as `constructor` broke the sidebar; files that are not UTF-8 were corrupted and byte order marks dropped; the Save dialog emptied a file whose comments were read-only, and overwrote edits made elsewhere to a dropped file; the add-comment popup could link the next document to the wrong file; a queued save could overwrite a reloaded file; a successful save could delete a notice holding other comments; a failed reload dropped the protection of unsaved comments; Overwrite replaced edits newer than the notice, and never worked on the desktop without `currentMtimeMs`; same-size edits within a time stamp, and edits right after the viewer's own write, were overwritten; a change during a document load mixed two documents; and the desktop app could write a pasted or other document over the window's file.
 
 ---
 

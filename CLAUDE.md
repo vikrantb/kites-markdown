@@ -85,8 +85,9 @@ that is suddenly "missing" after a reload is usually that, not the code.
 - The extension's iframe is sandboxed **without** `allow-same-origin`, so a rendered page cannot act
   with the viewer's GitHub session.
 - Comment data safety (roadmap issues 1–6) was fixed on 2026-10-10, with a browser test for each in
-  `tests/e2e/comments.spec.mjs`, and the README's "experimental" warning was removed.
+  `tests/e2e/comments*.spec.mjs`, and the README's "experimental" warning was removed.
   `mdvWriteDocument` in `js/comments.js` is the only function that writes a document; keep it that way.
+  It writes only into the version of a file its text was made from, and never rewrites a file that is not UTF-8.
 
 Open decisions (form factor, which visualizations first, GitHub Pages, vendoring fonts) live in
 `docs/roadmap.md`.

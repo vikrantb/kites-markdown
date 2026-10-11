@@ -55,7 +55,7 @@ Before a document is loaded, the body shows a welcome screen with a drop zone, a
 | Link icon | All links | Opens the links panel. Shown after a document loads. | `toggleLinksPanel` |
 | **Listen** | Read aloud | Opens the read-aloud player. Shown after a document loads. | `ttsToggle` |
 | Speech-bubble icon with a badge | Comments (Ctrl+Shift+C) | Opens the comments sidebar. The badge counts open (unresolved) threads. Shown after a document loads. | `mdvToggleSidebar`, `mdvRenderSidebar` |
-| File-plus icon | Open .md / set save location (Chromium) | Opens a file with write access. If a file is already loaded without a save location, asks where to save instead. | `mdvOpenOrSetSaveLocation` |
+| File-plus icon | Open .md / set save location (Chromium) | Opens a file with write access. If a file is already loaded without a save location, links it to its file (an Open dialog; a Save dialog for pasted text) instead. | `mdvOpenOrSetSaveLocation` |
 | Folder icon | Set workspace folder | Asks once for a folder. Files from that folder can then be saved without further prompts. | `mdvPickWorkspace` |
 | Sun icon | Theme | Dropdown with Light, Sepia and Dark. | `toggleDropdown`, `setTheme` |
 | Gear icon | Settings | Opens the settings panel (workspace root path). | `toggleSettings` |
@@ -104,7 +104,7 @@ Implemented by `loadFromUrl`.
 
 These two buttons only matter for comments:
 
-- **File-plus icon** (`mdvOpenOrSetSaveLocation`). With no document loaded, it opens a writable file. With a document that has no writable handle (opened with Open, by drag and drop, by paste or through `?file=`), it opens a **Save As** dialog so future saves go to the file you choose, then saves straight away.
+- **File-plus icon** (`mdvOpenOrSetSaveLocation`). With no document loaded, it opens a writable file. With a document that has no writable handle and was read from a file (opened with Open, by drag and drop or through `?file=`), it opens an **Open** dialog: pick that same file, and the first save checks that it still holds the version you opened (a file changed since, or a different file, gets a conflict notice instead of being overwritten). Pasted text gets a **Save As** dialog and is written into that new file straight away. Unsaved comment changes are saved straight away too. In browsers without the File System Access API, and for a file whose comments are read-only, it opens the file chooser.
 - **Folder icon** (`mdvPickWorkspace`). You pick a folder once with read-write permission. The handle is stored in IndexedDB (`mdv-viewer` database, `handles` store, key `workspace`). Later, when you open a file whose name matches a file at the top level of that folder, the viewer links to it with no prompt (`mdvTryWorkspaceMatch` uses `getFileHandle(filename)`, so subfolders are not searched).
 
 ---
@@ -362,7 +362,7 @@ The section being read is highlighted and scrolled into view. A `<!-- narrate: �
 - **Save from the popup:** `Ctrl/Cmd+Enter`. `Esc` cancels (`mdvShowAddPopup`).
 - **Where comments appear:** threads show as chips on the commented block and as cards in the comments sidebar (`mdvRenderChips`, `mdvRenderSidebar`).
 - **Sidebar actions:** an open thread has a reply box and **Reply**, **Resolve** and **Delete** buttons. A resolved thread shows only **Reopen** (`mdvRenderThreadCard`, `mdvPostReply`, `mdvResolveThread`, `mdvDeleteThread`). Delete asks for confirmation.
-- **Saving:** every change is saved into the file at once, through `mdvWriteDocument`, the only function that writes a document. A file that another program changed after the viewer read it is never overwritten: the sidebar explains and offers **Reload from disk**, **Download my version** or **Overwrite the file**. `Ctrl/Cmd+S` saves immediately and, if needed, asks for a save location (or downloads a copy in browsers without the File System Access API). Leaving the page with unsaved comment changes asks first.
+- **Saving:** every change is saved into the file at once, through `mdvWriteDocument`, the only function that writes a document. A file that another program changed after the viewer read it is never overwritten: the sidebar explains and offers **Reload from disk**, **Download my version** or **Overwrite the file**. `Ctrl/Cmd+S` saves immediately and, if needed, links the file first (or downloads a copy in browsers without the File System Access API). A file that is not UTF-8 text is never rewritten. Leaving the page with unsaved comment changes asks first.
 - **Author name:** taken from `localStorage` key `mdv-author-name`, default `You`. There is no settings control for it.
 
 Comments are stored inside the markdown file as `<!-- MDV-ANCHOR id="…" -->` markers and a trailing `<!-- MDV-COMMENTS:v1 … MDV-COMMENTS:end -->` block. Full details are in [commenting.md](commenting.md).

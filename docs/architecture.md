@@ -233,7 +233,7 @@ Everything below runs in this order on page load.
 
 | Variable | Written by | Read by |
 |---|---|---|
-| `rawMarkdown` | `readFile`, paste listener, `loadFromUrl`, `loadDemo`, `mdvOpenWithHandle`, `mdvReloadFromDisk`, and `mdvCommit` (every comment change writes the serialized comments into it) | `setTheme` (as a "document loaded" flag), `mdvLocateInsertion`, `mdvRequestSave`, `mdvDownloadFallback`, `mdvOpenOrSetSaveLocation`, the startup restore, Ctrl/Cmd+S handler |
+| `rawMarkdown` | `readFile`, paste listener, `loadFromUrl`, `loadDemo`, `mdvOpenWithHandle`, `mdvReloadFromDisk`, and `mdvCommit` (every comment change writes the serialized comments into it) | `setTheme` (as a "document loaded" flag), `mdvDocumentChanging` (a loader replaced it but has not rendered yet), `mdvTryWorkspaceMatch`, `mdvOpenOrSetSaveLocation`, the startup restore, Ctrl/Cmd+S handler. Comment changes and saves start from `mdvDocText`, the document on screen |
 | `currentTheme` | `setTheme` | `renderMermaidDiagrams`, the init call `setTheme(currentTheme)` |
 | `fontStep` | `changeFontSize` (clamped to −2..2) | `applyFontSize` |
 | `fontSizes` (const) | — | `applyFontSize` (index `2 + fontStep`) |
@@ -267,19 +267,23 @@ Everything below runs in this order on page load.
 
 | Variable | Owner |
 |---|---|
-| `MDV_VERSION` (=1), `MDV_GENERATOR`, `MDV_RE_ANCHOR`, `MDV_RE_BLOCK_OPEN`, `MDV_RE_BLOCK_END` | `mdvLocateBlock`, `mdvReadPayload`, `mdvParseFile`, `mdvSerialize`, `mdvMarkerIds`, `mdvRemoveMarkers` |
+| `MDV_VERSION` (=1), `MDV_GENERATOR`, `MDV_RE_ANCHOR`, `MDV_RE_BLOCK_START`, `MDV_RE_BLOCK_HEAD`, `MDV_RE_BLOCK_CLOSE`, `MDV_RE_BLOCK_OPEN`, `MDV_RE_BLOCK_END` | `mdvLocateBlock`, `mdvLocateBlockAtEnd`, `mdvReadPayload`, `mdvParseFile`, `mdvSerialize`, `mdvMarkerIds`, `mdvRemoveMarkers` |
+| `mdvParseCache` | The last markdown-it parse (`mdvParseMarkdown`): locating the block, its markers and an insertion point ask about the same text |
 | `mdvComments` | Set by the `renderMarkdown` hook from `mdvParseFile`, and by `mdvCommit`. Every change (`mdvAddComment`, `mdvPostReply`, `mdvResolveThread`, `mdvDeleteThread`) builds a new list and commits it together with the serialized source, so a later re-render reads back the same comments. |
-| `mdvFileHandle` | The handle the current document was read from, or `null`. Set by `readFile` (workspace match or `null`), the paste listener and `loadFromUrl` (`null`), `mdvOpenWithHandle`, `mdvEnsureWritableHandle`, `mdvPickWorkspace`; cleared by `mdvBeginDocument` when its recorded version is not the document being rendered. Read by `mdvCurrentTarget`, `mdvWriteHandle`, `mdvSaveFile`, `mdvShowAddPopup`, `mdvOpenOrSetSaveLocation`. |
-| `mdvBases` (WeakMap) | Per handle, the version the viewer read or last wrote: `{text, lastModified, size}`, or `{overwrite: true}` for a file picked in the Save dialog. Written by `mdvOpenWithHandle`, `mdvMatchInFolder`, `mdvEnsureWritableHandle`, `mdvBeginDocument` (a handle linked without one) and `mdvWriteHandle` (after a write). Read by `mdvWriteHandle` (the conflict check) and `mdvBeginDocument`. |
+| `mdvFileHandle` | The handle the current document was read from, or `null`. Set by `readFile` (workspace match or `null`), the paste listener and `loadFromUrl` (`null`), `mdvOpenWithHandle`, `mdvLinkOpenedFile`, `mdvSaveAsNewFile`, `mdvPickWorkspace`; cleared by `mdvBeginDocument` when its recorded version is not the document being rendered. Read by `mdvCurrentTarget`, `mdvWriteDocument`, `mdvSaveFile`, `mdvShowAddPopup`, `mdvOpenOrSetSaveLocation`, `mdvEncodingLock`. |
+| `mdvBases` (WeakMap) | Per handle, the version the viewer read or last wrote: `{text, gen, notUtf8}`, or `{overwrite: true, gen}` for a new file picked in the Save dialog. Written by `mdvOpenWithHandle`, `mdvMatchInFolder`, `mdvLinkOpenedFile` (the version that was opened), `mdvSaveAsNewFile`, `mdvBeginDocument` (a handle linked without one, and a new generation for every load) and `mdvWriteHandle` (after a write, same generation). Read by `mdvWriteHandle` (the conflict and generation checks), `mdvCurrentTarget`, `mdvBeginDocument` and `mdvEncodingLock`. |
+| `mdvGen` | Counts generations: each version of a file the viewer takes as its base by reading it. A queued save carries one and is refused (`stale`) once its file was read again. |
+| `mdvDesktopBase` | Desktop: `{path, text, mtimeMs, gen}`, the window's file as far as the document on screen goes. Set by `mdvBeginDocument` (mtime unchecked) and `mdvReloadFromDisk`, updated by `mdvWriteDesktop` after a write. |
+| `mdvDiscarded` | `{key, loadSeq}` of comment changes the reader discarded with "Reload from disk"; their saves end quietly. |
 | `mdvWorkspaceDir` | Set by the `load` restore and `mdvPickWorkspace`. Read by `mdvTryWorkspaceMatch`. |
 | `mdvDirty` | True from a comment change until that version is written. Read by `mdvBeginDocument` and `beforeunload`. |
 | `mdvLoadSeq`, `mdvDocVersion` | Count document loads and committed changes. A queued write, the restore and a late open use them to know their document is still the one shown. |
 | `mdvDocName`, `mdvDocTitle`, `mdvDocText`, `mdvLoadedText` | The current document's name and title as rendered, its last committed text, and its text as opened. |
-| `mdvLockReason` | Why comments are read-only for the current document (an unreadable or newer comment block), or `null`. |
+| `mdvLockReason`, `mdvLockKind` | Why comments are read-only for the current document, or `null`, and whether its comment block cannot be read (`block`) or the file is not UTF-8 text (`encoding`). |
 | `mdvOwnRender` | True while `mdvRerender` re-renders the current document itself. |
 | `mdvWriteChain`, `mdvNewestJob`, `mdvQueuedVersion`, `mdvWritesQueued` | The write queue (`mdvEnqueueWrite`). |
 | `mdvWriteLock` | Serializes `mdvWriteDocument` itself, so no two writes overlap whoever calls it (the queue, or the reader's Overwrite). |
-| `mdvNotices` | Conflicts, failed saves and unsaved changes of closed documents, shown at the top of the sidebar. |
+| `mdvNotices` | Conflicts, failed saves and unsaved changes of closed documents, shown at the top of the sidebar. Each records the file (`key`), the document load and version its text holds, and for a conflict the version found on disk (`disk`). |
 | `mdvStatusTimer` | Clears the "Saved ✓" status after 3 s. |
 | `mdvAuthorName` | Read once from `localStorage['mdv-author-name']`, used by `mdvAddComment` and `mdvPostReply` |
 | `MDV_SHA256_K` | `mdvSha256Hex` |
@@ -770,23 +774,24 @@ All comment functions are in `js/comments.js`; find them by name.
 | Function | One line |
 |---|---|
 | `mdvSha256Hex(str)`, `mdvHash(text)` | SHA-256 in JavaScript (works without `crypto.subtle`); `mdvHash` is its first 8 bytes as hex |
-| `mdvLocateBlock(src)` | The comment block that ends the file, from the last opening token at a line start, or `null` |
+| `mdvLocateBlock(src)` | The comment block: the last top-level HTML block opening with the block token, as markdown-it reads the document, or `null`; an HTML block without its closing line is reported unreadable |
+| `mdvLocateBlockAtEnd(src)` | Without markdown-it: only a block that ends the file |
 | `mdvReadPayload(loc)` | Version check and `JSON.parse` of a located block; an error makes comments read-only |
 | `mdvParseFile(src)` | `{ stripped, comments, parseError }` for a document |
-| `mdvSerialize(src, comments)` | Replaces the trailing block, keeping the text before it byte for byte and the document's line endings; throws (changing nothing) when the existing block cannot be read |
+| `mdvSerialize(src, comments)` | Writes the block at the end, keeping the text before and after the old one, its unknown fields and the document's line endings; throws (changing nothing) when the existing block cannot be read or the new one would not be read back |
 | `mdvEol(src)` | The document's line ending (CRLF or LF) |
 | `mdvMarker(id)`, `mdvMarkerIds(html)` | Writes an anchor marker; lists the marker ids in an HTML string |
-| `mdvRemoveMarkers(src, ids)` | Removes those markers only, never text in code, front matter or the comment block |
-| `mdvProtectedRanges(src)` | Source ranges of code and front matter |
+| `mdvRemoveMarkers(src, ids)` | Removes those markers only: lines markdown-it reads as HTML blocks, never text in code, inline code, front matter or the comment block |
 | `mdvIsCommentOnly(html)`, `mdvTopBlocks(tokens)` | The numbering rule: top-level blocks, skipping HTML blocks that hold only comments |
 | `mdvAnnotateBlocks(state)` | markdown-it core rule `mdv_blocks`: `data-mdv-block` numbers and `data-mdv-anchor` ids on top-level blocks |
-| `mdvSplitFrontmatter(src)`, `mdvLineOffset(text, line)`, `mdvParseMarkdown(text)` | Map block numbers back to source lines with the viewer's own markdown-it |
+| `mdvWithBlockAttrs(html, token)` | Puts those attributes on the first element of HTML a renderer builds itself (raw HTML blocks, Mermaid fences) |
+| `mdvSplitFrontmatter(src)`, `mdvLineOffset(text, line)`, `mdvParseMarkdown(text)` | Map block numbers back to source lines with the viewer's own markdown-it (the last parse is kept) |
 | `mdvSameBlocks(body, blocks)` | Whether math pre-processing kept the block structure, so block numbers can be trusted |
 | `mdvLocateInsertion(elem)` | Where a new thread's marker goes: the start of the line of the top-level block holding `elem` |
 | `mdvShortId()`, `mdvNewCommentId()`, `mdvNormalize(t)` | Anchor ids, comment ids, text normalization |
 | `mdvBlockText(el)`, `mdvBlockLabel(el)` | A block's text without chips (hashed); a readable label for a thread card |
 | `mdvComputeAnchor(elem, selectionText)` | `{ id, blockKind, blockHash, sibIdx, quote }` |
-| `mdvBuildAnchorMap(container)` | Anchor id → element, from `data-mdv-anchor`, else the element after the marker comment |
+| `mdvBuildAnchorMap(container)` | Anchor id → element (a map with no prototype), from `data-mdv-anchor`, else the element after the marker comment |
 | `mdvChipHost(el, anchor)` | The item a thread belongs to inside a list, table, quote or definition list |
 
 ### 11.11 Comments: storage, files and the save seam
@@ -794,23 +799,27 @@ All comment functions are in `js/comments.js`; find them by name.
 | Function | One line |
 |---|---|
 | `mdvOpenDb()`, `mdvPutHandle(key, h)`, `mdvGetHandle(key)` | IndexedDB `mdv-viewer` v1, store `handles`; each call closes its connection; `mdvGetHandle` returns `null` on any error |
-| `mdvIsDesktop()`, `mdvCurrentTarget()` | Desktop app or browser; where the current document saves |
-| `mdvWriteDocument(text, opts)` | **The only writer.** Desktop: `mdvHost.saveDocument`; browser: the handle, after the version check. Never writes on a conflict |
+| `mdvIsDesktop()`, `mdvCurrentTarget()` | Desktop app or browser; where the current document saves, and the generation of that file |
+| `mdvWriteDocument(text, opts)` | **The only writer.** Desktop: `mdvHost.saveDocument`; browser: the handle, after reading the file and comparing it with the version this text was made from. Never writes on a conflict, over a file read again since (`stale`), or into a file that is not UTF-8 |
 | `mdvWriteDesktop`, `mdvWriteHandle` | Its two branches |
-| `mdvReportWrite(res, ctx)` | Status line and notices for a write's outcome |
-| `mdvEnqueueWrite(job)`, `mdvFlushWrites()` | The write queue: one write at a time, each to its own file |
+| `mdvReadDesktop(path)`, `mdvReadHandle(handle)`, `mdvDecode(buffer)` | Read the window's file through the bridge, or a file through its handle with strict UTF-8 decoding (reporting a byte order mark) |
+| `mdvStale()`, `mdvIsDiscarded(key, loadSeq)` | A write refused because its file was read again; changes the reader discarded |
+| `mdvReportWrite(res, ctx)` | Status line and notices for a write's outcome; settles only notices whose changes the write holds |
+| `mdvEnqueueWrite(job)`, `mdvFlushWrites()` | The write queue: one write at a time, each to its own file and generation |
 | `mdvRequestSave()` | Queues a write of the committed document after a change |
-| `mdvSaveFile(opts)` | Save now (Cmd/Ctrl+S, toolbar): Save dialog or permission prompt when allowed; download in browsers without the File System Access API |
+| `mdvSaveFile(opts)` | Save now (Cmd/Ctrl+S, toolbar): links a file (`mdvEnsureWritableHandle`) or asks for permission when allowed; download in browsers without the File System Access API |
 | `mdvDownloadName()`, `mdvDownloadText(text, name)`, `mdvDownloadFallback()` | Download a copy |
 | `mdvSetStatus(text, kind)` | Toolbar save-status pill |
 | `mdvAddNotice`, `mdvRemoveNotices`, `mdvRenderNotices`, `mdvNoticeElement`, `mdvNoticeButton`, `mdvNoticeIsCurrent` | The sidebar notices |
-| `mdvNoticeReload(n)`, `mdvNoticeOverwrite(n)`, `mdvReloadFromDisk()` | The reader's choices after a conflict |
+| `mdvNoticeReload(n)`, `mdvNoticeOverwrite(n)`, `mdvReloadFromDisk()` | The reader's choices after a conflict. A reload that fails to read or show the file keeps the notice; Overwrite replaces only the version the notice showed |
 | `mdvPickFile()` | `showOpenFilePicker` → `mdvOpenWithHandle`; without the API, the file input; in the desktop app, `mdvHost.openDialog()` |
-| `mdvOpenWithHandle(handle, opts)` | Records the version read, links the handle, renders; `prompt: false` never asks for permission |
-| `mdvEnsureWritableHandle()` | Re-permissions the existing handle or prompts `showSaveFilePicker` |
+| `mdvOpenWithHandle(handle, opts)` | Records the version read (a new generation; whether it is UTF-8), links the handle, renders; `prompt: false` never asks for permission |
+| `mdvEnsureWritableHandle()` | Re-permissions the existing handle, or links one: `mdvLinkOpenedFile` for a document read from a file, `mdvSaveAsNewFile` for pasted text and the demo (`mdvDocHasFile`) |
+| `mdvLinkOpenedFile()` | Open dialog for the file the document came from; its base is the version that was opened, so the first save checks the file |
+| `mdvSaveAsNewFile()` | Save dialog for a document with no file of its own |
 | `mdvPickWorkspace()` | `showDirectoryPicker`, stores it as `workspace`, links the current file when its contents match |
 | `mdvMatchInFolder(dir, name, text)`, `mdvTryWorkspaceMatch(filename, text)` | Links a workspace file only when its contents are identical |
-| `mdvOpenOrSetSaveLocation()` | Toolbar button: pin a save location, or open a new file |
+| `mdvOpenOrSetSaveLocation()` | Toolbar button: link the open document to its file, or open a file (always the file chooser without the API or for read-only comments) |
 
 ### 11.12 Comments: UI and editing
 
@@ -826,6 +835,8 @@ All comment functions are in `js/comments.js`; find them by name.
 | `mdvRenderChips(idMap)` | `💬 n` chip on each anchored block or item |
 | `mdvFocusThread(id)` | Opens the sidebar, scrolls to and outlines the card |
 | `mdvRefuseIfLocked()`, `mdvCommit(text, comments)` | Read-only guard; every change commits the list and the source together |
+| `mdvDocumentChanging()`, `mdvRefuseIfChanging()`, `mdvApplyChange(makeText, comments)` | No change while a loader replaces the document; a change whose source cannot be built is refused with a toast |
+| `mdvEncodingLock()` | Comments are read-only for a linked file that is not UTF-8 text |
 | `mdvShowAddPopup(elem, selectionText)` | Add-comment popup next to the block. Gets a writable handle within the click gesture. The typed text stays if adding fails |
 | `mdvAddComment(elem, selectionText, body)` | Inserts the marker, adds and commits the thread, attaches it on the page without a re-render, saves |
 | `mdvPostReply(threadId, textareaEl)` | Adds and commits a reply, saves |
@@ -837,14 +848,14 @@ All comment functions are in `js/comments.js`; find them by name.
 | `mdvShowContextMenu(x, y, elem, selectionText)` | Single-item "Add comment" menu |
 | `mdvHandleSelection()` | Floating "Comment" popover above a selection |
 | `mdvHasUnsavedWork()` | Whether leaving the page should ask first |
-| `mdvBeginDocument(source, title)` | A new document: keeps the previous one's unsaved changes in a notice, resets the per-document state, drops a stale file link |
+| `mdvBeginDocument(source, title)` | A new document: keeps the previous one's unsaved changes in a notice, resets the per-document state, drops a stale file link, and starts a new generation for the linked file (desktop: the window's file, unchecked until the first save reads it) |
 
 ### 11.13 Anonymous and wrapper functions
 
 | Where | What |
 |---|---|
 | `md.renderer.rules.fence` wrapper | Copies the block number and anchor ids onto the first element of a custom fence renderer's output (Mermaid) |
-| IIFE near the end of `comments.js` | Captures the original `renderMarkdown` and installs the hook (`mdvBeginDocument` → `mdvParseFile` → original → deferred sidebar) |
+| IIFE near the end of `comments.js` | Captures the original `renderMarkdown` and installs the hook (`mdvBeginDocument` → `mdvParseFile` and the read-only check → original → deferred sidebar, which runs even when the original throws) |
 | `load` handler | IndexedDB restore of `workspace` and `current`, with the rules in section 3, step 9 |
 | `beforeunload` handler | Asks before leaving with unsaved comment changes |
 | End of `comments.js` | `window.mdvPickFile`, `mdvPickWorkspace`, `mdvOpenOrSetSaveLocation`, `mdvToggleSidebar`, `mdvSaveFile`, `mdvWriteDocument` |
@@ -865,9 +876,13 @@ All comment functions are in `js/comments.js`; find them by name.
   recorded version is not the document being rendered. A loader that opens a file through a handle should
   call `mdvOpenWithHandle`, which records the version for the conflict check.
 - **`mdvWriteDocument` is the only function that writes a document.** In the desktop app it calls
-  `mdvHost.saveDocument(currentPath, text, currentMtimeMs)`; in the browser it writes through the File System
-  Access handle after checking the file still holds the version the viewer read. Never write a document any
-  other way: the conflict check, the write queue and the reader's notices all live there.
+  `mdvHost.saveDocument(currentPath, text, mtime)` with the mtime of the version it read or last wrote (reading
+  the file first when it has not checked that version); in the browser it writes through the File System Access
+  handle after reading the file and comparing it with the version the text was made from. Never write a document
+  any other way: the conflict and generation checks, the write queue and the reader's notices all live there.
+- **The comment format depends on markdown-it reading HTML blocks** (`html: true`): the comment block and the
+  anchor markers are found as HTML block tokens, so a sanitizer may change the rendered output but not the
+  parser's `html` option.
 - **The `renderMarkdown` hook treats every call as a document load** (`mdvBeginDocument`): it re-parses the
   comments from the source and resets the per-document state. Code that changes `mdvComments` must commit
   them into `rawMarkdown` first (`mdvCommit`), which every comment action does; `mdvRerender` re-renders the

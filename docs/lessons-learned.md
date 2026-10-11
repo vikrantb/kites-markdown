@@ -248,10 +248,11 @@ may need to be requested again, which also requires a gesture.
 
 **Fix.**
 
-- `mdvEnsureWritableHandle` asks for a location with `showSaveFilePicker` and stores the handle in
-  IndexedDB. It is called inside click handlers: the add-comment **Save** button
-  (`mdvShowAddPopup`), `Cmd/Ctrl+S` (`mdvSaveFile({ allowPrompt: true })`), and the open/save-location
-  toolbar button (`mdvOpenOrSetSaveLocation`).
+- `mdvEnsureWritableHandle` asks for a location and stores the handle in IndexedDB (at first with
+  `showSaveFilePicker`; since 2026-10-10 a document read from a file is linked through
+  `showOpenFilePicker` instead, see lesson 11). It is called inside click handlers: the add-comment
+  **Save** button (`mdvShowAddPopup`), `Cmd/Ctrl+S` (`mdvSaveFile({ allowPrompt: true })`), and the
+  open/save-location toolbar button (`mdvOpenOrSetSaveLocation`).
 - `mdvSaveFile` falls back to `mdvDownloadFallback` only when `showSaveFilePicker` does not exist.
   On Chromium with no handle, it leaves the change unsaved and shows a status asking the reader to
   set a location.
@@ -308,6 +309,10 @@ be careful with what the grant lets you do silently:
   untouched. A name is not an identity; compare what you are about to overwrite.
 - Files in subfolders of the workspace are never matched, because only direct children are looked
   up.
+- A Save dialog is not a way to pick an existing file. Chromium empties the file picked there before
+  the page can read it, so linking a dropped file through it lost any edit made elsewhere since the
+  file was opened. **Fixed 2026-10-10:** a document that came from a file is linked through an Open
+  dialog, and its first save compares the file with the version that was opened.
 
 ## 12. Anchor annotations by explicit id
 

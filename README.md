@@ -43,11 +43,16 @@ reopen and delete threads in the sidebar.
 
 Saving is built never to lose text:
 
-- every change is saved into the file at once, through a single writer;
+- every change is saved into the file at once, through a single writer, and only into the version
+  of the file it was made from;
 - a file that another program changed after the viewer read it is **never overwritten**: the viewer
   stops, says so, and keeps your comment until you reload, download your version, or overwrite;
-- a document that merely mentions the comment format, or a comment block that cannot be read, is
-  left exactly as it is.
+- a file you dropped or opened without a save location is linked only to that same file, picked in
+  an Open dialog and checked before the first save;
+- a document that merely mentions the comment format, text typed below the comments in another
+  editor, and a comment block that cannot be read are left exactly as they are;
+- a file that is not UTF-8 text is never rewritten (its comments are read-only), and a UTF-8 byte
+  order mark is kept.
 
 Each of these has a browser test. Details, including the on-disk format, are in
 [docs/commenting.md](docs/commenting.md).
