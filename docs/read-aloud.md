@@ -263,7 +263,7 @@ The keep-alive is skipped entirely on Android (`isAndroid`), because, per the co
 
 ## Controls
 
-All controls live in the fixed bar `#ttsPlayer`. The buttons are wired with inline `onclick` in the markup; their names, roles and the slider's keys are added by `wireTtsPlayer` when the script loads.
+All controls live in the fixed bar `#ttsPlayer`. Every button names its action with `data-action` (for example `data-action="tts-next"`), which `js/actions.js` runs; there are no inline `onclick` attributes. Their names, roles and the slider's keys are added by `wireTtsPlayer` when the script loads.
 
 | Control | Element | Function | Behaviour |
 |---|---|---|---|

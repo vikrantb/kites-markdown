@@ -560,6 +560,9 @@ function handleSearch(q) {
     item.className = 'search-result-item';
     item.id = `mdv-search-result-${i}`;
     item.dataset.idx = i;
+    // One action registry (stream S's js/actions.js) handles the click, as for every other control
+    item.dataset.action = 'go-search';
+    item.dataset.arg = String(i);
     item.setAttribute('role', 'option');
     item.setAttribute('aria-selected', 'false');
     const head = document.createElement('span');
@@ -663,10 +666,6 @@ function handleSearchKeys(e) {
   inp.setAttribute('aria-label', 'Search this document');
   res.setAttribute('role', 'listbox');
   res.setAttribute('aria-label', 'Search results');
-  res.addEventListener('click', (e) => {
-    const item = e.target.closest('.search-result-item');
-    if (item) goSearch(parseInt(item.dataset.idx));
-  });
 })();
 
 // ============================================

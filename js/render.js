@@ -1,6 +1,12 @@
 // ============================================
 // Render markdown
 // ============================================
+// renderMarkdown is the one entry point that puts a document on the page. A document is untrusted
+// input, so:
+// - its HTML goes through DOMPurify before it reaches the page (mdvSanitize, below);
+// - Mermaid runs at securityLevel 'strict' (mdvPinMermaidSecurity);
+// - frontmatter of any shape renders, and a document that still cannot be rendered is shown as an
+//   error with its text, never as a blank page or a "not found" prompt (mdvRenderErrorHtml).
 function parseFrontmatter(src) {
   const match = src.match(/^---\s*\n([\s\S]*?)\n---\s*\n/);
   if (!match) return { body: src, meta: null };
@@ -48,13 +54,22 @@ function parseFrontmatter(src) {
   return { body, meta };
 }
 
+// The frontmatter reader above is not a YAML library: a key with no value ("status:") becomes an
+// empty list, and list items can be strings or objects. Read every dashboard field as text.
+function mdvFrontmatterText(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(mdvFrontmatterText).filter(Boolean).join(', ');
+  return '';
+}
+
 function renderFrontmatterDashboard(meta) {
   if (!meta) return '';
-  const status = meta.status || '';
-  const date = meta.date || '';
+  const status = mdvFrontmatterText(meta.status);
+  const date = mdvFrontmatterText(meta.date);
   const metrics = Array.isArray(meta.metrics) ? meta.metrics : [];
   const repos = Array.isArray(meta.repos) ? meta.repos : [];
-  const abbrs = meta.abbreviations;
 
   if (!status && !metrics.length && !repos.length) return '';
 
@@ -70,7 +85,8 @@ function renderFrontmatterDashboard(meta) {
   if (metrics.length) {
     html += '<div class="fm-metrics">';
     for (const m of metrics) {
-      html += `<div class="fm-metric"><span class="fm-metric-value">${escapeHtml(m.value || '')}</span><span class="fm-metric-label">${escapeHtml(m.label || '')}</span></div>`;
+      const item = m && typeof m === 'object' ? m : { label: m };
+      html += `<div class="fm-metric"><span class="fm-metric-value">${escapeHtml(mdvFrontmatterText(item.value))}</span><span class="fm-metric-label">${escapeHtml(mdvFrontmatterText(item.label))}</span></div>`;
     }
     html += '</div>';
   }
@@ -78,10 +94,13 @@ function renderFrontmatterDashboard(meta) {
   if (repos.length) {
     html += '<div class="fm-repos">';
     for (const r of repos) {
-      if (r.github) {
-        html += `<a class="fm-repo-badge" href="${escapeHtml(r.github)}" target="_blank" rel="noopener">&#9733; ${escapeHtml(r.name || 'repo')}</a>`;
+      const repo = r && typeof r === 'object' ? r : { name: r };
+      const name = mdvFrontmatterText(repo.name) || 'repo';
+      const link = mdvFrontmatterText(repo.github);
+      if (link && mdvIsWebOrRelativeLink(link)) {
+        html += `<a class="fm-repo-badge" href="${mdvEscapeAttr(link)}" target="_blank" rel="noopener">&#9733; ${escapeHtml(name)}</a>`;
       } else {
-        html += `<span class="fm-repo-badge">${escapeHtml(r.name || 'repo')}</span>`;
+        html += `<span class="fm-repo-badge">${escapeHtml(name)}</span>`;
       }
     }
     html += '</div>';
@@ -91,25 +110,51 @@ function renderFrontmatterDashboard(meta) {
   return html;
 }
 
+// A web address, or a path relative to the page; any other scheme (javascript:, data:) is not a
+// link. Decided on the URL as the browser parses it: the parser drops tabs and newlines, so
+// "java<TAB>script:" is a javascript: URL, which a pattern over the raw text would miss.
+function mdvIsWebOrRelativeLink(link) {
+  let absolute = null;
+  try { absolute = new URL(link); } catch (e) { /* not an absolute URL: a relative path */ }
+  if (absolute) return absolute.protocol === 'http:' || absolute.protocol === 'https:';
+  try { new URL(link, location.href); return true; } catch (e) { return false; }
+}
+
+// Builds a document's page content without touching the page: { ok, content, meta, narrations, error }.
+// renderMarkdown shows it; a caller that must not replace a good page with a broken one (a reload from disk)
+// can ask first, through the same pipeline, rather than a second copy of it.
+function mdvBuildContent(source, codeKey) {
+  try {
+    // Parse and strip YAML frontmatter
+    const parsed = parseFrontmatter(source);
+    // Extract narrations before rendering
+    const narrations = extractNarrations(parsed.body).narrations;
+    let dashboardHtml = '';
+    try { dashboardHtml = renderFrontmatterDashboard(parsed.meta); } catch (e) { console.warn('frontmatter dashboard:', e); }
+    const content = mdvSanitize(dashboardHtml + md.render(parsed.body, { mdvCodeKey: codeKey }));
+    return { ok: true, content, meta: parsed.meta, narrations };
+  } catch (err) {
+    return { ok: false, error: err, content: mdvRenderErrorHtml(err, source), meta: null, narrations: [] };
+  }
+}
+
+// True when the document rendered; false when a render error is shown in its place.
 function renderMarkdown(source, title) {
   const body = document.getElementById('mdBody');
   const welcome = document.getElementById('welcomeScreen');
 
-  // Parse and strip YAML frontmatter
-  const { body: stripped, meta } = parseFrontmatter(source);
-  source = stripped;
+  // Build the page content. Nothing in here may stop the document from showing: a failure is
+  // reported in its place (callers such as loadFromUrl must never mistake it for a missing file).
+  const codeKey = mdvRandomKey();
+  const built = mdvBuildContent(source, codeKey);
+  if (!built.ok) console.error('Render error:', built.error);
+  const meta = built.meta;
+  const content = built.content;
   window._frontmatter = meta;
-
-  // Extract narrations before rendering
-  const { narrations } = extractNarrations(source);
-  window._narrations = narrations;
-
-  // Pre-process math
-  const processed = renderMath(source);
-
-  // Render
-  const dashboardHtml = renderFrontmatterDashboard(meta);
-  body.innerHTML = dashboardHtml + md.render(processed);
+  window._narrations = built.narrations;
+  if (typeof content === 'string') body.innerHTML = content;
+  else body.replaceChildren(content);
+  mdvWireCodeBlocks(body, codeKey);
   body.style.display = 'block';
   welcome.style.display = 'none';
   document.getElementById('fabContainer').style.display = 'flex';
@@ -148,7 +193,230 @@ function renderMarkdown(source, title) {
   // Reset state
   allCollapsed = false;
   window.scrollTo({ top: 0 });
+  return built.ok;
 }
 
-function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// For a value inside a double-quoted attribute: escapeHtml leaves quotes alone.
+function mdvEscapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+
+// What a reader sees instead of a document that could not be rendered: the error, then the text.
+function mdvRenderErrorHtml(err, source) {
+  const message = (err && err.message) || String(err);
+  return '<blockquote class="callout callout-caution"><div class="callout-title">&#128308; Caution</div>' +
+    '<p><strong>This document could not be rendered.</strong> The error was: <code>' + escapeHtml(message) + '</code>. ' +
+    'Its text is shown below, exactly as it is in the file.</p></blockquote>' +
+    '<pre><code>' + escapeHtml(source) + '</code></pre>';
+}
+
+// ============================================
+// Sanitizing: what a document may put on the page
+// ============================================
+// DOMPurify (vendor/purify.min.js) removes scripts, every on* attribute, javascript: and vbscript:
+// URLs, frames, plugins and forms. Kept on purpose:
+// - HTML comments at the top level of the document: comment anchors (MDV-ANCHOR) and narration
+//   (narrate:) are read from them (see the comment hook below);
+// - KaTeX output, including its MathML (<semantics>, <annotation>) and style attributes;
+// - classes, ids, data-* and aria-* attributes;
+// - inline SVG, minus its scripts and handlers.
+// Also removed: <style>, which would restyle the whole viewer; data-action and data-arg, which name
+// the viewer's own actions (js/actions.js); and any id or name that would take over one of the
+// viewer's own elements (a document's <div id="ttsPlayer"> would otherwise capture the player's
+// updates).
+// SAFE_FOR_XML stays at its default (on): DOMPurify's documentation says to turn it off only for
+// content with no SVG or MathML, and documents have both.
+const MDV_SANITIZE_CONFIG = {
+  ADD_TAGS: ['#comment', 'semantics', 'annotation'],
+  ADD_ATTR: ['target'],
+  FORBID_TAGS: ['style', 'form', 'script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'base', 'meta', 'link'],
+  FORBID_ATTR: ['data-action', 'data-arg'],
+  FORCE_BODY: true,            // parse as <body> content, so a comment that starts the file is kept
+  // renderMarkdown inserts the sanitized nodes themselves rather than an HTML string. (A later pass
+  // that rewrites innerHTML, such as transformCalloutBlocks, re-parses markup DOMPurify has already
+  // made safe to re-parse: that is its string mode's contract.)
+  RETURN_DOM_FRAGMENT: true,
+};
+
+// Without DOMPurify the viewer shows raw HTML as text (markdown-it's html: false) instead of
+// trusting it. render.js reports the missing library below.
+const mdvPurifier = (window.DOMPurify && typeof window.DOMPurify === 'function' && window.DOMPurify.isSupported)
+  ? window.DOMPurify(window) : null;
+let mdvSanitizeChromeIds = null;
+
+// "<" followed by a letter, a digit or "/": what DOMPurify's SAFE_FOR_XML checks treat as markup.
+const MDV_MARKUP_START = /<(?=[/\w])/g;
+
+if (mdvPurifier) {
+  // Comments. SAFE_FOR_XML removes a comment whose text holds "<" plus a letter, digit or "/", and
+  // removes an element whose only children are text and comments when that text holds one. Both
+  // would delete document content without a trace: a narration that mentions "latency<200ms", or a
+  // paragraph "if a<b then swap them <!-- note -->". So, before DOMPurify checks a node:
+  // - an element loses its comment children. They are invisible, and the comments the viewer reads
+  //   (anchors, narration) are block-level, so they are direct children of the body;
+  // - a top-level comment gets a space after each such "<", which nothing can parse as a tag and
+  //   which reads aloud the same.
+  mdvPurifier.addHook('beforeSanitizeElements', (node) => {
+    if (node.nodeType === 8) {
+      const data = node.data.replace(MDV_MARKUP_START, '< ');
+      if (data !== node.data) node.data = data;
+    } else if (node.nodeType === 1 && node !== node.ownerDocument.body) {
+      for (const child of [...node.childNodes]) if (child.nodeType === 8) child.remove();
+    }
+  });
+  mdvPurifier.addHook('uponSanitizeAttribute', (node, data) => {
+    if (data.attrName !== 'id' && data.attrName !== 'name') return;
+    if (mdvSanitizeChromeIds && mdvSanitizeChromeIds.has(data.attrValue)) {
+      data.keepAttr = false;
+      return;
+    }
+    // DOMPurify drops every id that names a document property, which would strip the heading
+    // ids "images", "links" and "title" and break links to them. Only named <img>, <form>,
+    // <embed>, <object> and <iframe> elements can shadow such a property, and only <img> gets
+    // through this config, so every other element keeps its id.
+    if (data.attrName === 'id' && node.nodeName !== 'IMG') data.forceKeepAttr = true;
+  });
+  mdvPurifier.addHook('afterSanitizeAttributes', (node) => {
+    if (node.hasAttribute && node.hasAttribute('target')) node.setAttribute('rel', 'noopener noreferrer');
+  });
+} else {
+  try { md.set({ html: false }); } catch (e) { /* markdown-it itself is missing; reported below */ }
+}
+
+// The ids of the viewer's own elements: everything outside the [data-mdv-document] containers, and
+// the containers themselves. A document element named like a container would otherwise win
+// getElementById over any container that comes after #mdBody in the page (#mdvThreadList does).
+function mdvChromeIds() {
+  const ids = new Set();
+  for (const el of document.querySelectorAll('[id]')) {
+    const parent = el.parentElement;
+    if (!parent || !parent.closest('[data-mdv-document]')) ids.add(el.id);
+  }
+  return ids;
+}
+
+// Returns a DocumentFragment, or, without DOMPurify, the HTML string markdown-it produced with raw
+// HTML disabled (every tag in it was written by markdown-it or the viewer, from escaped text).
+function mdvSanitize(html) {
+  if (!mdvPurifier) return html;
+  mdvSanitizeChromeIds = mdvChromeIds();
+  try {
+    return mdvPurifier.sanitize(html, MDV_SANITIZE_CONFIG);
+  } finally {
+    mdvSanitizeChromeIds = null;
+  }
+}
+
+// ============================================
+// Code blocks: the viewer's own Copy buttons
+// ============================================
+// A document can draw a Copy button too: in its own HTML (the sanitizer drops its data-action) or
+// in a Mermaid label (Mermaid keeps data-* attributes), next to code whose text is partly hidden.
+// So copying is wired only for code blocks markdown-it rendered from a fence in this render: each
+// one carries a key made for this render, which a document cannot know, and the button inside it
+// is marked as the viewer's own control (actions.js runs nothing else inside the document).
+function mdvRandomKey() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+try {
+  md.core.ruler.push('mdv_code_key', (state) => {
+    const key = state.env && state.env.mdvCodeKey;
+    if (!key) return;
+    for (const token of state.tokens) if (token.type === 'fence') token.attrSet('data-mdv-code', key);
+  });
+} catch (err) {
+  console.warn('code blocks: markdown-it is not available', err);
+}
+
+function mdvWireCodeBlocks(container, key) {
+  for (const code of container.querySelectorAll('code[data-mdv-code]')) {
+    const own = code.getAttribute('data-mdv-code') === key;
+    code.removeAttribute('data-mdv-code');
+    const button = own ? code.querySelector(':scope > .code-header > .copy-btn') : null;
+    if (!button) continue;
+    button.dataset.action = 'copy-code';
+    mdvMarkOwnControl(button);
+  }
+}
+
+// Mermaid draws diagrams from document text. At securityLevel 'strict' it sanitizes labels,
+// ignores click directives and refuses javascript: links; 'loose' allows all three, and through
+// them script. The level is pinned here, at the library boundary, so no call can loosen it.
+(function mdvPinMermaidSecurity() {
+  if (typeof mermaid === 'undefined' || typeof mermaid.initialize !== 'function') return;
+  const initialize = mermaid.initialize.bind(mermaid);
+  mermaid.initialize = (config) => initialize(Object.assign({}, config, { securityLevel: 'strict' }));
+  initialize({ startOnLoad: false, securityLevel: 'strict' });
+})();
+
+// ============================================
+// Libraries: say so when a feature is off
+// ============================================
+// Every library is vendored and loaded by a plain <script> tag. When one does not load (a missing
+// or renamed file), its global stays undefined and the feature that needs it switches off. Say so
+// once, in the console and in a small notice, instead of failing silently.
+const MDV_LIBRARIES = [
+  { global: 'markdownit', feature: 'Markdown rendering' },
+  { global: 'DOMPurify', feature: 'Raw HTML (shown as text: the sanitizer did not load)' },
+  { global: 'markdownItAnchor', feature: 'Heading links' },
+  { global: 'markdownitTaskLists', feature: 'Task-list checkboxes' },
+  { global: 'markdownitFootnote', feature: 'Footnotes' },
+  { global: 'markdownitMark', feature: 'Highlighted text' },
+  { global: 'markdownitSub', feature: 'Subscript' },
+  { global: 'markdownitSup', feature: 'Superscript' },
+  { global: 'markdownitDeflist', feature: 'Definition lists' },
+  { global: 'markdownitAbbr', feature: 'Abbreviations' },
+  { global: 'diff_match_patch', feature: 'Fuzzy matching of comment anchors' },
+  { global: 'hljs', feature: 'Code highlighting' },
+  { global: 'mermaid', feature: 'Mermaid diagrams' },
+  { global: 'katex', feature: 'Math' },
+];
+
+function mdvMissingLibraries() {
+  return MDV_LIBRARIES.filter((lib) => typeof window[lib.global] === 'undefined');
+}
+
+// The notice sits at the top of the content column, in the page's flow: it pushes the document
+// down instead of covering its first lines, and scrolls away with it.
+function mdvShowNotice(text) {
+  const notice = document.createElement('div');
+  notice.className = 'mdv-notice';
+  notice.setAttribute('role', 'status');
+  Object.assign(notice.style, {
+    display: 'flex', alignItems: 'center', gap: '10px', margin: '0 auto 24px',
+    maxWidth: 'min(640px, 100%)', boxSizing: 'border-box', padding: '8px 8px 8px 14px',
+    background: 'var(--bg-card)', color: 'var(--text-primary)', font: '500 0.82rem/1.45 var(--font-ui)',
+    border: '1px solid var(--border-primary)', borderLeft: '4px solid var(--accent-warn)',
+    borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-md)',
+  });
+  const message = document.createElement('span');
+  message.textContent = text;
+  const dismiss = document.createElement('button');
+  dismiss.type = 'button';
+  dismiss.dataset.action = 'dismiss-notice';
+  dismiss.setAttribute('aria-label', 'Dismiss');
+  dismiss.title = 'Dismiss';
+  dismiss.textContent = '\u00d7';
+  Object.assign(dismiss.style, {
+    flex: 'none', border: '0', background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer',
+    font: '400 1.15rem/1 var(--font-ui)', padding: '4px 8px', borderRadius: 'var(--radius-sm)',
+  });
+  notice.append(message, dismiss);
+  const column = document.getElementById('content');
+  if (column) column.prepend(notice);
+  else document.body.appendChild(notice);
+  return notice;
+}
+
+(function mdvReportMissingLibraries() {
+  const missing = mdvMissingLibraries();
+  if (!missing.length) return;
+  for (const lib of missing) {
+    console.warn(`${lib.feature} is off: the library that provides window.${lib.global} did not load (check vendor/).`);
+  }
+  mdvShowNotice((missing.length === 1 ? 'Off because its library did not load: ' : 'Off because their libraries did not load: ') +
+    missing.map((lib) => lib.feature).join('; ') + '.');
+})();
 

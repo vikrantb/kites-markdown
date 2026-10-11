@@ -25,7 +25,7 @@ renderers.
 | Extension sandbox hardened | `../extensions/github-html-viewer/` sandboxes rendered pages without `allow-same-origin` (see its README) |
 | Task lists fixed | A misspelled global (`markdownItTaskLists` vs the plugin's `markdownitTaskLists`) had silently disabled task-list checkboxes |
 | Two destructive save paths closed | Paste and URL loading could leave a document linked to a different file, so a comment save could overwrite it (see [Known issues](#known-issues)) |
-| Comments marked experimental | The README warns against using comments on important files until data-safety issues 1–6 are fixed |
+| Comment data safety fixed (2026-10-10) | Known issues 1–6 fixed, each with a browser test in `tests/e2e/comments.spec.mjs`, and the holes a review found, with tests in `tests/e2e/comments-format.spec.mjs` and `comments-saving.spec.mjs`; the README's "experimental" warning removed. `mdvWriteDocument` is the single save seam, shared with the desktop app |
 
 ## Open decisions
 
@@ -74,9 +74,12 @@ individually today ([architecture.md](architecture.md) shows how).
 | Known issues 1, 3, 7, 8, 9, 10, 12, 13 | Reproduced as described in [Known issues](#known-issues) | Runtime (Chrome only) |
 | `pnpm exec playwright test --workers=1 tests/e2e/reading-aids.spec.mjs`, on this branch and on an extracted copy of main (2026-10-10) | 47 of 47 pass on the branch: the first 27, and 20 added after the review round. On main 46 of 47 fail. The one that passes, "a heading inside a closed `<details>` never becomes the current heading", is a regression the first version of this change introduced and the review round fixed. Of the 20 added tests, 17 fail on that first version (`5be7c54`). The other 3 cover guards that already worked, and each went red when its guard was removed; 28 such single-point sabotages went red in all. Of the first 27, 23 fail on main on the behaviour each names (narration, comment anchors, re-render time, observers, scroll spy, shortcuts, dialogs, read-aloud). Two search tests fail on main first because main focuses the search box 50 ms after Ctrl+K and drops the keys typed before that (also fixed here); the 200-character limit was confirmed separately on main with a positive control. The two screenshot tests stop at the lightbox step, because main has no keyboard-focusable images. Read-aloud runs against a stand-in `speechSynthesis` | Runtime (Chrome only) |
 | `node scripts/measure-large-document.mjs <dir> --sections 3000 --renders 5`, main and this branch alternately, 3 rounds, same machine (2026-10-10) | See [Reading aids](#reading-aids-fixed-2026-10-10) | Runtime (Chrome only) |
+| Comment data safety, issues 1–6 plus the file-plus button and the startup restore (2026-10-10) | `tests/e2e/comments.spec.mjs`, 29 tests. Run against the code before the fix (568069f), 26 fail, each on the bug it names, and 3 controls pass; with the fix all 29 pass. Saves go to a fake file handle, the browser's private file system (OPFS) or a fake desktop bridge | Runtime (Chrome, automated) |
+| The holes a review of that fix found (2026-10-10) | `tests/e2e/comments-format.spec.mjs` (9) and `comments-saving.spec.mjs` (31). Run against the fix as reviewed (0200794), 33 fail, each on its hole, and 7 pass (5 controls and two guards); now all 40 pass. Each named mechanism was also removed on purpose in a scratch copy, and the tests that guard it went red | Runtime (Chrome, automated) |
 
 **Not yet verified:**
-- saving back to disk, which needs a real user gesture;
+- saving back to a real file on disk, which needs a real user gesture (the save logic itself is covered by the
+  comment tests, with fake and browser-private files);
 - read-aloud audio;
 - Firefox and Safari;
 - the GitHub extension after its sandbox change.
@@ -92,16 +95,21 @@ Each entry says how it was established:
 - **Simulated** means the viewer's own code was run in Node with DOM stubs.
 - **Read** means it was established from the code alone.
 
-### Data safety (fix first)
+### Data safety (fixed 2026-10-10)
 
-| # | Issue | Evidence | Fix direction |
+All six are fixed in `js/comments.js`. Each has a test in `tests/e2e/comments.spec.mjs` that fails against the
+earlier code (568069f) and passes now; [commenting.md](commenting.md#data-safety-tests) lists them, with the tests
+for the holes a review of the fix found (text typed below the block, raw HTML threads, files that are not UTF-8,
+linking a dropped file, saves queued across a reload, notices, and the desktop seam).
+
+| # | Issue | Evidence | Fix |
 |---|---|---|---|
-| 1 | Starting a new comment thread does not save it. `mdvAddComment` adds the comment, then re-renders, and the comment hook re-parses comments from the source, which does not contain the new one yet. The anchor marker is still written, leaving an orphan marker in the file. | Verified: the count stayed at 3, the new body is absent from `mdvSerialize` output, and the sidebar shows no new card | Write the in-memory comments into the source (`mdvSerialize`) before any re-render that re-parses it. See [commenting.md](commenting.md#known-bugs-and-limitations), bug 1 |
-| 2 | Deleting a thread does not remove it: the re-parse restores it, and it is saved back | Simulated (commenting.md, bug 2) | Same as #1 |
-| 3 | A document that mentions the comment-block tokens (`<!-- MDV-COMMENTS:v1` … `MDV-COMMENTS:end -->`), even in code spans, loses the text between them on the next save | Verified with the viewer's own `mdvParseFile`/`mdvSerialize`: a 9-line document lost 121 characters, including a paragraph | Parse only a block that ends the file, found from the **last** opening token. Anchoring the current regex is not enough: the search still starts at the first mention. Bug 6 |
-| 4 | A comment containing the literal text `\u003c` or `\u002d` (a backslash followed by `u003c` or `u002d`), or any unparsable block, makes the next save delete every comment | Read (bugs 7–8) | Escape and unescape via the JSON parser, not textual replacement. Never write after a failed parse |
-| 5 | Workspace matching links by file name only, so dropping a different file with the same name can later overwrite the workspace file | Read (bug 15) | Link only when the contents match, or ask |
-| 6 | No conflict detection: edits made in another editor are overwritten by the next save | Read (bug 5) | Compare `lastModified` before writing |
+| 1 | Starting a new comment thread did not save it. `mdvAddComment` added the comment, then re-rendered, and the comment hook re-parsed comments from the source, which did not contain the new one yet. The anchor marker was still written, leaving an orphan marker in the file. | Verified: the count stayed at 3, the new body was absent from `mdvSerialize` output, and the sidebar showed no new card | **Fixed.** Every change writes the list into the source together with it (`mdvCommit`), and adding a thread no longer re-renders. Test: "a new thread is saved into the file, on the block it was started on" |
+| 2 | Deleting a thread did not remove it: the re-parse restored it, and it was saved back | Simulated (commenting.md, bug 2) | **Fixed** the same way; only that thread's marker is removed, never text in code. Test: "a deleted thread stays deleted, and its marker goes with it" |
+| 3 | A document that mentions the comment-block tokens (`<!-- MDV-COMMENTS:v1` … `MDV-COMMENTS:end -->`), even in code spans, lost the text between them on the next save | Verified with the viewer's own `mdvParseFile`/`mdvSerialize`: a 9-line document lost 121 characters, including a paragraph | **Fixed.** Only the last top-level HTML block that opens with the token is read, as markdown-it parses the document (`mdvLocateBlock`); text typed below it is kept. Tests: "a document that mentions the comment tokens, even in code, keeps every character", "a comment block followed by text typed later in another editor is still read" |
+| 4 | A comment containing the literal text `\u003c` or `\u002d` (a backslash followed by `u003c` or `u002d`), or any unparsable block, made the next save delete every comment | Read (bugs 7–8) | **Fixed.** `JSON.parse` alone unescapes. An unreadable block, or one in another format version, makes comments read-only for that file and `mdvSerialize` refuses to drop it. Tests: "comment text containing the escape sequences themselves round-trips", "an unreadable comment block is never rewritten" |
+| 5 | Workspace matching linked by file name only, so dropping a different file with the same name could later overwrite the workspace file | Read (bug 15) | **Fixed.** A file is linked only when its contents are identical and UTF-8 (`mdvTryWorkspaceMatch`, `mdvPickWorkspace`). A dropped file is otherwise linked only through an Open dialog, and its first save checks it (`mdvLinkOpenedFile`). Tests: "a dropped file links to the workspace file of the same name only when the contents match", "two different files that are not UTF-8 are never linked as the same file", "a dropped file changed in another editor is never overwritten by the first comment" |
+| 6 | No conflict detection: edits made in another editor were overwritten by the next save | Read (bug 5) | **Fixed.** `mdvWriteDocument`, the only writer, reads the file and checks it still holds the version the text was made from; a save made before the file was read again is refused. On a conflict it writes nothing, says so, and keeps the comment until the reader reloads, downloads or overwrites (only the version shown). In the desktop app it goes through `mdvHost.saveDocument` with the mtime it checked. Tests: two "issue 6" tests, two desktop tests, and the conflict tests in `comments-saving.spec.mjs` |
 
 Fixed in the initial import, and kept here as a record:
 - **Paste replaced the document even inside a text field, and left the opened file linked.** Pasting anything over 10 characters, even into a comment box or the settings field, replaced the document, and the next comment save could write the pasted text over the opened file. Pastes into text fields now stay in the field, and a document-level paste unlinks the file. Verified both before and after the fix.
@@ -111,13 +119,13 @@ Fixed in the initial import, and kept here as a record:
 
 | # | Issue | Evidence | Fix direction |
 |---|---|---|---|
-| 7 | Raw HTML is rendered without sanitization, so an untrusted file can run script in the viewer and use any granted file-system handle. Remote images also reveal that a file was opened. | Verified: an `onerror` attribute executed. See [rendering.md](rendering.md#security-posture) | DOMPurify configured to keep the viewer's own markup **and HTML comments** (comments and narration depend on them), plus a Content Security Policy |
+| 7 | ~~Raw HTML is rendered without sanitization, so an untrusted file can run script in the viewer and use any granted file-system handle.~~ **Fixed.** Everything rendered from a document passes through DOMPurify 3.4.16 (`mdvSanitize`), Mermaid is pinned to `securityLevel: 'strict'`, and a CSP (`script-src 'self' file:`) refuses inline script and `javascript:` URLs. Comment anchors, narration, KaTeX MathML and the viewer's own markup are kept. Remote images still reveal a file was opened (a privacy property of remote images, noted in the README). | Was: an `onerror` attribute executed. Now: `tests/e2e/security.spec.mjs` over `tests/fixtures/hostile.md` asserts ~15 payloads never run, no forbidden element or handler survives, and the CSP blocks inline script reaching the page another way; `press-the-buttons.md` shows no document data can trigger a viewer action, `cover.md` that a document cannot cover the viewer's controls, and `comments-with-markup.md` that the sanitizer deletes no text. See [rendering.md](rendering.md#security-posture) | Done |
 
 ### Rendering
 
 | # | Issue | Evidence | Fix direction |
 |---|---|---|---|
-| 8 | Two `$` on one line become math, even in prices and code; code samples then show raw KaTeX HTML | Verified, with a repro in `../samples/repro-dollar-signs.md` | Render math inside markdown-it with Pandoc's `$` rules, never inside code |
+| 8 | ~~Two `$` on one line become math, even in prices and code.~~ **Fixed.** Math is a markdown-it rule (`js/math.js`) with Pandoc's dollar rules; code is tokenized before inline rules, so math never matches inside a code span or block. | Was verified with `../samples/repro-dollar-signs.md`. Now: that sample plus `tests/fixtures/math-dollars.md` (23 cases) in `render-correctness.spec.mjs` — prices and both code samples stay text, one formula renders; kitchen-sink math still renders (4 inline + 1 display). | Done |
 | 9 | Dark theme: diagrams keep their light-theme colours, and sequence-diagram labels and arrows are `#333` on `#1C1C24` | Verified: after `setTheme('dark')`, Mermaid's config is still `theme: 'default'` and already-rendered diagrams are skipped | Keep each diagram's source; re-initialize Mermaid with the matching theme and re-render all diagrams on a theme change |
 | 10 | Mermaid sequence-diagram notes overflow their box | Verified: 384px of text in a 295px note, in both themes | Try `sequence: { wrap: true }` |
 | 11 | Section minimap labels overlap and clip when a document has many `h2` sections | Seen in a screenshot of `kitchen-sink.md` (20 sections) | Truncate with an ellipsis or scroll; show the full title on hover |
@@ -126,14 +134,14 @@ Fixed in the initial import, and kept here as a record:
 | 14 | Clicking a diagram node never jumps to its section; the handler never attaches | Read ([features.md](features.md)) | — |
 | 15 | Frontmatter `abbreviations` do nothing | Read ([features.md](features.md)) | — |
 | 16 | Diagram overlay titles are guessed by regex: any source containing "pie" is titled "Pie Chart" | Read ([features.md](features.md)) | Use the diagram type Mermaid reports |
-| 17 | A frontmatter `status:` or `date:` with no value stops the whole document from rendering (`TypeError` in `renderFrontmatterDashboard`). When the file was opened by `?file=`, `loadFromUrl` swallows the error and shows **"File not found on server"** for a file that exists | Verified in Chrome: a 7-line file with an empty `status:` renders nothing, logs nothing, and shows the not-found prompt ([features.md](features.md#current-limitations)) | Coerce dashboard fields to strings, and move the dashboard into the guarded post-processing. Never report a render error as "not found" |
+| 17 | ~~A frontmatter `status:` or `date:` with no value stops the whole document from rendering, and `?file=` then shows "File not found" for a file that exists.~~ **Fixed.** Dashboard fields are coerced to text (`mdvFrontmatterText`), the dashboard build is wrapped, and `renderMarkdown` catches any render failure and shows an error block with the document's text — never a blank page, never "not found". | Was verified in Chrome. Now: `render-correctness.spec.mjs` renders `tests/fixtures/frontmatter-empty-fields.md` (empty `status:`/`date:`) and `frontmatter-odd-shapes.md`, and asserts a forced render failure shows the error block with the document text, not the not-found prompt. | Done |
 
 ### Robustness and polish
 
-- **A failed optional library disables its feature silently,** because the `if (window.X)` guards have no warning. Task lists were silently off this way until the initial import fixed a misspelled global.
-- **The file-plus button (writable open) throws outside Chromium** when no document is loaded, because `mdvPickFile` clicks `#mdFile` while the input's id is `fileInput`. The plain **Open** button is unaffected. Read (commenting.md, bug 14).
-- **The startup restore of the last-opened file can override an explicit `?file=` link** if the restore finishes after the fetch. Read.
-- **Every load logs a `favicon.ico` 404.**
+- ~~**A failed optional library disables its feature silently.**~~ **Fixed.** `MDV_LIBRARIES` in `js/render.js` lists every vendored global; a missing one produces one `console.warn` and a small dismissible notice naming the feature. Verified in `render-correctness.spec.mjs` by blocking four vendor files and asserting four warnings and one notice. Math then falls back to readable TeX source.
+- ~~**The file-plus button (writable open) throws outside Chromium**~~ **Fixed 2026-10-10:** `mdvPickFile` opens `#fileInput`. Test: "the file-plus button opens the file chooser in browsers without the File System Access API".
+- ~~**The startup restore of the last-opened file can override an explicit `?file=` link**~~ **Fixed 2026-10-10:** the restore never runs over a `?file=` link, `#demo`, a document already shown, or in the desktop app. Tests: "the startup restore never overrides an explicit ?file= link" (with a control that the restore still works without a link) and "the desktop app never restores the last browser file".
+- ~~**Every load logs a `favicon.ico` 404.**~~ **Fixed.** An inline SVG favicon (a `data:` URI `<link rel="icon">`); the browser never requests `favicon.ico`. Verified in `render-correctness.spec.mjs` (no favicon request; the icon decodes and draws).
 - **Several things are untested:** Firefox and Safari, a real save round-trip, read-aloud audio, and the GitHub extension after its sandbox change.
 
 Every doc has its own limitations section with more detail and lower-severity items.
@@ -210,8 +218,8 @@ The final review across all docs found these gaps:
   back; the outline, section chevrons, document images, search results and the read-aloud player
   have names and work from the keyboard; a hidden outline and the invisible `#` permalinks are out of
   the Tab order; headings are named by their own words (all covered by browser tests, in Chrome's
-  accessibility tree; no screen reader was used). Still open: names for the icon-only toolbar
-  buttons (they rely on `title`); keyboard and focus handling in the diagram overlay (its Expand
+  accessibility tree; no screen reader was used). ARIA labels on the icon-only toolbar buttons came with stream S (checked by
+  `render-correctness.spec.mjs`). Still open: keyboard and focus handling in the diagram overlay (its Expand
   button is invisible when focused, and the overlay neither takes nor returns the focus), the links
   panel (its off-screen entries are tab stops), the settings panel and the comments sidebar; a skip
   link past the outline and the minimap; the contrast of the selected search result.
@@ -225,11 +233,10 @@ The final review across all docs found these gaps:
 
 ## Suggested first session
 
-1. **Make comments safe** (known issues 1–6). Until then the README warns readers off using them on
-   important files.
-2. **Sanitize rendered HTML** (issue 7), keeping HTML comments intact.
-3. **Fix the rendering bugs readers hit first:** dollar signs (8), dark-theme diagrams (9), the copy
-   button (13). Each has a verified repro above.
+1. ~~**Make comments safe** (known issues 1–6).~~ **Done 2026-10-10**, with a browser test for each.
+2. ~~**Sanitize rendered HTML** (issue 7).~~ Done: DOMPurify + CSP + Mermaid strict (stream S), keeping HTML comments intact.
+3. **Fix the rendering bugs readers hit first:** ~~dollar signs (8)~~ done (stream S), dark-theme
+   diagrams (9), the copy button (13). Each has a verified repro above.
 4. **Decide the form factor** (above). It determines whether the code can be split into modules, and
    the inline script is already about 2,550 lines.
 5. **Build the renderer registry,** then add the first one or two visualizations from the

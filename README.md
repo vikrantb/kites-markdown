@@ -2,7 +2,7 @@
 
 A local-first markdown viewer built for **reading and understanding** markdown. Open a `.md` file
 and get clean typography, rendered diagrams and math, an outline you can navigate, read-aloud, and
-(experimental) threaded comments that live inside the file itself.
+threaded comments that live inside the file itself.
 
 It is one HTML file plus vendored libraries. There is no build step, no account, no server to run,
 and your documents never leave your machine.
@@ -34,18 +34,28 @@ width and font size, light, sepia and dark themes, in-document search, a panel l
 abbreviation tooltips, an image lightbox, and **read-aloud** (text-to-speech with per-section
 navigation). See [docs/features.md](docs/features.md).
 
-## Comments inside the file (experimental)
+## Comments inside the file
 
 Comments are threads attached to blocks of the document and stored **inside the markdown file
-itself** as HTML comments, which other renderers (GitHub, VS Code, Obsidian) hide. Existing threads
-load and display, and you can reply to and resolve them.
+itself** as HTML comments, which other renderers (GitHub, VS Code, Obsidian) hide. Right-click a
+paragraph, list item, table cell or heading (or select some text) to start a thread; reply, resolve,
+reopen and delete threads in the sidebar.
 
-> [!WARNING]
-> **Not ready for important files.** In the current version, starting a *new* thread does not save
-> its text, deleting a thread does not remove it, and several edge cases can drop comments or text
-> when the file is saved. Use it only on files under version control. These bugs are the first
-> item on the [roadmap](docs/roadmap.md#known-issues); details are in
-> [docs/commenting.md](docs/commenting.md#known-bugs-and-limitations).
+Saving is built never to lose text:
+
+- every change is saved into the file at once, through a single writer, and only into the version
+  of the file it was made from;
+- a file that another program changed after the viewer read it is **never overwritten**: the viewer
+  stops, says so, and keeps your comment until you reload, download your version, or overwrite;
+- a file you dropped or opened without a save location is linked only to that same file, picked in
+  an Open dialog and checked before the first save;
+- a document that merely mentions the comment format, text typed below the comments in another
+  editor, and a comment block that cannot be read are left exactly as they are;
+- a file that is not UTF-8 text is never rewritten (its comments are read-only), and a UTF-8 byte
+  order mark is kept.
+
+Each of these has a browser test. Details, including the on-disk format, are in
+[docs/commenting.md](docs/commenting.md).
 
 ## Quick start
 
@@ -69,7 +79,7 @@ comment format.
 Developed and tested in Chrome. Reading uses standard web APIs and should work in any current
 browser, but Firefox and Safari have not been tested yet. **Saving comments back into the file**
 uses the File System Access API, so it needs a Chromium-based browser (Chrome, Edge, Brave, Arc,
-Opera). Other browsers fall back to downloading a copy, currently on every change. Details:
+Opera). Other browsers save comments by downloading a copy when you press Cmd/Ctrl+S. Details:
 [docs/features.md](docs/features.md#browser-support).
 
 ## Privacy and security
@@ -77,12 +87,14 @@ Opera). Other browsers fall back to downloading a copy, currently on every chang
 Everything runs locally. The only network request the viewer makes itself is for the web fonts
 (Google Fonts). All libraries are vendored in `vendor/`. See [docs/dependencies.md](docs/dependencies.md).
 
-> [!CAUTION]
-> **Open only markdown files you trust.** Raw HTML in a document is rendered without
-> sanitization, so a malicious file can run script in the viewer, which includes using any
-> file-access permission you have granted it. A document can also load remote images, which tells
-> their server the file was opened. Sanitizing output is on the [roadmap](docs/roadmap.md#known-issues);
-> the details are in [docs/rendering.md](docs/rendering.md#security-posture).
+> [!NOTE]
+> **A document is treated as untrusted.** Everything rendered from it is sanitized with DOMPurify
+> (scripts, event handlers, `javascript:` links, frames and forms are removed), Mermaid diagrams run
+> at `securityLevel: 'strict'`, and a Content Security Policy refuses inline script as a second line
+> of defence. Nothing in a document can press the viewer's buttons, such as the ones that ask for
+> file access. A document can still load remote images, which tells their server the file was
+> opened. The details, and how each point is tested, are in
+> [docs/rendering.md](docs/rendering.md#security-posture).
 
 ## Also in this repository
 
