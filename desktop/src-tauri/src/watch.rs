@@ -3,7 +3,8 @@
 //!
 //! The watch is on the document's folder, filtered by name, because many editors save by writing a
 //! new file and renaming it over the old one, which a watch on the file itself would lose. Events are
-//! debounced (300 ms of quiet). The app's own saves are recognised by their fingerprint and not echoed.
+//! debounced (300 ms of quiet). The app's own saves are recognised (the registry remembers what it wrote)
+//! and not echoed.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -102,7 +103,9 @@ fn check(app: &AppHandle, label: &str, path: &PathBuf) {
     if !registry.is_news(label, &loaded.fingerprint) {
       return;
     }
-    registry.note_served(label, &loaded);
+    // Sent is not applied: the page may hold this version back while a comment is unsaved. That is safe,
+    // because a save names its own base version and the shell trusts nothing else.
+    registry.note_version(label, loaded.fingerprint);
   }
   let payload = DocumentPayload::new(path, &loaded, "changed");
   let _ = app.emit_to(EventTarget::webview_window(label), DOCUMENT_CHANGED, payload);

@@ -58,7 +58,7 @@ pub fn open_path(app: &AppHandle, raw: &Path, prefer: Option<String>) -> Result<
     }
     match fsio::read_document(&path) {
       Ok(loaded) => {
-        state.registry().note_served(&label, &loaded);
+        state.registry().note_version(&label, loaded.fingerprint);
         let payload = DocumentPayload::new(&path, &loaded, "opened");
         let _ = app.emit_to(EventTarget::webview_window(&label), OPEN_DOCUMENT, payload);
       }
@@ -120,7 +120,7 @@ pub fn reload(app: &AppHandle, label: &str) {
   let Some(path) = state.registry().path(label) else { return };
   match fsio::read_document(&path) {
     Ok(loaded) => {
-      state.registry().note_served(label, &loaded);
+      state.registry().note_version(label, loaded.fingerprint);
       let payload = DocumentPayload::new(&path, &loaded, "reload");
       let _ = app.emit_to(EventTarget::webview_window(label), watch::DOCUMENT_CHANGED, payload);
     }

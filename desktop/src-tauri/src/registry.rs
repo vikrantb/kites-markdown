@@ -1,23 +1,25 @@
-//! Which window shows which document, and what the shell knows about each document's versions.
+//! Which window shows which document.
 //!
-//! One window per document: a window label (`doc-<n>`) maps to at most one path, and a path is shown
-//! by at most one window. A window with no path shows the welcome screen.
+//! One window per document: a window label (`doc-<n>`) maps to at most one path, and a path is shown by
+//! at most one window. A window with no path shows the welcome screen, or Markdown pasted into it.
+//!
+//! The registry has no say in saving: a save names the version it was made from (see `fsio`). It only
+//! remembers the newest version each window was sent or wrote, so live reload does not send a page the
+//! version it already has.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::fsio::{Fingerprint, KnownVersions, Loaded};
+use crate::fsio::Fingerprint;
 use crate::paths::same_file;
-
-/// How many served versions to remember per document, for the conflict check.
-const SERVED_HISTORY: usize = 8;
 
 #[derive(Debug, Default, Clone)]
 pub struct WindowDocument {
   pub path: Option<PathBuf>,
-  pub had_bom: bool,
-  pub read_only: Option<String>,
-  pub known: KnownVersions,
+  /// The newest version sent to the page or written for it.
+  last_known: Option<Fingerprint>,
+  /// The window has no file but shows text (pasted), so a file opened later must not replace it.
+  holds_text: bool,
 }
 
 #[derive(Debug, Default)]
@@ -49,16 +51,26 @@ impl Registry {
     self.windows.remove(label)
   }
 
+  pub fn contains(&self, label: &str) -> bool {
+    self.windows.contains_key(label)
+  }
+
   pub fn path(&self, label: &str) -> Option<PathBuf> {
     self.windows.get(label).and_then(|w| w.path.clone())
   }
 
-  pub fn document(&self, label: &str) -> Option<&WindowDocument> {
-    self.windows.get(label)
+  /// A window that can take the next document: no file, and nothing pasted into it.
+  pub fn is_empty_window(&self, label: &str) -> bool {
+    self.windows.get(label).map(|w| w.path.is_none() && !w.holds_text).unwrap_or(false)
   }
 
-  pub fn is_empty_window(&self, label: &str) -> bool {
-    self.windows.get(label).map(|w| w.path.is_none()).unwrap_or(false)
+  /// Records that a window without a file shows text of its own.
+  pub fn note_holds_text(&mut self, label: &str) {
+    if let Some(w) = self.windows.get_mut(label) {
+      if w.path.is_none() {
+        w.holds_text = true;
+      }
+    }
   }
 
   /// The window that shows `path`, if any.
@@ -77,12 +89,7 @@ impl Registry {
         return Some(p.to_owned());
       }
     }
-    let mut empty: Vec<&String> = self
-      .windows
-      .iter()
-      .filter(|(_, w)| w.path.is_none())
-      .map(|(l, _)| l)
-      .collect();
+    let mut empty: Vec<&String> = self.windows.keys().filter(|l| self.is_empty_window(l)).collect();
     empty.sort();
     empty.first().map(|l| (*l).clone())
   }
@@ -93,60 +100,26 @@ impl Registry {
     v
   }
 
-  /// Records that the page in `label` was handed this version of its document.
-  pub fn note_served(&mut self, label: &str, loaded: &Loaded) {
+  /// Records a version the page in `label` was sent, or that the app wrote for it.
+  pub fn note_version(&mut self, label: &str, version: Fingerprint) {
     if let Some(w) = self.windows.get_mut(label) {
-      w.had_bom = loaded.had_bom;
-      w.read_only = loaded.read_only.clone();
-      w.known.served.push(loaded.fingerprint);
-      let excess = w.known.served.len().saturating_sub(SERVED_HISTORY);
-      w.known.served.drain(..excess);
+      w.last_known = Some(version);
     }
   }
 
-  /// Records a version this app wrote. The page has it too, since the page sent the text.
-  pub fn note_saved(&mut self, label: &str, fingerprint: Fingerprint) {
-    if let Some(w) = self.windows.get_mut(label) {
-      w.known.last_self_write = Some(fingerprint);
-      w.known.served.push(fingerprint);
-      let excess = w.known.served.len().saturating_sub(SERVED_HISTORY);
-      w.known.served.drain(..excess);
-    }
-  }
-
-  /// Whether `current` needs to be sent to the page: it is neither the app's own last write nor the
-  /// version the page already has.
+  /// Whether `current` needs to be sent to the page: it is not the newest version the window was sent or
+  /// wrote. A touch that only moves the time is news too (the page then updates only the time).
   pub fn is_news(&self, label: &str, current: &Fingerprint) -> bool {
-    let Some(w) = self.windows.get(label) else {
-      return false;
-    };
-    let own = w
-      .known
-      .last_self_write
-      .map(|s| s.same_bytes(current) && s.same_mtime(current.mtime_ms))
-      .unwrap_or(false);
-    let latest = w
-      .known
-      .served
-      .last()
-      .map(|s| s.same_bytes(current) && s.same_mtime(current.mtime_ms))
-      .unwrap_or(false);
-    !(own || latest)
+    match self.windows.get(label) {
+      Some(w) => !w.last_known.map(|k| k.same_read(current)).unwrap_or(false),
+      None => false,
+    }
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
-
-  fn loaded(text: &str, mtime: f64) -> Loaded {
-    Loaded {
-      text: text.into(),
-      fingerprint: Fingerprint::of(text.as_bytes(), mtime),
-      had_bom: false,
-      read_only: None,
-    }
-  }
 
   #[test]
   fn a_path_belongs_to_one_window() {
@@ -163,6 +136,22 @@ mod tests {
     assert_eq!(r.label_for(Path::new("/a/One.md")), None);
   }
 
+  #[test]
+  fn a_window_with_pasted_text_does_not_take_the_next_document() {
+    let mut r = Registry::default();
+    r.add_window("doc-1", None);
+    r.add_window("doc-2", None);
+    r.note_holds_text("doc-1");
+    assert!(!r.is_empty_window("doc-1"));
+    assert_eq!(r.empty_window(Some("doc-1")).as_deref(), Some("doc-2"));
+    r.note_holds_text("doc-2");
+    assert_eq!(r.empty_window(Some("doc-2")), None);
+    // A window that shows a file is not changed by the note.
+    r.add_window("doc-3", Some(PathBuf::from("/a/x.md")));
+    r.note_holds_text("doc-3");
+    assert_eq!(r.path("doc-3"), Some(PathBuf::from("/a/x.md")));
+  }
+
   #[cfg(any(target_os = "macos", windows))]
   #[test]
   fn paths_differing_only_in_case_are_the_same_document_on_case_insensitive_systems() {
@@ -172,28 +161,19 @@ mod tests {
   }
 
   #[test]
-  fn the_apps_own_write_and_the_version_the_page_has_are_not_news() {
+  fn the_version_a_window_has_is_not_news() {
     let mut r = Registry::default();
     r.add_window("doc-1", Some(PathBuf::from("/a/x.md")));
-    let v1 = loaded("one", 1000.0);
-    r.note_served("doc-1", &v1);
-    assert!(!r.is_news("doc-1", &v1.fingerprint));
+    let one = Fingerprint::of(b"one", 1000.0);
+    assert!(r.is_news("doc-1", &one), "nothing sent yet");
+    r.note_version("doc-1", one);
+    assert!(!r.is_news("doc-1", &one));
     let saved = Fingerprint::of(b"two", 2000.0);
-    r.note_saved("doc-1", saved);
+    r.note_version("doc-1", saved);
     assert!(!r.is_news("doc-1", &saved));
     // An external edit is news; so is a touch that only moves the time.
     assert!(r.is_news("doc-1", &Fingerprint::of(b"three", 3000.0)));
     assert!(r.is_news("doc-1", &Fingerprint::of(b"two", 4000.0)));
     assert!(!r.is_news("doc-404", &saved));
-  }
-
-  #[test]
-  fn served_history_is_bounded() {
-    let mut r = Registry::default();
-    r.add_window("doc-1", Some(PathBuf::from("/a/x.md")));
-    for i in 0..20 {
-      r.note_served("doc-1", &loaded(&format!("v{i}"), i as f64 * 10.0));
-    }
-    assert_eq!(r.document("doc-1").unwrap().known.served.len(), SERVED_HISTORY);
   }
 }

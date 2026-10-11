@@ -69,6 +69,7 @@ pub fn run() {
       host::mdv_initial_document,
       host::mdv_read_document,
       host::mdv_save_document,
+      host::mdv_window_holds_text,
       host::mdv_open_dialog,
       host::mdv_open_path,
       host::mdv_open_external,

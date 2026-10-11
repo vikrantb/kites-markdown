@@ -6,6 +6,7 @@ fn main() {
       "mdv_initial_document",
       "mdv_read_document",
       "mdv_save_document",
+      "mdv_window_holds_text",
       "mdv_open_dialog",
       "mdv_open_path",
       "mdv_open_external",

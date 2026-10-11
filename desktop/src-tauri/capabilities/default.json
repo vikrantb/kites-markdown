@@ -9,6 +9,7 @@
     "allow-mdv-initial-document",
     "allow-mdv-read-document",
     "allow-mdv-save-document",
+    "allow-mdv-window-holds-text",
     "allow-mdv-open-dialog",
     "allow-mdv-open-path",
     "allow-mdv-open-external",
