@@ -250,6 +250,37 @@ test('no surface lets a document press the viewer\'s buttons', async ({ page, co
   expect(problems, problems.join('\n')).toEqual([]);
 });
 
+test('a document cannot draw over the viewer\'s controls', async ({ page }) => {
+  // Style attributes are kept (KaTeX needs them), so a document can position an element anywhere,
+  // above everything it contains. #mdBody isolates its stacking, so the viewer's own fixed controls
+  // stay on top and stay clickable.
+  const problems = collectProblems(page);
+  await openDocument(page, 'tests/fixtures/cover.md');
+  await page.evaluate(() => mdvToggleSidebar(true));
+  await expect(page.locator('#mdvSidebar')).toHaveClass(/open/);
+  await page.waitForTimeout(600);   // the sidebar slides in
+  const hits = await page.evaluate(() => {
+    const hit = (el) => {
+      const b = el.getBoundingClientRect();
+      const top = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+      return top === el || el.contains(top) ? 'control' : (top && (top.id || top.className || top.tagName));
+    };
+    const content = document.getElementById('content').getBoundingClientRect();
+    const middle = document.elementFromPoint(content.x + 40, content.y + content.height / 2);
+    return {
+      // Positive control: the cover is rendered and is what a click in the document area reaches.
+      documentArea: middle && middle.id,
+      openFile: hit(document.querySelector('.toolbar button[title="Open file"]')),
+      theme: hit(document.querySelector('.dropdown-wrap > button')),
+      outline: hit(document.querySelector('#tocList .toc-link')),
+      scrollTop: hit(document.getElementById('fabUp')),
+      closeComments: hit(document.querySelector('#mdvSidebar .mdv-sidebar-close')),
+    };
+  });
+  expect(hits).toEqual({ documentArea: 'cover', openFile: 'control', theme: 'control', outline: 'control', scrollTop: 'control', closeComments: 'control' });
+  expect(problems, problems.join('\n')).toEqual([]);
+});
+
 test('comments next to markup characters survive the sanitizer, and so does the text around them', async ({ page }) => {
   // DOMPurify (SAFE_FOR_XML) removes a comment holding "<" plus a letter, digit or "/", and an element
   // whose only children are text and comments when that text holds one: "if a<b <!-- note -->".

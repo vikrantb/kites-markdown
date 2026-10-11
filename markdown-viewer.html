@@ -252,7 +252,9 @@
           <div class="paste-hint">Paste markdown with <kbd>Ctrl</kbd>+<kbd>V</kbd></div>
         </div>
       </div>
-      <article class="md-body" id="mdBody" data-mdv-document style="display:none"></article>
+      <!-- isolation: the document's own z-index values stay inside #mdBody, so nothing it positions
+           (style attributes are kept for KaTeX) can cover the viewer's fixed controls. -->
+      <article class="md-body" id="mdBody" data-mdv-document style="display:none;isolation:isolate"></article>
     </div>
   </div>
 </div>
