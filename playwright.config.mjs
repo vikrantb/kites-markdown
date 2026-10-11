@@ -1,8 +1,14 @@
 // Browser tests for the viewer. Run: pnpm install && pnpm test
 // Locally they use the installed Google Chrome; CI installs Playwright's Chromium.
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from '@playwright/test';
 
-const PORT = 4173;
+// One port per checkout. With a fixed port and reuseExistingServer, a second worktree testing at the same time
+// reused the first one's server and silently tested the other tree's code. MDV_TEST_PORT overrides.
+const ROOT = fileURLToPath(new URL('.', import.meta.url));
+const PORT = Number(process.env.MDV_TEST_PORT)
+  || 4173 + (parseInt(createHash('sha1').update(ROOT).digest('hex').slice(0, 6), 16) % 2000);
 export default defineConfig({
   testDir: 'tests/e2e',
   timeout: 90_000,
