@@ -136,6 +136,7 @@ body { margin: 0; background: ${page.backgroundColor}; color: ${cs.color}; }
 .md-body { font-family: ${cs.fontFamily}; font-size: ${cs.fontSize}; line-height: ${cs.lineHeight}; overflow-wrap: break-word; }
 .md-body h1, .md-body h2, .md-body h3, .md-body h4, .md-body h5, .md-body h6 { line-height: 1.25; margin: 1.8em 0 0.6em; }
 .md-body h1 { margin-top: 0; }
+.md-body a { color: ${token('--text-link', '#3D4FC2')}; }
 .md-body .header-anchor { margin-left: 0.3em; color: inherit; text-decoration: none; opacity: 0; }
 .md-body :is(h1, h2, h3, h4, h5, h6):hover .header-anchor, .md-body .header-anchor:focus-visible { opacity: 0.5; }
 .md-body p, .md-body ul, .md-body ol, .md-body dl { margin: 0 0 1.1em; }

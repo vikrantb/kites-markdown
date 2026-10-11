@@ -326,7 +326,8 @@ test('a paragraph before a tall diagram, code block or table never costs a page;
     table: '| Item | Owner | State |\n|---|---|---|\n' + Array.from({ length: 34 }, (_, i) => `| Row ${i} of the release table | someone | in progress |`).join('\n'),
   };
   // The same document with every "keep this paragraph with what follows" rule switched off: the rule may move a line,
-  // never add a sheet. (Measured before this change: 1 to 2 more pages in 28 of these 30 layouts.)
+  // never add a sheet. (Measured before this change, over 10 layouts each: 1 or 2 more sheets after every tall diagram, 1 more
+  // after a long code block or table in 8 of 10.)
   const without = '@media print { .md-body p { break-after: auto !important; } }';
   for (const [kind, block] of Object.entries(tall)) {
     for (const lead of [1, 4]) {
@@ -344,6 +345,21 @@ test('a paragraph before a tall diagram, code block or table never costs a page;
   await renderSource(page, '# Steps\n\nThe steps:\n\n1. One\n2. Two\n');
   await page.emulateMedia({ media: 'print' });
   expect(await page.evaluate(() => getComputedStyle(document.querySelector('#mdBody ol').previousElementSibling).breakAfter)).toBe('avoid');
+});
+
+test('a diagram taller than a page prints smaller, whole on one page, on A4 and on US Letter', async ({ page }) => {
+  await openDoc(page, SECTIONS);
+  const pagesOf = (pdf) => (pdf.toString('latin1').match(/\/Type\s*\/Page(?!s)/g) || []).length;
+  const chain = Array.from({ length: 30 }, (_, i) => `    S${i}[Step ${i}] --> S${i + 1}[Step ${i + 1}]`).join('\n');
+  await renderSource(page, '```mermaid\nflowchart TD\n' + chain + '\n```\n');
+  await waitForLayoutSettled(page);
+  // The instrument: drawn at its own size, this diagram is taller than any page.
+  expect(await page.evaluate(() => document.querySelector('#mdBody .mermaid > svg').viewBox.baseVal.height * 25.4 / 96)).toBeGreaterThan(300);
+  await page.emulateMedia({ media: 'print' });
+  expect(await page.evaluate(() => document.querySelector('#mdBody .mermaid > svg').getBoundingClientRect().height * 25.4 / 96)).toBeLessThanOrEqual(200.5);
+  await page.emulateMedia({ media: null });
+  expect(pagesOf(await page.pdf({ format: 'A4' }))).toBe(1);
+  expect(pagesOf(await page.pdf({ format: 'Letter' }))).toBe(1);
 });
 
 test('Print / Save as PDF from the menu draws diagrams in the light palette for the paper, then gives the theme back', async ({ page }) => {

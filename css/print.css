@@ -48,8 +48,8 @@
   .md-body p, .md-body li { orphans: 3; widows: 3; }
   /* A line that introduces a block ("Steps:") stays on the page of the block, for blocks that are short or can break.
      Not before a diagram, a code block or a table: those are kept whole and can be as tall as a page, and the
-     paragraph held with one was pushed after it or split around a near-blank page (a handoff printed 13 pages, not
-     12; tests/e2e/export.spec.mjs). */
+     paragraph held with one was pushed after it or split around a near-blank page: 1 or 2 more sheets in 26 of 30
+     measured layouts (tests/e2e/export.spec.mjs). */
   .md-body p:has(+ .callout, + .katex-display, + ul, + ol) { break-after: avoid; }
 
   /* Whole when they fit on a page. */
@@ -63,6 +63,10 @@
   .md-body table { max-width: 100% !important; }
   .md-body th, .md-body td { white-space: normal !important; overflow-wrap: anywhere; }
   .mermaid-wrapper { overflow: visible !important; }
+  /* A diagram taller than a page is drawn smaller, to print whole on one page: cut between two pages it lost the
+     nodes on the cut and left the page before it nearly blank. 200 mm leaves room for its card and a heading on A4
+     and on US Letter; a shorter diagram keeps its size. */
+  .mermaid.rendered > svg { max-height: 200mm; }
   .md-body .katex-display { overflow: visible !important; }
 
   /* A web link's address, after its words. The icon the screen draws in this place is turned off (viewer.css). */

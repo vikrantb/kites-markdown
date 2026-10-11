@@ -40,7 +40,7 @@ function mdvCopySectionLink(heading) {
   const name = heading ? mdvHeadingText(heading) : '';
   const url = mdvSectionUrl(id);
   if (!url) {
-    mdvToast('No link copied: this page’s address does not open this document. Open it by its ?file= address (over http) to link to its sections.', 'error');
+    mdvToast('No link copied: this page’s address does not open this document. Open it by its ?file= address (over http) to link to its sections.');
     return;
   }
   mdvCopyText(url).then(
