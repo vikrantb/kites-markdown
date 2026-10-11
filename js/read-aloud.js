@@ -42,13 +42,16 @@ const TTS_TABLE_LIMIT = 300;
 
 // The words a listener should hear for a block: its text without the viewer's controls and copies
 // (see mdvExcludedFromText), a pause between list items, rows and paragraphs, images by their alt
-// text, and each formula once.
+// text, and each formula once. A diagram, table or code block inside it (in a list item, a quote, a
+// callout, <details>) is read as it is at the top level (ttsSpecialBlock).
 function mdvSpeakableText(el) {
   const parts = [];
   (function walk(node) {
     for (const c of node.childNodes) {
       if (c.nodeType === 3) { parts.push(c.nodeValue.replace(/\s+/g, ' ')); continue; } // source line breaks are spaces
       if (c.nodeType !== 1 || mdvExcludedFromText(c)) continue;
+      const special = ttsSpecialBlock(c);
+      if (special) { if (special.text) parts.push(`\n${special.text}\n`); continue; }
       if (c.tagName === 'IMG') { if (c.alt) parts.push(`\nImage: ${c.alt}.\n`); continue; }
       if (c.getAttribute('role') === 'img') { const l = c.getAttribute('aria-label'); if (l) parts.push(`\nImage: ${l}.\n`); continue; }
       if (c.tagName === 'BR') { parts.push('\n'); continue; }
@@ -62,6 +65,26 @@ function mdvSpeakableText(el) {
     .replace(/ *, *(?=\n|$)/g, '')   // no comma before a phrase end (the last cell of a row)
     .replace(/\s*\n\s*/g, '\n')
     .trim();
+}
+
+// The blocks that are not read as their text, wherever they sit: at the top level, in a section, or
+// nested in a list item, a quote, a callout or <details>. A diagram is read as its narration or skipped
+// (its SVG holds a stylesheet and node labels, not prose); a table as its narration or by rows; a code
+// block as "Code block in python." Returns null for every other element.
+function ttsSpecialBlock(el) {
+  if (el.classList.contains('mermaid-wrapper')) {
+    const narr = findNarrationFor(el);
+    return narr ? { type: 'narration', text: narr } : { type: 'skip', text: '' };
+  }
+  if (el.tagName === 'TABLE') {
+    const narr = findNarrationFor(el);
+    return narr ? { type: 'narration', text: narr } : { type: 'table', text: ttsTableText(el) };
+  }
+  if (el.tagName === 'PRE') {
+    const lang = (el.querySelector('.code-header span') || {}).textContent;
+    return { type: 'code', text: lang && lang !== 'text' ? `Code block in ${lang}.` : 'Code block.' };
+  }
+  return null;
 }
 
 // A table is read as its rows, cells separated by commas, up to about 300 characters, then how many
@@ -124,18 +147,9 @@ function ttsBuildSections() {
         items.push({ type: 'heading', text: mdvHeadingText(child), element: child });
       } else if (child.classList.contains('section-content')) {
         items.push(...extractText(child));
-      } else if (child.classList.contains('mermaid-wrapper')) {
-        const narr = findNarrationFor(child);
-        if (narr) items.push({ type: 'narration', text: narr, element: child });
-        else items.push({ type: 'skip', text: '[diagram]', element: child });
-      } else if (child.tagName === 'PRE') {
-        const lang = (child.querySelector('.code-header span') || {}).textContent;
-        items.push({ type: 'code', text: lang && lang !== 'text' ? `Code block in ${lang}.` : 'Code block.', element: child });
-      } else if (child.tagName === 'TABLE') {
-        const narr = findNarrationFor(child);
-        if (narr) items.push({ type: 'narration', text: narr, element: child });
-        else items.push({ type: 'table', text: ttsTableText(child), element: child });
       } else {
+        const special = ttsSpecialBlock(child); // a diagram, table or code block
+        if (special) { items.push({ ...special, element: child }); continue; }
         const t = mdvSpeakableText(child);
         if (t.length > 0) items.push({ type: 'text', text: t, element: child });
       }

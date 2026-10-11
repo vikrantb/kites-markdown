@@ -2,16 +2,21 @@
 // Readable text: what a reader sees, without the viewer's own additions
 // ============================================
 // The viewer adds controls and presentation copies inside the document: fold chevrons, the "#"
-// permalink, comment chips, the code header, the diagram expand button, the section minimap, KaTeX's
-// aria-hidden HTML copy of every formula and its TeX annotation. None of it is the author's words, so
-// headings, search, the outline and read-aloud all leave it out.
+// permalink, comment chips, the code header, the diagram expand button, the section minimap, a link
+// card's icon, address line and type badge, KaTeX's aria-hidden HTML copy of every formula and its TeX
+// annotation. None of it is the author's words, so headings, search, the outline and read-aloud all leave
+// it out. Search and read-aloud read the page after every render pass has run (they are built on first
+// use), so everything a later pass adds has to be listed here.
 // Checked for every element of every block on every render, so it is a tag and class lookup, not a
-// selector match.
-const MDV_NOT_TEXT_TAGS = new Set(['BUTTON', 'SCRIPT', 'STYLE', 'TEMPLATE', 'annotation']);
-const MDV_NOT_TEXT_CLASSES = ['section-toggle', 'header-anchor', 'mdv-chip', 'code-header', 'diagram-expand-btn', 'section-minimap'];
+// selector match. Tags are compared by localName, which is lower case for HTML, SVG and MathML alike;
+// tagName is upper case only for HTML, so the SVG <style> inside every Mermaid diagram slipped past an
+// upper-case 'STYLE', and a diagram nested in a list or <details> was read aloud as its stylesheet.
+const MDV_NOT_TEXT_TAGS = new Set(['button', 'script', 'style', 'template', 'annotation']);
+const MDV_NOT_TEXT_CLASSES = ['section-toggle', 'header-anchor', 'mdv-chip', 'code-header', 'diagram-expand-btn', 'section-minimap',
+  'link-chip-icon', 'link-chip-url', 'link-chip-badge'];
 
 function mdvExcludedFromText(el) {
-  if (MDV_NOT_TEXT_TAGS.has(el.tagName) || el.getAttribute('aria-hidden') === 'true') return true;
+  if (MDV_NOT_TEXT_TAGS.has(el.localName) || el.getAttribute('aria-hidden') === 'true') return true;
   const cl = el.classList;
   if (cl.length) for (const c of MDV_NOT_TEXT_CLASSES) if (cl.contains(c)) return true;
   return false;
@@ -365,9 +370,10 @@ document.addEventListener('keydown', (e) => {
 // Search
 // ============================================
 // Indexed: every heading, and the readable text of each block (paragraphs, list items, table cells,
-// definitions, quotes, code). A block's entry holds only its own words; blocks nested in it (a nested
-// list, a paragraph in a quote) have their own entries, so one sentence is never listed twice. Diagram
-// source (Mermaid syntax) is left out: it is markup, not prose.
+// definitions, quotes, code, link cards). A block's entry holds only its own words; blocks nested in it
+// (a nested list, a paragraph in a quote) have their own entries, so one sentence is never listed twice.
+// Diagram source (Mermaid syntax) is left out: it is markup, not prose. A link card (links.js turns a
+// paragraph holding only a link into one, after this index's paragraph is gone) is indexed by its title.
 const MDV_SEARCH_BLOCKS = new Set(['P', 'LI', 'TD', 'TH', 'DT', 'DD', 'BLOCKQUOTE', 'PRE', 'FIGCAPTION', 'SUMMARY']);
 const MDV_SEARCH_LIMIT = 20;
 
@@ -407,7 +413,7 @@ function mdvIndexDocument() {
     if (/^H[1-6]$/.test(el.tagName)) {
       current = { id: el.id, text: mdvHeadingText(el) };
       headings.push({ type: 'heading', text: current.text, lower: current.text.toLowerCase(), id: el.id, level: parseInt(el.tagName[1]), element: el });
-    } else if (MDV_SEARCH_BLOCKS.has(el.tagName)) {
+    } else if (MDV_SEARCH_BLOCKS.has(el.tagName) || el.classList.contains('link-chip')) {
       const text = mdvOwnText(el);
       if (text.length >= 2) blocks.push({ type: 'content', text, lower: text.toLowerCase(), headingId: current && current.id, headingText: current ? current.text : '', element: el });
     }

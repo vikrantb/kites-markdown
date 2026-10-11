@@ -128,6 +128,53 @@ test('narration before a diagram or a table under a heading is read aloud (issue
   expect(errors).toEqual([]);
 });
 
+// A narration, and a diagram, table or code block, inside every kind of container. The diagram labels are
+// star names, so a label read aloud is easy to spot.
+const CONTAINERS = [
+  '# Narrations', '',
+  '<!-- narrate: N1 top-level diagram. -->', '', '```mermaid', 'graph LR', '  A1[Kaus] --> B1[Lesath]', '```', '',
+  '<!-- narrate: N2 top-level table. -->', '', '| A | B |', '|---|---|', '| 1 | 2 |', '',
+  '## Containers', '',
+  '<details><summary>Architecture</summary>', '', '<!-- narrate: N3 diagram in details. -->', '',
+  '```mermaid', 'graph LR', '  K3[Pyxis] --> L3[Rigel]', '```', '', '</details>', '',
+  '<details><summary>Owners</summary>', '', '<!-- narrate: N4 table in details. -->', '',
+  '| Owner | Area |', '|---|---|', '| Ana | Storage |', '', '</details>', '',
+  '- A list item with a diagram:', '', '  <!-- narrate: N5 diagram in a list item. -->', '',
+  '  ```mermaid', '  graph LR', '    P5[Sirius] --> R5[Tarazed]', '  ```', '',
+  '- A list item with a table:', '', '  <!-- narrate: N6 table in a list item. -->', '',
+  '  | X | Y |', '  |---|---|', '  | 7 | 8 |', '',
+  '> [!NOTE]', '> A callout with a table:', '>', '> <!-- narrate: N7 table in a callout. -->', '>',
+  '> | Key | Value |', '> |---|---|', '> | kk | vv |', '',
+  '> A quote with a diagram:', '>', '> <!-- narrate: N8 diagram in a quote. -->', '>',
+  '> ```mermaid', '> graph LR', '>   S8[Vega] --> T8[Wezen]', '> ```', '',
+  '1. Outer item', '   - Inner item with a diagram:', '', '     <!-- narrate: N9 diagram in a nested list. -->', '',
+  '     ```mermaid', '     graph LR', '       U9[Alnair] --> V9[Yildun]', '     ```', '',
+  '## Unnarrated', '',
+  '<details><summary>Plain diagram</summary>', '', '```mermaid', 'graph LR', '  X10[Zaniah] --> Y10[Mirach]', '```', '', '</details>', '',
+  '- Code in a list:', '', '  ```json', '  { "nested": true }', '  ```', '',
+  'An inline icon <svg width="12" height="12"><style>.dot { fill: tomato; }</style><circle class="dot" cx="6" cy="6" r="5"/></svg> inside a sentence.', '',
+].join('\n');
+
+test('a narration is read wherever it is, and a nested diagram is never read as its stylesheet or labels', async ({ page }) => {
+  const errors = await openViewer(page);
+  await render(page, CONTAINERS);
+  // The player is opened after Mermaid has drawn every diagram: the SVGs hold a <style> and the labels.
+  await page.waitForFunction(() => [...document.querySelectorAll('#mdBody .mermaid')].every(m => m.querySelector('svg')), null, { timeout: 30_000 });
+  const all = await page.evaluate(() => { ttsToggle(); return ttsSections.map(s => s.items.join('\n')).join('\n'); });
+  for (let i = 1; i <= 9; i++) expect(all, `narration N${i}`).toContain(`N${i} `);
+  for (const label of ['Kaus', 'Pyxis', 'Rigel', 'Sirius', 'Vega', 'Alnair', 'Zaniah', 'Mirach']) expect(all).not.toContain(label);
+  expect(all).not.toMatch(/font-family|#mermaid|fill:/);
+  // A narrated table is not also read cell by cell; a nested code block is announced, not spelled out.
+  for (const cells of ['Ana, Storage', '7, 8', 'kk, vv']) expect(all).not.toContain(cells);
+  expect(all).toContain('Code block in json.');
+  expect(all).not.toContain('"nested"');
+  // An SVG's <style> is not prose either, in read-aloud or in search.
+  expect(all).toContain('An inline icon inside a sentence.');
+  expect(all).not.toContain('tomato');
+  expect(await page.evaluate(() => mdvSearchIndex().some(e => e.lower.includes('tomato')))).toBe(false);
+  expect(errors).toEqual([]);
+});
+
 test('the kitchen sink narration under "Sync flow" is found', async ({ page }) => {
   await openViewer(page);
   await page.goto('markdown-viewer.html?file=samples/kitchen-sink.md');
@@ -549,6 +596,18 @@ test('what is read: the frontmatter dashboard as phrases, and each formula once'
   expect(intro).toContain('In progress.\n2026-10-04.\n4 Open questions.');
   expect(intro).toContain('Energy is E=mc2 here.');
   expect(intro.split('E=mc').length - 1).toBe(1);
+});
+
+test('a link card is read and found by its title, without its icon, address line or badge', async ({ page }) => {
+  await openViewer(page);
+  await render(page, '# Links\n\n## Tools\n\n[The marked parser](https://github.com/markedjs/marked)\n\nAfter.\n');
+  await expect(page.locator('#mdBody .link-chip')).toHaveCount(1);
+  const tools = await page.evaluate(() => { ttsToggle(); return ttsSections.find(s => s.heading === 'Tools').items; });
+  expect(tools).toEqual(['Tools.', 'The marked parser', 'After.']);
+  await page.keyboard.press('Control+KeyK');
+  await page.keyboard.type('marked parser');
+  await expect(page.locator('#mdvSearchStatus')).toHaveText('1 match');
+  await expect(page.locator('#searchResults .search-result-ctx')).toHaveText('The marked parser');
 });
 
 test('without speech support the player says so instead of throwing', async ({ page }) => {
