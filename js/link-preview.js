@@ -6,18 +6,25 @@
 // name), its first paragraph, and where it is. Which links get one:
 //   - with a folder open: a link to a Markdown file in that folder (browser and desktop app);
 //   - in the desktop app without one: any link to a Markdown file, which the shell can read.
+// A link to a section (#risks) previews that section: its heading and its first paragraph.
 // The card replaces the link's small address tooltip while it shows, and goes away when the pointer leaves the
-// link and the card, on any key, on a scroll, or on a click.
+// link and the card, on a key that is not a modifier (Shift, Ctrl, Cmd and Alt alone leave it, so a Ctrl-click
+// still sees it), on a scroll, or on a click.
 //
 // The other document is untrusted input like any document: its title and paragraph go through markdown-it and the
-// render path's DOMPurify configuration (mdvPreviewSanitize), the card is a [data-mdv-document] container, its
-// links become text and its images their alt text (they would resolve against the wrong folder here), and nothing
-// in it loads from the network. Only the block structure of the other file is parsed (md.block.parse).
+// render path's DOMPurify instance and configuration, made stricter (mdvPreviewSanitize), the card is a
+// [data-mdv-document] container, its links become text, its images their alt text (they would resolve against the
+// wrong folder here) and its math its TeX source, and nothing in it loads anything: no element that fetches, no
+// style attribute, no attribute that holds an address. Resting on a link must not tell anyone it was rested on.
+// Only the block structure of the other file is parsed (md.block.parse).
+//
+// What a card shows is kept for the file as it was when read, and used again only while the file's size and time
+// are the same (the desktop app reads the file again each time: the shell has no cheaper look).
 
 const MDV_PREVIEW_DELAY_MS = 380;
 const MDV_PREVIEW_HIDE_MS = 180;
-const MDV_PREVIEW_CACHE_MS = 10000;
 const MDV_PREVIEW_MAX_SOURCE = 1600; // characters of the paragraph's source rendered
+const MDV_PREVIEW_MODIFIER_KEYS = new Set(['Shift', 'Control', 'Meta', 'Alt', 'AltGraph', 'CapsLock', 'Fn', 'OS']);
 
 const mdvPreview = { card: null, link: null, showTimer: 0, hideTimer: 0, seq: 0, cache: new Map() };
 
@@ -36,12 +43,22 @@ function mdvPreviewCard() {
   return card;
 }
 
-// Where a link leads, when it gets a preview: {path, label, read()} or null.
+// The #fragment of a link, decoded, or ''.
+function mdvPreviewFragment(href) {
+  const i = href.indexOf('#');
+  if (i < 0) return '';
+  const raw = href.slice(i + 1);
+  try { return decodeURIComponent(raw); } catch (e) { return raw; }
+}
+
+// Where a link leads, when it gets a preview: {path, label, fragment, read(), stat()} or null. stat (a browser
+// file) gives the file's size and time without reading it.
 function mdvPreviewTarget(a) {
   const href = a.getAttribute('href');
   if (!href || href.startsWith('#') || a.classList.contains('header-anchor')) return null;
   const s = mdvFolderState;
   const shown = s.shown && s.shown.path;
+  const fragment = mdvPreviewFragment(href);
   if (s.kind) {
     // A relative link in a browser needs the document's own place in the folder to resolve against.
     const from = s.kind === 'desktop' ? shown : s.current;
@@ -50,7 +67,11 @@ function mdvPreviewTarget(a) {
       if (path && (s.kind === 'desktop' || s.byPath.has(path))) {
         if (shown && mdvFolderSamePath(path, shown)) return null;
         const entry = s.byPath.get(path) || s.entries.find((e) => mdvFolderSamePath(e.path, path));
-        return { path, label: entry ? entry.rel : mdvFolderBaseName(path), read: () => mdvFolderRead(path) };
+        const handle = entry && entry.handle;
+        return {
+          path, fragment, label: entry ? entry.rel : mdvFolderBaseName(path), read: () => mdvFolderRead(path),
+          stat: handle ? () => handle.getFile().then((f) => ({ size: f.size, mtimeMs: f.lastModified })) : null,
+        };
       }
     }
   }
@@ -78,26 +99,64 @@ function mdvPreviewTarget(a) {
   return {
     path: abs,
     label,
+    fragment,
     read: () => window.mdvHost.readDocument(abs).then((d) => { if (!d) throw { code: 'not-found', message: 'not found' }; return d; }),
+    stat: null,
   };
 }
 
-// The title and first paragraph of a document's source. Only the block structure is parsed.
-function mdvPreviewExtract(text, fallbackTitle) {
+// The ids the render gives a document's headings (core.js: markdown-it-anchor with its slugify), by token index:
+// the heading's text and code, lower-cased, every run of other characters a '-'; a repeated one gets -1, -2, …
+function mdvPreviewHeadingIds(tokens) {
+  const slugify = (s) => s.toLowerCase().replace(/[^\w]+/g, '-').replace(/^-|-$/g, '');
+  const used = new Set();
+  const ids = new Map();
+  for (let i = 0; i < tokens.length; i++) {
+    const inline = tokens[i + 1];
+    if (tokens[i].type !== 'heading_open' || !inline || inline.type !== 'inline') continue;
+    const parsed = md.parseInline(inline.content, {});
+    const children = (parsed[0] && parsed[0].children) || [];
+    const base = slugify(children.filter((c) => c.type === 'text' || c.type === 'code_inline').map((c) => c.content).join(''));
+    let id = base;
+    for (let n = 1; used.has(id); n++) id = base + '-' + n;
+    used.add(id);
+    ids.set(i, id);
+  }
+  return ids;
+}
+
+// The title and first paragraph of a document's source, or with a fragment that names one of its headings, that
+// section's heading and its first paragraph. Only the block structure is parsed.
+function mdvPreviewExtract(text, fallbackTitle, fragment) {
   const parsed = typeof parseFrontmatter === 'function' ? parseFrontmatter(String(text)) : { body: String(text), meta: null };
   const body = parsed.body.replace(/\r\n?/g, '\n');
   const tokens = [];
   md.block.parse(body, md, {}, tokens);
   let title = parsed.meta && typeof parsed.meta.title === 'string' && parsed.meta.title.trim() ? parsed.meta.title.trim() : null;
   let titleSource = null;
+  // The tokens to take the paragraph from: the whole document, or the section the fragment names (up to the next
+  // heading of its level or above).
+  let from = 0, to = tokens.length, sectionSource = null;
+  if (fragment) {
+    for (const [i, id] of mdvPreviewHeadingIds(tokens)) {
+      if (id !== fragment && id !== fragment.toLowerCase()) continue;
+      sectionSource = tokens[i + 1].content;
+      from = i + 3;
+      const level = tokens[i].tag;
+      const next = tokens.findIndex((t, k) => k >= from && t.type === 'heading_open' && t.tag <= level);
+      if (next >= 0) to = next;
+      break;
+    }
+  }
   const paragraphs = [];
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     const inline = tokens[i + 1];
     if (!title && !titleSource && t.type === 'heading_open' && inline && inline.type === 'inline') titleSource = inline.content;
-    if (t.type === 'paragraph_open' && inline && inline.type === 'inline' && inline.content.trim()) paragraphs.push({ level: t.level, source: inline.content });
+    if (i >= from && i < to && t.type === 'paragraph_open' && inline && inline.type === 'inline' && inline.content.trim()) paragraphs.push({ level: t.level, source: inline.content });
   }
-  if (!title && titleSource) title = mdvPreviewInline(titleSource).textContent.replace(/\s+/g, ' ').trim();
+  const words = (source) => mdvPreviewInline(source).textContent.replace(/\s+/g, ' ').trim();
+  if (!title && titleSource) title = words(titleSource);
   // The first top-level paragraph that has words; else the first anywhere (a document that opens with a callout).
   paragraphs.sort((a, b) => (a.level === 0 ? 0 : 1) - (b.level === 0 ? 0 : 1));
   let paragraph = null;
@@ -105,31 +164,45 @@ function mdvPreviewExtract(text, fallbackTitle) {
     const frag = mdvPreviewParagraph(p.source);
     if (frag && frag.textContent.trim()) { paragraph = frag; break; }
   }
-  return { title: title || fallbackTitle, paragraph };
+  const section = sectionSource != null ? words(sectionSource) : null;
+  return { title: section || title || fallbackTitle, documentTitle: section ? title || fallbackTitle : null, paragraph };
 }
 
 // Elements a preview never holds, besides what every render drops: nothing in a preview loads anything (an image
-// path would resolve against the wrong folder here anyway) or takes input.
+// path would resolve against the wrong folder here anyway) or takes input. SVG and MathML go too: their attributes
+// can reach other files, and a preview has no use for them (math shows as its TeX source, mdvPreviewInline).
 const MDV_PREVIEW_FORBID = ['img', 'picture', 'source', 'video', 'audio', 'track', 'image', 'use', 'feimage',
-  'input', 'button', 'select', 'textarea'];
+  'input', 'button', 'select', 'textarea', 'svg', 'math'];
+// Attributes a preview never holds: each can load something (a style attribute through url() or image-set(), a
+// table's background, an address), and resting on a link must fetch nothing.
+const MDV_PREVIEW_FORBID_ATTR = ['style', 'background', 'src', 'srcset', 'href', 'xlink:href', 'poster', 'ping',
+  'action', 'formaction', 'data', 'lowsrc', 'dynsrc'];
 
 // The render path's sanitizer (render.js: the same DOMPurify instance and configuration as every document), with
-// those elements removed before any of them is created in the page. Without DOMPurify, markdown-it already runs
-// with raw HTML off (render.js), and mdvSanitize returns its output.
+// those elements and attributes removed before any of them is created in the page. Without DOMPurify, markdown-it
+// already runs with raw HTML off (render.js), and mdvSanitize returns its output.
 function mdvPreviewSanitize(html) {
   if (typeof mdvPurifier === 'undefined' || !mdvPurifier) return mdvSanitize(html);
   return mdvPurifier.sanitize(html, Object.assign({}, MDV_SANITIZE_CONFIG, {
     FORBID_TAGS: MDV_SANITIZE_CONFIG.FORBID_TAGS.concat(MDV_PREVIEW_FORBID),
+    FORBID_ATTR: MDV_SANITIZE_CONFIG.FORBID_ATTR.concat(MDV_PREVIEW_FORBID_ATTR),
   }));
 }
 
-// Inline Markdown through the render path: markdown-it (an image becomes its alt text), then the sanitizer.
+// Inline Markdown through the render path: markdown-it (an image becomes its alt text, math its TeX source as
+// code), then the sanitizer.
 function mdvPreviewInline(source, wrap) {
   const env = {};
   const tokens = md.parseInline(source, env);
   for (const t of tokens) {
     if (!t.children) continue;
     t.children = t.children.flatMap((c) => {
+      if (c.type === 'math_inline' || c.type === 'math_inline_display') {
+        const code = new t.constructor('code_inline', 'code', 0);
+        const mark = c.type === 'math_inline' ? '$' : '$$';
+        code.content = mark + c.content + mark;
+        return [code];
+      }
       if (c.type !== 'image') return [c];
       const text = new t.constructor('text', '', 0);
       text.content = c.content ? '[' + c.content + ']' : '';
@@ -161,13 +234,25 @@ function mdvPreviewParagraph(source) {
   return frag;
 }
 
+// What the card shows, from the file as it is now: kept per link target and used again only while the file's size
+// and time are unchanged (a browser file is asked without reading it; a desktop file is read and compared).
 async function mdvPreviewLoad(target) {
-  const hit = mdvPreview.cache.get(target.path);
-  if (hit && Date.now() - hit.at < MDV_PREVIEW_CACHE_MS) return hit;
+  const key = target.path + '#' + (target.fragment || '');
+  const hit = mdvPreview.cache.get(key);
+  let stat = null;
+  if (target.stat) {
+    try { stat = await target.stat(); } catch (e) { stat = null; }
+    if (hit && stat && hit.size === stat.size && hit.mtimeMs === stat.mtimeMs) return hit;
+  }
   const doc = await target.read();
-  const extracted = mdvPreviewExtract(doc.text, (doc.name || mdvFolderBaseName(target.path)).replace(MDV_FOLDER_MARKDOWN, ''));
-  const entry = { at: Date.now(), title: extracted.title, paragraph: extracted.paragraph };
-  mdvPreview.cache.set(target.path, entry);
+  const text = String(doc.text == null ? '' : doc.text);
+  const mtimeMs = stat ? stat.mtimeMs : doc.mtimeMs;
+  const size = stat ? stat.size : text.length;
+  if (hit && !stat && mtimeMs != null && hit.mtimeMs === mtimeMs && hit.size === size) return hit;
+  const extracted = mdvPreviewExtract(text, (doc.name || mdvFolderBaseName(target.path)).replace(MDV_FOLDER_MARKDOWN, ''), target.fragment);
+  const entry = { size, mtimeMs, title: extracted.title, documentTitle: extracted.documentTitle, paragraph: extracted.paragraph };
+  mdvPreview.cache.delete(key);
+  mdvPreview.cache.set(key, entry);
   if (mdvPreview.cache.size > 60) mdvPreview.cache.delete(mdvPreview.cache.keys().next().value);
   return entry;
 }
@@ -177,7 +262,8 @@ function mdvPreviewFill(target, content, failure) {
   card.replaceChildren();
   const where = document.createElement('div');
   where.className = 'mdv-preview-where';
-  where.textContent = target.label;
+  // A section's card names the document it is in.
+  where.textContent = content && content.documentTitle ? target.label + ' · ' + content.documentTitle : target.label;
   card.appendChild(where);
   if (failure) {
     const p = document.createElement('div');
@@ -279,8 +365,11 @@ function mdvPreviewLinkOf(node) {
   });
   body.addEventListener('focusout', (e) => { if (mdvPreviewLinkOf(e.target) === mdvPreview.link) mdvPreviewHide(); });
   body.addEventListener('click', () => mdvPreviewHide(), true);
-  // Any key: the reader has moved on (Esc, a shortcut, typing). Tab onto a link shows it again (focusin).
-  document.addEventListener('keydown', (e) => { if (mdvPreview.link && e.key !== 'Shift') mdvPreviewHide(); }, true);
+  // Any key but a modifier on its own: the reader has moved on (Esc, a shortcut, typing). Shift, Ctrl, Cmd or Alt
+  // held for a click on the link (its own window) leaves the card. Tab onto a link shows it again (focusin).
+  document.addEventListener('keydown', (e) => {
+    if (mdvPreview.link && !MDV_PREVIEW_MODIFIER_KEYS.has(e.key)) mdvPreviewHide();
+  }, true);
   window.addEventListener('scroll', () => { if (mdvPreview.link) mdvPreviewHide(); }, { passive: true });
   // A new document: the old links are gone, and so is what was cached about the others.
   mdvFolderOn('shown', () => { mdvPreviewHide(); mdvPreview.cache.clear(); });
