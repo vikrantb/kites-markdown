@@ -31,7 +31,8 @@ function longDocument(extra = '') {
 // Installs the stand-in shell before any page script runs.
 //   doc            the window's document (null: the welcome screen)
 //   disk           other files the shell can read, by path
-//   csp            serve the page with the app's CSP (default true)
+//   csp            serve the page with the app's CSP (default true); false removes every policy, the
+//                  page's own <meta> one included
 //   holdInitial    the page's request for its document waits for __shell.releaseInitial()
 //   initialError   the page's request for its document fails with this {code, message}
 //   refuseSaves    every save is refused as a conflict with this {currentMtimeMs, currentVersion}
@@ -40,6 +41,14 @@ async function withShell(page, { doc = null, disk = {}, theme = 'light', selfTes
     await page.route('**/markdown-viewer.html', async (route) => {
       const response = await route.fetch();
       await route.fulfill({ response, headers: Object.assign({}, response.headers(), { 'content-security-policy': APP_CSP }) });
+    });
+  } else {
+    // No CSP at all: the page also carries its own policy in a <meta> tag, which would still block the
+    // inline handler a positive control needs to see run.
+    await page.route('**/markdown-viewer.html', async (route) => {
+      const response = await route.fetch();
+      const html = (await response.text()).replace(/<meta http-equiv="Content-Security-Policy"[^>]*>\s*/i, '');
+      await route.fulfill({ response, body: html });
     });
   }
   await page.addInitScript(({ doc, disk, theme, selfTest, holdInitial, initialError, refuseSaves }) => {
