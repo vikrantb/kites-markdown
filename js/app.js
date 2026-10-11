@@ -17,12 +17,14 @@ window.addEventListener('scroll', () => {
 // ============================================
 // One table drives both the key handler and the help sheet (?), so the sheet cannot drift from the keys.
 // mod: Ctrl or Cmd (both are accepted on every platform). key: the character with no modifiers, matched
-// case-insensitively, so Caps Lock does not matter. shift: the shortcut needs Shift; checked for letters
-// only, because some layouts need Shift just to type a punctuation key. code: the physical key, also
-// accepted, for punctuation that other layouts move (Mod+\ on a German keyboard). Rows without `run` are
-// handled elsewhere (comments.js, the dialogs) and are listed so the sheet is complete. modal: the dialog
-// the shortcut opens and closes. inDialog: it still works while a dialog is open (saving changes nothing
-// on screen).
+// case-insensitively, so Caps Lock does not matter, or a key's name ('ArrowLeft'). shift: the shortcut needs
+// Shift; checked for letters and named keys only, because some layouts need Shift just to type a punctuation
+// key. alt: the shortcut needs Alt (Option); a row without it never matches with Alt held, so typing with
+// AltGr is never a shortcut. code: the physical key, also accepted, for punctuation that other layouts move
+// (Mod+\ on a German keyboard). Rows without `run` are handled elsewhere (comments.js, the dialogs) and are
+// listed so the sheet is complete. modal: the dialog the shortcut opens and closes. inDialog: it still works
+// while a dialog is open (saving changes nothing on screen). A `run` that returns false had nothing to do,
+// and leaves the key to the browser. Other scripts add rows with mdvRegisterShortcut (below).
 const MDV_IS_MAC = /mac|iphone|ipad|ipod/i.test((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '');
 
 const MDV_SHORTCUTS = [
@@ -53,9 +55,42 @@ function mdvTypedKey(e) {
 }
 
 function mdvShortcutMatches(e, s) {
-  if (!!s.mod !== (e.ctrlKey || e.metaKey) || e.altKey) return false;
-  if (/^[a-z]$/.test(s.key) && !!s.shift !== e.shiftKey) return false;
+  if (!!s.mod !== (e.ctrlKey || e.metaKey) || !!s.alt !== e.altKey) return false;
+  if ((/^[a-z]$/.test(s.key) || s.key.length > 1) && !!s.shift !== e.shiftKey) return false;
   return mdvTypedKey(e) === s.key || (!!s.code && e.code === s.code);
+}
+
+// Adds a shortcut to the table, so the key handler and the ? sheet both have it:
+//   mdvRegisterShortcut('Alt+ArrowLeft', () => mdvHistoryBack(), 'Back to the previous document')
+// combo: modifiers, then the key, joined by '+': Mod (Ctrl or Cmd), Shift, Alt; a character ('p', '?', '\\') or a
+// key's name ('ArrowLeft', 'Enter'). fn(event) runs when the keys are pressed, except while typing in a text field
+// or while a dialog is open; when it returns false, the key is left to the browser. description names it in the
+// sheet. Returns false, adding nothing, when another shortcut already has those keys. A script that loads before
+// this one registers from a DOMContentLoaded listener: every script has run by then.
+function mdvRegisterShortcut(combo, fn, description) {
+  const parts = String(combo).split('+');
+  let key = parts.pop();
+  if (key === '' && parts.length && parts[parts.length - 1] === '') { parts.pop(); key = '+'; } // 'Mod++'
+  const row = { label: String(description || combo), run: fn };
+  for (const m of parts) {
+    const name = m.trim().toLowerCase();
+    if (name === 'mod' || name === 'ctrl' || name === 'cmd' || name === 'meta') row.mod = true;
+    else if (name === 'shift') row.shift = true;
+    else if (name === 'alt' || name === 'option') row.alt = true;
+    else throw new TypeError(`mdvRegisterShortcut: "${m}" in "${combo}" is not a modifier`);
+  }
+  if (!key || typeof fn !== 'function') throw new TypeError(`mdvRegisterShortcut: "${combo}" needs a key and a function`);
+  row.key = key.length === 1 ? key.toLowerCase() : key;
+  const same = (s) => !!s.mod === !!row.mod && !!s.alt === !!row.alt && !!s.shift === !!row.shift && s.key === row.key;
+  const taken = MDV_SHORTCUTS.find(same);
+  if (taken) {
+    console.warn(`Shortcut ${combo} already does "${taken.label}"; "${row.label}" was not added.`);
+    return false;
+  }
+  MDV_SHORTCUTS.push(row);
+  const sheet = document.querySelector('#shortcutsOverlay .shortcuts-box');
+  if (sheet) delete sheet.dataset.rendered; // drawn again, with this row, the next time it opens
+  return true;
 }
 
 // Typing in a text field is not a shortcut. A checkbox (task lists) or a button is not a text field.
@@ -72,11 +107,14 @@ function openShortcuts() {
 function closeShortcuts() { mdvCloseModal(document.getElementById('shortcutsOverlay')); }
 function toggleShortcuts() { (mdvModal && mdvModal.el.id === 'shortcutsOverlay') ? closeShortcuts() : openShortcuts(); }
 
+const MDV_KEY_NAMES = { ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓' };
+
 function mdvShortcutKeys(s) {
   const keys = [];
   if (s.mod) keys.push(MDV_IS_MAC ? '⌘' : 'Ctrl');
+  if (s.alt) keys.push(MDV_IS_MAC ? '⌥' : 'Alt');
   if (s.shift) keys.push(MDV_IS_MAC ? '⇧' : 'Shift');
-  keys.push(s.key.length === 1 ? s.key.toUpperCase() : s.key);
+  keys.push(s.key.length === 1 ? s.key.toUpperCase() : MDV_KEY_NAMES[s.key] || s.key);
   return keys;
 }
 
@@ -144,8 +182,8 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (!s || !s.run || mdvIsTextEntry(e.target)) return;
+  if (s.run(e) === false) return; // nothing to do: the key stays the browser's
   e.preventDefault();
-  s.run();
 });
 
 // ============================================
