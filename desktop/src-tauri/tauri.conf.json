@@ -1,0 +1,79 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Kites Markdown",
+  "mainBinaryName": "kites-markdown",
+  "version": "0.1.0",
+  "identifier": "app.kitesmarkdown.viewer",
+  "build": {
+    "frontendDist": "../dist",
+    "beforeDevCommand": "node scripts/stage-frontend.mjs",
+    "beforeBuildCommand": "node scripts/stage-frontend.mjs"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' asset: http://asset.localhost data: blob: https:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+        "frame-src": "'none'"
+      },
+      "assetProtocol": {
+        "enable": true,
+        "scope": {
+          "allow": [],
+          "requireLiteralLeadingDot": false
+        }
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "nsis"],
+    "category": "Productivity",
+    "publisher": "Kites Markdown",
+    "copyright": "Copyright © 2026 the Kites Markdown contributors. MIT License.",
+    "license": "MIT",
+    "shortDescription": "A reader for Markdown files",
+    "longDescription": "Double-click a Markdown file to read it: headings, tables, diagrams, math and code, beautifully rendered, with an outline, search and comments kept inside the file.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../LICENSE": "LICENSE",
+      "../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
+    },
+    "fileAssociations": [
+      {
+        "ext": ["md", "markdown", "mdown", "mkd", "mkdn", "mdwn", "mdtxt", "mdtext"],
+        "contentTypes": ["net.daringfireball.markdown"],
+        "name": "KitesMarkdown.Document",
+        "description": "Markdown document",
+        "mimeType": "text/markdown",
+        "role": "Editor",
+        "rank": "Default"
+      }
+    ],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    }
+  }
+}

@@ -1,0 +1,203 @@
+# The desktop app: build it for macOS (universal) and Windows (x64), install it, and run its self-test,
+# which opens a real document in the real app and checks what rendered (see docs/desktop.md).
+# On a v* tag, a separate job attaches the installers this run built and self-tested to a DRAFT release;
+# the owner publishes it.
+#
+# Reproducible: one pinned Rust toolchain, `--locked` against Cargo.lock, and every action pinned to a
+# commit (the tag it was resolved from is in the comment).
+name: desktop
+
+on:
+  pull_request:
+    paths:
+      - markdown-viewer.html
+      - css/**
+      - js/**
+      - vendor/**
+      - samples/**
+      - desktop/**
+      - .github/workflows/desktop.yml
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The toolchain Cargo.toml's rust-version names, and the one Cargo.lock is resolved for.
+  RUST_TOOLCHAIN: 1.86.0
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (universal)
+            os: macos-latest
+            label: macos
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            build-args: --target universal-apple-darwin --bundles app,dmg
+            bundle: desktop/src-tauri/target/universal-apple-darwin/release/bundle
+          - name: Windows (x64)
+            os: windows-latest
+            label: windows
+            rust-targets: x86_64-pc-windows-msvc
+            build-args: --bundles nsis
+            bundle: desktop/src-tauri/target/release/bundle
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: ${{ matrix.rust-targets }}
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: desktop/src-tauri -> target
+          # The last step fails by design until the viewer's inline handlers are gone; keep the cache anyway.
+          cache-on-failure: true
+      - run: pnpm --dir desktop install --frozen-lockfile
+
+      - name: Stage the viewer
+        run: pnpm --dir desktop stage
+      - name: Unit tests (paths, saving, conflicts, the window registry)
+        run: cargo test --manifest-path desktop/src-tauri/Cargo.toml --lib --locked
+      - name: Build
+        # Everything after `--` goes to cargo: build exactly what Cargo.lock pins.
+        run: pnpm --dir desktop tauri build ${{ matrix.build-args }} -- --locked
+
+      # macOS: the bundle is universal, then the self-test runs three ways.
+      - name: The app is universal
+        if: runner.os == 'macOS'
+        run: |
+          ARCHS=$(lipo -archs "${{ matrix.bundle }}/macos/Kites Markdown.app/Contents/MacOS/kites-markdown")
+          echo "architectures: $ARCHS"
+          [[ "$ARCHS" == *x86_64* && "$ARCHS" == *arm64* ]]
+      - name: Self-test (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          APP="${{ matrix.bundle }}/macos/Kites Markdown.app"
+          node desktop/scripts/run-self-test.mjs --app "$APP" --doc samples/kitchen-sink.md --save-probe --expect render,kitchen-sink,save --out self-test/macos-kitchen-sink.json
+          node desktop/scripts/run-self-test.mjs --app "$APP" --doc desktop/tests/fixtures/linked/doc.md --expect render,assets --out self-test/macos-assets.json
+          # The way Finder opens a double-clicked file: Launch Services hands the app the file.
+          node desktop/scripts/run-self-test.mjs --app "$APP" --doc samples/kitchen-sink.md --launch open --expect render,kitchen-sink --out self-test/macos-open.json
+
+      # Windows: install silently, check what the installer registered, then self-test the installed app.
+      - name: Install silently (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "${{ matrix.bundle }}/nsis/*-setup.exe" | Select-Object -First 1
+          Write-Host "installing $($installer.Name)"
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait
+          $exe = Join-Path $env:LOCALAPPDATA 'Kites Markdown\kites-markdown.exe'
+          if (-not (Test-Path $exe)) { throw "not installed: $exe" }
+          "KITES_EXE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: The installer registered the app for Markdown files (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $progId = 'KitesMarkdown.Document'
+          function Expect-Value($key, $name, $want) {
+            $item = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+            if ($null -eq $item -or -not ($item.PSObject.Properties.Name -contains $name)) { throw "missing: $key [$name]" }
+            $got = $item.$name
+            if ($got -ne $want) { throw "$key [$name] is '$got', expected '$want'" }
+            Write-Host "ok  $key [$name] = '$got'"
+          }
+          foreach ($ext in 'md','markdown','mdown','mkd','mkdn','mdwn','mdtxt','mdtext') {
+            Expect-Value "HKCU:\Software\Classes\.$ext\OpenWithProgids" $progId ''
+            Expect-Value "HKCU:\Software\Kites Markdown\Capabilities\FileAssociations" ".$ext" $progId
+          }
+          Expect-Value 'HKCU:\Software\RegisteredApplications' 'Kites Markdown' 'Software\Kites Markdown\Capabilities'
+          Expect-Value 'HKCU:\Software\Kites Markdown\Capabilities' 'ApplicationName' 'Kites Markdown'
+          Expect-Value "HKCU:\Software\Classes\$progId\shell\open\command" '(default)' "`"$env:KITES_EXE`" `"%1`""
+          Expect-Value 'HKCU:\Software\Classes\Applications\kites-markdown.exe' 'FriendlyAppName' 'Kites Markdown'
+      - name: Self-test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # PowerShell does not stop on a failing program by itself; check each one.
+          node desktop/scripts/run-self-test.mjs --app "$env:KITES_EXE" --doc samples/kitchen-sink.md --save-probe --expect render,kitchen-sink,save --out self-test/windows-kitchen-sink.json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node desktop/scripts/run-self-test.mjs --app "$env:KITES_EXE" --doc desktop/tests/fixtures/linked/doc.md --expect render,assets --out self-test/windows-assets.json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # The command Explorer runs when a .md file is double-clicked, read back from the registry.
+          node desktop/scripts/run-self-test.mjs --doc samples/kitchen-sink.md --launch registry --app "$env:KITES_EXE" --expect render,kitchen-sink --out self-test/windows-registry.json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Uninstalling removes the registration (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:LOCALAPPDATA 'Kites Markdown'
+          Start-Process -FilePath (Join-Path $dir 'uninstall.exe') -ArgumentList '/S', "_?=$dir" -Wait
+          $left = @()
+          if ((Get-ItemProperty 'HKCU:\Software\RegisteredApplications' -ErrorAction SilentlyContinue).PSObject.Properties.Name -contains 'Kites Markdown') { $left += 'RegisteredApplications' }
+          if (Test-Path 'HKCU:\Software\Kites Markdown\Capabilities') { $left += 'Capabilities' }
+          if (Test-Path 'HKCU:\Software\Classes\KitesMarkdown.Document') { $left += 'ProgId' }
+          foreach ($ext in 'md','markdown','mdown','mkd','mkdn','mdwn','mdtxt','mdtext') {
+            $owp = Get-ItemProperty "HKCU:\Software\Classes\.$ext\OpenWithProgids" -ErrorAction SilentlyContinue
+            if ($owp -and ($owp.PSObject.Properties.Name -contains 'KitesMarkdown.Document')) { $left += ".$ext OpenWithProgids" }
+            $key = Get-ItemProperty "HKCU:\Software\Classes\.$ext" -ErrorAction SilentlyContinue
+            if ($key -and ($key.PSObject.Properties.Name -contains 'KitesMarkdown.Document_backup')) { $left += ".$ext backup value" }
+            if ($key -and $key.'(default)' -eq 'KitesMarkdown.Document') { $left += ".$ext still points at the app" }
+          }
+          if ($left.Count) { throw "left behind after uninstall: $($left -join ', ')" }
+          Write-Host 'ok  nothing left behind for any of the 8 extensions'
+
+      - name: Keep the installers and the self-test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kites-markdown-${{ matrix.label }}
+          path: |
+            ${{ matrix.bundle }}/dmg/*.dmg
+            ${{ matrix.bundle }}/nsis/*-setup.exe
+            self-test/
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Last, so every step above reports on its own: the viewer's inline handlers (onclick="…") do
+      # nothing under the app's Content Security Policy until they move to addEventListener.
+      - name: No inline event handlers left for the app's CSP to block
+        run: node desktop/scripts/run-self-test.mjs --report self-test/${{ matrix.label }}-kitchen-sink.json --expect no-inline-handlers
+
+  release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    # Only after every build passed its self-test. The release carries those builds, never a rebuild.
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: kites-markdown-*
+          path: artifacts
+      - name: Attach the tested installers to a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mapfile -t files < <(find artifacts -type f \( -name '*.dmg' -o -name '*-setup.exe' \) | sort)
+          printf 'attaching %s\n' "${files[@]}"
+          [ "${#files[@]}" -eq 2 ] || { echo "expected one .dmg and one -setup.exe, found ${#files[@]}" >&2; exit 1; }
+          gh release create "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --draft --verify-tag \
+            --title "Kites Markdown $TAG" \
+            --notes "Install: see docs/desktop.md. These builds are not signed: on a Mac, open the app the first time from System Settings > Privacy & Security > Open Anyway (or right-click > Open); on Windows, choose More info > Run anyway."

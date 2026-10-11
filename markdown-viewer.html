@@ -315,6 +315,9 @@
 <script src="js/enhancements.js"></script>
 <script src="js/read-aloud.js"></script>
 <script src="js/comments.js"></script>
+<!-- host.js (the desktop bridge) wraps the comment wrapper around renderMarkdown, so it follows
+     comments.js; its own start waits for DOMContentLoaded. -->
+<script src="js/host.js"></script>
 <!-- app.js starts the viewer (theme, font size, ?file=), so it loads last: every subsystem, the
      comment wrapper around renderMarkdown included, is in place before the first render. -->
 <script src="js/app.js"></script>

@@ -1,0 +1,22 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What a viewer window may call: Tauri's core defaults (including events) and the viewer's own mdv_* commands. No file system, shell, opener or dialog API: the shell reads, saves and opens files itself, after checking each request.",
+  "windows": ["doc-*"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "allow-mdv-initial-document",
+    "allow-mdv-read-document",
+    "allow-mdv-save-document",
+    "allow-mdv-window-holds-text",
+    "allow-mdv-open-dialog",
+    "allow-mdv-open-path",
+    "allow-mdv-open-external",
+    "allow-mdv-make-default",
+    "allow-mdv-self-test-requested",
+    "allow-mdv-self-test-options",
+    "allow-mdv-self-test-external-edit",
+    "allow-mdv-self-test-report"
+  ]
+}

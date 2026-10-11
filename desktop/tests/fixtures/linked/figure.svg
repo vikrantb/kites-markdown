@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="60" viewBox="0 0 160 60" role="img" aria-label="Three blocks">
+  <rect x="4" y="10" width="44" height="40" rx="6" fill="#4A6FA5"/>
+  <rect x="58" y="10" width="44" height="40" rx="6" fill="#6B8F71"/>
+  <rect x="112" y="10" width="44" height="40" rx="6" fill="#C4873B"/>
+</svg>

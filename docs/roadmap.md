@@ -26,12 +26,15 @@ renderers.
 | Task lists fixed | A misspelled global (`markdownItTaskLists` vs the plugin's `markdownitTaskLists`) had silently disabled task-list checkboxes |
 | Two destructive save paths closed | Paste and URL loading could leave a document linked to a different file, so a comment save could overwrite it (see [Known issues](#known-issues)) |
 | Comment data safety fixed (2026-10-10) | Known issues 1–6 fixed, each with a browser test in `tests/e2e/comments.spec.mjs`, and the holes a review found, with tests in `tests/e2e/comments-format.spec.mjs` and `comments-saving.spec.mjs`; the README's "experimental" warning removed. `mdvWriteDocument` is the single save seam, shared with the desktop app |
+| Form factor: A + D (2026-10-10) | `markdown-viewer.html` stays the zero-build source and keeps working from disk or any server (A); a desktop app hosts that same file so a double-clicked `.md` opens in it on macOS and Windows (D, Tauri). See [desktop.md](desktop.md) |
 
 ## Open decisions
 
-### 1. Form factor
+### 1. Form factor (decided: A + D)
 
-The viewer is one HTML file that works from disk. The next step depends on where it should live.
+**Decided on 2026-10-10: A plus D.** The viewer stays a zero-build file (A), and a desktop app built with
+Tauri hosts that same file (D), so double-clicking a Markdown file on a Mac or a Windows PC opens it in the
+viewer. B (GitHub Pages) can still be added on top of A at any time. The options as they were weighed:
 
 | Option | What you get | What it costs |
 |---|---|---|
@@ -237,8 +240,8 @@ The final review across all docs found these gaps:
 2. ~~**Sanitize rendered HTML** (issue 7).~~ Done: DOMPurify + CSP + Mermaid strict (stream S), keeping HTML comments intact.
 3. **Fix the rendering bugs readers hit first:** ~~dollar signs (8)~~ done (stream S), dark-theme
    diagrams (9), the copy button (13). Each has a verified repro above.
-4. **Decide the form factor** (above). It determines whether the code can be split into modules, and
-   the inline script is already about 2,550 lines.
+4. ~~**Decide the form factor**~~ **Done:** A + D (above). The code is split into classic scripts, and the
+   desktop app is [desktop.md](desktop.md).
 5. **Build the renderer registry,** then add the first one or two visualizations from the
    catalogue's shortlist.
 6. **Test in Firefox and Safari,** and confirm a full save round-trip by hand in Chrome.
