@@ -156,7 +156,7 @@ than the source *(inferred; the guess may therefore fall back to "Diagram" for M
 
 ### 3.7 Other subsystems react to wrapper classes
 
-- **Read aloud.** `buildTtsSections` → `extractText` treats `.mermaid-wrapper` as a diagram: it speaks
+- **Read aloud.** `ttsBuildSections` → `extractText` treats `.mermaid-wrapper` as a diagram: it speaks
   a preceding `<!-- narrate: -->` comment (found by `findNarrationFor`) or skips it. Any other wrapper
   falls into the generic branch and its text content is read out — for a failed render, that is the
   raw source. See [read-aloud.md](read-aloud.md).
@@ -491,8 +491,8 @@ tables; a row count; a "source" toggle that shows the original text. For JSON: a
 objects becomes a table, anything else becomes a collapsible tree.
 
 **Integration.** Easy, and it benefits from existing code: `buildSearchIndex` already indexes `td`
-cells, and `extractText` in `buildTtsSections` already treats `TABLE` elements specially (a narration
-comment, or the first 300 characters) — but only when the table is a direct child of the body or of
+cells, and `extractText` in `ttsBuildSections` already treats `TABLE` elements specially (a narration
+comment, or the rows up to about 300 characters) — but only when the table is a direct child of the body or of
 a `.section-content`; a table inside a wrapper `div` falls into the generic branch. **Blocked by section 3.3**: currency columns would be
 corrupted by `renderMath` until math becomes fence-aware.
 

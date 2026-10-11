@@ -323,7 +323,8 @@ test('comments next to markup characters survive the sanitizer, and so does the 
     while (walker.nextNode()) comments.push(walker.currentNode.nodeValue.trim());
     return {
       comments,
-      spoken: ttsSections.flatMap((s) => s.items).find((t) => t.startsWith('Two boxes')) || null,
+      // The read-aloud sections are built on demand since stream R (ttsEnsureSections), not by the render
+      spoken: (ttsEnsureSections(), ttsSections).flatMap((s) => s.items).find((t) => t.startsWith('Two boxes')) || null,
       paragraphs: texts('p'),
       items: texts('li'),
       rows: [...body.querySelectorAll('tbody tr')].map((tr) => [...tr.cells].map((c) => c.textContent.trim())),
@@ -362,7 +363,7 @@ test('comment anchors, narration, KaTeX MathML and heading ids survive the sanit
   expect(comments).toEqual({ anchors: 2, threads: 2 });
 
   await openDocument(page, 'tests/fixtures/narration-top-level.md');
-  const narration = await page.evaluate(() => ttsSections.flatMap((s) => s.items).find((t) => t.startsWith('Two boxes')));
+  const narration = await page.evaluate(() => (ttsEnsureSections(), ttsSections).flatMap((s) => s.items).find((t) => t.startsWith('Two boxes')));
   expect(narration).toBe('Two boxes joined by an arrow, read aloud instead of the diagram.');
 
   await openDocument(page, 'samples/kitchen-sink.md');

@@ -251,8 +251,8 @@ if (mdvPurifier) {
   // removes an element whose only children are text and comments when that text holds one. Both
   // would delete document content without a trace: a narration that mentions "latency<200ms", or a
   // paragraph "if a<b then swap them <!-- note -->". So, before DOMPurify checks a node:
-  // - an element loses its comment children. They are invisible, and the comments the viewer reads
-  //   (anchors, narration) are block-level, so they are direct children of the body;
+  // - an element loses its comment children, except a narration (read aloud wherever it sits), which is
+  //   made safe like a top-level comment. The others are invisible, and anchors are block-level;
   // - a top-level comment gets a space after each such "<", which nothing can parse as a tag and
   //   which reads aloud the same.
   mdvPurifier.addHook('beforeSanitizeElements', (node) => {
@@ -260,7 +260,15 @@ if (mdvPurifier) {
       const data = node.data.replace(MDV_MARKUP_START, '< ');
       if (data !== node.data) node.data = data;
     } else if (node.nodeType === 1 && node !== node.ownerDocument.body) {
-      for (const child of [...node.childNodes]) if (child.nodeType === 8) child.remove();
+      for (const child of [...node.childNodes]) {
+        if (child.nodeType !== 8) continue;
+        // A narration is read aloud wherever it sits (in a details block, a list item, a callout or a quote:
+        // stream R), so it stays, made safe here before this element is checked; every other nested comment goes.
+        if (/^\s*narrate:/i.test(child.data)) {
+          const data = child.data.replace(MDV_MARKUP_START, '< ');
+          if (data !== child.data) child.data = data;
+        } else child.remove();
+      }
     }
   });
   mdvPurifier.addHook('uponSanitizeAttribute', (node, data) => {

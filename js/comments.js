@@ -1806,6 +1806,9 @@ function mdvHandleSelection() {
 
 // ------- Keyboard shortcut -------
 document.addEventListener('keydown', (e) => {
+  // With a dialog open (search, the shortcuts sheet, the lightbox: stream R's mdvModal) no other shortcut acts;
+  // the dialog's own handler keeps them from the browser.
+  if (typeof mdvModal !== 'undefined' && mdvModal) return;
   // Ctrl/Cmd+Shift+C — toggle comments sidebar
   if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
     e.preventDefault();

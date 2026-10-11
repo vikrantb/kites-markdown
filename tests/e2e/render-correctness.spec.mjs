@@ -283,7 +283,7 @@ test('every button has an accessible name, and icon-only ones an aria-label', as
   expect(unnamed, 'icon-only buttons without an aria-label').toEqual([]);
   await expect(page.locator('#widthBtn')).toHaveAccessibleName('Toggle page width');
   await page.locator('.toolbar button[title^="Search"]').click();
-  await expect(page.locator('#searchInput')).toHaveAccessibleName('Search headings and content');
+  await expect(page.locator('#searchInput')).toHaveAccessibleName('Search this document');
   await page.keyboard.press('Escape');
   await page.locator('.toolbar button[title="Settings"]').click();
   await expect(page.locator('#basePathInput')).toHaveAccessibleName('Workspace Root Path');

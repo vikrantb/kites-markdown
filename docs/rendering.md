@@ -125,7 +125,7 @@ Nested maps, inline lists such as `[a, b]`, multi-line strings and anchors are n
 
 **Function:** `extractNarrations(src)`.
 
-The regex `<!--\s*narrate:\s*([\s\S]*?)-->` (case-insensitive) collects every narration comment into `window._narrations`. The list is only used as a "there is at least one" check: the narration text that is actually spoken is read later from the DOM comment node by `findNarrationFor`. The sanitizer keeps that comment node, with one change: a space is added after any `<` followed by a letter, digit or `/` (`latency<200ms` becomes `latency< 200ms`), which DOMPurify would otherwise treat as markup and remove the comment for; read aloud, it sounds the same (see [Security posture](#security-posture)). Narration is consumed only for mermaid diagrams and tables, and the current section-folding step stops it from being found under headings. Details are in [read-aloud.md](read-aloud.md).
+The regex `<!--\s*narrate:\s*([\s\S]*?)-->` (case-insensitive) collects every narration comment into `window._narrations`. Nothing reads that list any more: the narration text that is spoken is read from the DOM comment node right before the diagram or table, by `findNarrationFor`. Section folding keeps that comment next to its block, under headings too. Narration is consumed only for mermaid diagrams and tables. Details are in [read-aloud.md](read-aloud.md).
 
 ### Math (KaTeX)
 
@@ -252,7 +252,7 @@ slugify: s => s.toLowerCase().replace(/[^\w]+/g, '-').replace(/^-|-$/g, '')
 - `\w` is ASCII-only, so accented letters are dropped (`Café` gives `caf`) and a heading with no ASCII letters or digits gets an empty id; a second such heading gets `-1` (checked offline).
 - Duplicate slugs get `-1`, `-2` and so on (`uniqueSlugStartIndex` is 1).
 - `buildToc` later gives any heading with an empty id the id `heading-N`, where `N` is its position among all headings.
-- The TOC, minimap, search index, scroll-spy breadcrumb and read-aloud sections use the heading text with every `#` character removed (to drop the permalink symbol), so a heading such as "C# tips" is listed as "C tips".
+- The TOC, search index, scroll-spy breadcrumb and read-aloud sections use the heading's own words (`mdvHeadingText` in `js/navigation.js`), which leave out the permalink, the fold chevron and comment chips, so a heading such as "C# tips" is listed as "C# tips". The minimap (`buildSectionMinimap`) still removes every `#` character, so it shows "C tips".
 
 Other heading-driven transforms, all keyed on the rendered headings: `addSectionToggles` (fold toggles on H1 to H4), `buildToc` (all levels), `buildSectionMinimap` (only when there are three or more H2 headings), `setupScrollSpy`, `buildSearchIndex` and `buildTtsSections`. They are described in [features.md](features.md).
 
@@ -381,7 +381,7 @@ Each item is described in the section linked from it.
 | Overlay title misses `flowchart` and matches `pie` as a substring | [Mermaid diagrams](#mermaid-diagrams) |
 | Copy button copies the language label and the word "Copy" as well (verified in Chrome) | [Code highlighting](#code-highlighting) |
 | `data:image/svg+xml` images are refused by markdown-it | [The markdown-it configuration](#the-markdown-it-configuration) |
-| Heading slugs drop non-ASCII letters; `#` characters vanish from TOC text | [Heading ids and anchors](#heading-ids-and-anchors) |
+| Heading slugs drop non-ASCII letters; `#` characters vanish from the minimap's labels | [Heading ids and anchors](#heading-ids-and-anchors) |
 | A linked image alone in a paragraph becomes a text-only card (inferred) | [Link enhancement](#link-enhancement) |
-| Section folding moves elements but leaves HTML comments behind, so narration and comment anchors lose their target under headings (checked offline with jsdom) | [read-aloud.md](read-aloud.md), [commenting.md](commenting.md) |
+| ~~Section folding moves elements but leaves HTML comments behind, so narration and comment anchors lose their target under headings~~ Fixed (stream R): folding moves comments with their blocks | [read-aloud.md](read-aloud.md), [commenting.md](commenting.md) |
 | ~~No output sanitization~~ Fixed: DOMPurify + CSP + Mermaid strict | [Security posture](#security-posture) |
