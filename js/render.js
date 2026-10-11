@@ -372,14 +372,15 @@ function mdvMissingLibraries() {
   return MDV_LIBRARIES.filter((lib) => typeof window[lib.global] === 'undefined');
 }
 
+// The notice sits at the top of the content column, in the page's flow: it pushes the document
+// down instead of covering its first lines, and scrolls away with it.
 function mdvShowNotice(text) {
   const notice = document.createElement('div');
   notice.className = 'mdv-notice';
   notice.setAttribute('role', 'status');
   Object.assign(notice.style, {
-    position: 'fixed', top: 'calc(var(--toolbar-height) + 10px)', left: '50%', transform: 'translateX(-50%)',
-    zIndex: '150', display: 'flex', alignItems: 'center', gap: '10px',
-    maxWidth: 'min(640px, calc(100vw - 32px))', boxSizing: 'border-box', padding: '8px 8px 8px 14px',
+    display: 'flex', alignItems: 'center', gap: '10px', margin: '0 auto 24px',
+    maxWidth: 'min(640px, 100%)', boxSizing: 'border-box', padding: '8px 8px 8px 14px',
     background: 'var(--bg-card)', color: 'var(--text-primary)', font: '500 0.82rem/1.45 var(--font-ui)',
     border: '1px solid var(--border-primary)', borderLeft: '4px solid var(--accent-warn)',
     borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-md)',
@@ -397,7 +398,9 @@ function mdvShowNotice(text) {
     font: '400 1.15rem/1 var(--font-ui)', padding: '4px 8px', borderRadius: 'var(--radius-sm)',
   });
   notice.append(message, dismiss);
-  document.body.appendChild(notice);
+  const column = document.getElementById('content');
+  if (column) column.prepend(notice);
+  else document.body.appendChild(notice);
   return notice;
 }
 

@@ -28,6 +28,10 @@ const MATH_CASES = {
   D19: { display: 1 },
   D20: { display: 1 },
   D21: { math: 0, code: 'echo "$HOME" and "$PATH"' },
+  // Pandoc's rule, kept on purpose: "$ a + b $" was math before this change and is text now.
+  D22: { math: 0, text: '$ a + b $' },
+  // An inline comment is left alone, even after a lone dollar ("-->" must not leak onto the page).
+  D23: { math: 0, text: '$x stays a comment' },
 };
 
 test('dollar signs follow Pandoc\'s rules and never become math inside code', async ({ page }) => {
@@ -113,7 +117,7 @@ for (const theme of ['light', 'dark']) {
     expect(r.inlineCode).toContain('echo $HOME $PATH');
     expect(r.block).toContain('echo "$HOME" and "$PATH"');
     expect(r.formula).toBe('a^2 + b^2 = c^2');
-    await page.screenshot({ path: info.outputPath(`repro-dollar-signs-${theme}.png`), fullPage: true });
+    await page.screenshot({ path: info.outputPath(`repro-dollar-signs-${theme}.png`), fullPage: true, animations: 'disabled' });
     expect(problems, problems.join('\n')).toEqual([]);
   });
 }
@@ -133,12 +137,27 @@ test('the kitchen sink and the built-in demo still typeset all their math', asyn
   expect(problems, problems.join('\n')).toEqual([]);
 });
 
-test('an empty frontmatter field does not stop the document from rendering', async ({ page }) => {
+test('an empty frontmatter field does not stop the document, or its dashboard, from rendering', async ({ page }) => {
   const problems = collectProblems(page);
+  // The dashboard is built inside its own try/catch, so a failure there is only a warning: count those too.
+  const warnings = [];
+  page.on('console', (m) => { if (m.type() === 'warning') warnings.push(m.text()); });
   await openDocument(page, 'tests/fixtures/frontmatter-empty-fields.md');
   await expect(page.locator('#mdBody h1')).toHaveText(/Empty frontmatter fields/);
   await expect(page.locator('#welcomeScreen')).toBeHidden();
   expect(await page.locator('body').textContent()).not.toContain('File not found');
+  const d = await page.evaluate(() => {
+    const dash = document.querySelector('#mdBody .fm-dashboard');
+    return {
+      dashboard: Boolean(dash),
+      status: dash ? dash.querySelectorAll('.fm-status-badge').length : null,
+      date: dash ? dash.querySelectorAll('.fm-date').length : null,
+      metrics: [...(dash ? dash.querySelectorAll('.fm-metric') : [])].map((m) => m.textContent.trim()),
+      repos: [...(dash ? dash.querySelectorAll('.fm-repo-badge') : [])].map((r) => `${r.tagName}:${r.textContent.trim()}`),
+    };
+  });
+  expect(d).toEqual({ dashboard: true, status: 0, date: 0, metrics: ['4Open questions'], repos: ['A:\u2605 linked'] });
+  expect(warnings.filter((w) => /frontmatter/i.test(w)), 'frontmatter warnings').toEqual([]);
   expect(problems, problems.join('\n')).toEqual([]);
 });
 
@@ -176,7 +195,7 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('#mdBody pre code')).toContainText('# Offline Sync Design Review');
     await expect(page.locator('#welcomeScreen')).toBeHidden();
     expect(await page.locator('body').textContent()).not.toContain('File not found');
-    await page.screenshot({ path: info.outputPath(`render-error-${theme}.png`) });
+    await page.screenshot({ path: info.outputPath(`render-error-${theme}.png`), animations: 'disabled' });
     expect(problems, problems.join('\n')).toEqual([]);
   });
 }
@@ -222,9 +241,16 @@ test('a library that does not load is named once in the console and in a dismiss
   for (const feature of ['Math', 'Mermaid diagrams', 'Code highlighting', 'Footnotes']) await expect(notice).toContainText(feature);
   // Without KaTeX the formulas stay readable as TeX.
   await expect(page.locator('#mdBody code.mdv-math-source').first()).toContainText('$\\Delta t');
-  await page.screenshot({ path: info.outputPath('library-notice-light.png') });
+  // The notice sits above the document, not over it: the dashboard at the top stays readable.
+  const covers = await page.evaluate(() => {
+    const a = document.querySelector('.mdv-notice').getBoundingClientRect();
+    const b = document.querySelector('#mdBody .fm-dashboard').getBoundingClientRect();
+    return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  });
+  expect(covers, 'the notice covers the dashboard').toBe(false);
+  await page.screenshot({ path: info.outputPath('library-notice-light.png'), animations: 'disabled' });
   await page.evaluate(() => setTheme('dark'));
-  await page.screenshot({ path: info.outputPath('library-notice-dark.png') });
+  await page.screenshot({ path: info.outputPath('library-notice-dark.png'), animations: 'disabled' });
   await notice.getByRole('button', { name: 'Dismiss' }).click();
   await expect(notice).toHaveCount(0);
   expect(problems, problems.join('\n')).toEqual([]);
@@ -242,6 +268,10 @@ test('without the sanitizer, raw HTML is shown as text and still nothing runs', 
   expect(await payloadHits(page)).toEqual([]);
   expect(await page.locator('#mdBody img#img-onerror, #mdBody script, #mdBody iframe').count()).toBe(0);
   await expect(page.locator('#mdBody')).toContainText('<script>window.__mdvPwned');
+  // Neither repository URL is a web address, so neither is a link; "java<TAB>script:" included, which
+  // the browser's URL parser reads as javascript: (it drops tabs).
+  const repos = await page.evaluate(() => [...document.querySelectorAll('#mdBody .fm-repo-badge')].map((b) => b.tagName));
+  expect(repos).toEqual(['SPAN', 'SPAN']);
   expect(problems, problems.join('\n')).toEqual([]);
 });
 

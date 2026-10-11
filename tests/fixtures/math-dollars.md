@@ -1,6 +1,6 @@
 # Dollar signs
 
-Each case is named D01 to D21. The browser test reads every case and checks whether it became math.
+Each case is named D01 to D23. The browser test reads every case and checks whether it became math.
 
 - D01 inline: $x^2$
 - D02 two prices: costs $5 and $10 per month
@@ -16,6 +16,8 @@ Each case is named D01 to D21. The browser test reads every case and checks whet
 - D12 a price, then a shell variable in code: costs $5, see `$PATH`
 - D13 a currency code before the dollar: US$5 and US$10
 - D14 a slash between prices: $5/$10
+- D22 spaces inside the dollars: $ a + b $
+- D23 a comment after a lone dollar: $x <!-- narrate: y$ --> stays a comment
 
 | Case | Cell |
 |---|---|

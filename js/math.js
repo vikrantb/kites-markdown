@@ -10,8 +10,9 @@
 // - \$ is a literal dollar sign, inside math and outside it.
 // Math is a markdown-it rule, so it never applies inside code: a code span or code block is parsed
 // before any dollar sign in it is seen, and inline math may not contain a backtick (a code span
-// that starts inside a would-be formula wins). HTML comments are not inline text either, so a
-// narration or comment marker that mentions dollars is left alone.
+// that starts inside a would-be formula wins). HTML comments win the same way: a comment on its own
+// line is a block, never inline text, and inline math may not contain "<!--", so a narration or
+// comment marker that mentions dollars is left alone even after a lone $ ("$x <!-- y$ -->").
 
 function mdvIsMathSpace(code) {
   return code === 0x20 || code === 0x09 || code === 0x0A || code === 0x0D;
@@ -19,6 +20,11 @@ function mdvIsMathSpace(code) {
 
 function mdvIsMathDigit(code) {
   return code >= 0x30 && code <= 0x39;
+}
+
+// Whether src has an HTML comment opening, "<!--", at pos.
+function mdvIsCommentStart(src, pos) {
+  return src.charCodeAt(pos) === 0x3C && src.startsWith('!--', pos + 1);
 }
 
 // Index of the first unescaped "$$" at or after `from` and before `max`, or -1.
@@ -42,7 +48,7 @@ function mdvMathInline(state, silent) {
     const close = mdvFindDoubleDollar(src, start + 2, max);
     if (close < 0) return false;
     const tex = src.slice(start + 2, close);
-    if (!tex.trim() || tex.includes('`')) return false;
+    if (!tex.trim() || tex.includes('`') || tex.includes('<!--')) return false;
     if (!silent) {
       const token = state.push('math_inline_display', 'math', 0);
       token.content = tex;
@@ -59,6 +65,7 @@ function mdvMathInline(state, silent) {
     const code = src.charCodeAt(pos);
     if (code === 0x5C) { pos += 2; continue; }   // an escaped character, \$ included, never closes
     if (code === 0x60) return false;             // a backtick: code spans win over math
+    if (mdvIsCommentStart(src, pos)) return false;   // so do HTML comments
     if (code === 0x24) break;
     pos++;
   }
